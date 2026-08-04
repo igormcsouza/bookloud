@@ -1,0 +1,63 @@
+name: Destroy PR Environment
+
+on:
+  pull_request:
+    types: [closed] # fires for both merged and closed-without-merge
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-env-${{ github.event.pull_request.number }} # same group as deploy: queue behind it
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Destroy pr-${{ github.event.pull_request.number }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # CloudFront distribution deletion dominates; budget ~15-25 min
+    environment: development
+    env:
+      ENV_NAME: pr-${{ github.event.pull_request.number }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Stack names are deterministic, so plain CloudFormation deletes are
+      # enough -- no checkout, CDK synth, or frontend build needed. Reverse
+      # dependency order: Frontend -> Api -> Pipeline -> Auth -> Storage.
+      - name: Delete stacks (reverse dependency order)
+        run: |
+          set -euo pipefail
+          for STACK in "BookloudFrontend-${ENV_NAME}" \
+                       "BookloudApi-${ENV_NAME}" \
+                       "BookloudPipeline-${ENV_NAME}" \
+                       "BookloudAuth-${ENV_NAME}" \
+                       "BookloudStorage-${ENV_NAME}"; do
+            if aws cloudformation describe-stacks --stack-name "$STACK" >/dev/null 2>&1; then
+              echo "Deleting $STACK..."
+              aws cloudformation delete-stack --stack-name "$STACK"
+              aws cloudformation wait stack-delete-complete --stack-name "$STACK"
+              echo "$STACK deleted."
+            else
+              echo "$STACK does not exist - skipping."
+            fi
+          done
+
+      - name: Comment on PR
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'Environment `pr-${{ github.event.pull_request.number }}` destroyed.',
+            });

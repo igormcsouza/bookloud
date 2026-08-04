@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+.env
+
+# --- Node ---
+node_modules/
+npm-debug.log*
+.npm
+
+# --- Next.js ---
+.next/
+.open-next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# --- CDK ---
+cdk.out/
+.cdk.staging/
+*.outputs.json
+
+# --- Playwright ---
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# --- Editors / OS ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Local secrets ---
+.env.local
+.env.*.local
