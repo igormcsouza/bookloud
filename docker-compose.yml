@@ -1,0 +1,57 @@
+# Local dev stack: LocalStack (S3/SQS/DynamoDB) + backend (uvicorn, hot
+# reload) + frontend (optional, `ui` profile). Cognito is LocalStack Pro
+# only; Phase 0 needs no local auth (see PLANS/phase-0.md §10, Q12).
+services:
+  localstack:
+    # Pinned: newer LocalStack tags gate startup behind a Pro auth token even
+    # for community-only SERVICES (s3/sqs/dynamodb); this tag runs unlicensed.
+    image: localstack/localstack:3.8.1
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,sqs,dynamodb
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=us-east-1
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=local
+      - GIT_SHA=local
+      - LOG_LEVEL=DEBUG
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=local
+      - AWS_SECRET_ACCESS_KEY=local
+      - TABLE_NAME=bookloud-local
+      - PDF_BUCKET=bookloud-local-pdfs
+      - AUDIO_BUCKET=bookloud-local-audio
+      - MARKS_BUCKET=bookloud-local-marks
+      - EXTRACT_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-extract
+    volumes:
+      - ./backend:/app
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  frontend:
+    profiles: ["ui"]
+    build:
+      context: ./frontend
+      args:
+        - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
