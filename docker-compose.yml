@@ -3,7 +3,9 @@
 # only; Phase 0 needs no local auth (see PLANS/phase-0.md §10, Q12).
 services:
   localstack:
-    image: localstack/localstack:latest
+    # Pinned: newer LocalStack tags gate startup behind a Pro auth token even
+    # for community-only SERVICES (s3/sqs/dynamodb); this tag runs unlicensed.
+    image: localstack/localstack:3.8.1
     ports:
       - "4566:4566"
     environment:
