@@ -41,13 +41,23 @@ jobs:
                        "BookloudPipeline-${ENV_NAME}" \
                        "BookloudAuth-${ENV_NAME}" \
                        "BookloudStorage-${ENV_NAME}"; do
-            if aws cloudformation describe-stacks --stack-name "$STACK" >/dev/null 2>&1; then
+            # Distinguish "stack genuinely doesn't exist" from any other
+            # describe-stacks failure (e.g. AccessDenied) -- a permission
+            # gap must fail loudly here, not be silently treated as
+            # nothing-to-do. (This exact confusion let PR #1's environment
+            # leak for a day: the IAM policy didn't cover Bookloud stacks,
+            # describe-stacks was denied, and the old `>/dev/null 2>&1`
+            # swallowed it into a false "does not exist".)
+            if ERR=$(aws cloudformation describe-stacks --stack-name "$STACK" 2>&1 1>/dev/null); then
               echo "Deleting $STACK..."
               aws cloudformation delete-stack --stack-name "$STACK"
               aws cloudformation wait stack-delete-complete --stack-name "$STACK"
               echo "$STACK deleted."
-            else
+            elif echo "$ERR" | grep -q "does not exist"; then
               echo "$STACK does not exist - skipping."
+            else
+              echo "ERROR describing $STACK: $ERR" >&2
+              exit 1
             fi
           done
 
