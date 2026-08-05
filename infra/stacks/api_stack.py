@@ -114,7 +114,7 @@ class ApiStack(cdk.Stack):
         # here is what keeps these paths reachable without a token), plus a
         # catch-all requiring a valid Cognito JWT for everything else. No
         # default_authorizer on the HttpApi -- each route states its own.
-        public_paths = ["/health", "/", "/docs", "/redoc", "/openapi.json"]
+        public_paths = ["/health", "/docs", "/redoc", "/openapi.json"]
         for path in public_paths:
             http_api.add_routes(
                 path=path,

@@ -23,8 +23,3 @@ def test_health_reflects_settings(client: TestClient) -> None:
     assert body["environment"] == settings.environment
     assert body["commit"] == settings.git_sha
 
-
-def test_root_also_returns_health(client: TestClient) -> None:
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
