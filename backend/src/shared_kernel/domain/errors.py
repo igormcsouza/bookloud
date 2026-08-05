@@ -31,3 +31,11 @@ class ConflictError(DomainError):
     """The action is not legal given the aggregate's current state."""
 
     status_code = 409
+
+
+class ValidationError(DomainError):
+    """Input failed a domain invariant (blank required field, malformed
+    value, etc). Distinct from ``ConflictError``: this is about the shape of
+    the input itself, not the aggregate's current state."""
+
+    status_code = 400
