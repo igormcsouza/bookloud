@@ -11,6 +11,8 @@ Usage:
         [--expect-commit SHA]           # optional
         [--expect-environment ENV]      # optional
         [--timeout SECONDS]             # default 180
+        [--extraction-timeout SECONDS]  # default 120; how long to poll GET /books/{id}
+                                         # for EXTRACTED/FAILED in check_upload_and_extraction
         [--cognito-endpoint URL]        # optional; local/cognito-local. Derived from
                                          # --cognito-region against real AWS if omitted.
         [--cognito-region REGION]       # optional; used only to derive --cognito-endpoint
@@ -31,11 +33,22 @@ runs; `GET /books` -> 200 + JSON array runs whenever --login-username/
 checks use), proving the Library context's DynamoDB repository works
 against a real DynamoDB API (LocalStack in local-smoke, real AWS in
 deploy-pr/deploy-prod).
+
+Upload/extraction check (PLANS/phase-3.md §9.3): `check_upload_and_extraction`
+also runs whenever --login-username/--login-password are supplied --
+POST /books -> upload the embedded fixture PDF via the presigned POST ->
+poll GET /books/{id} until EXTRACTED/FAILED -> GET /books/{id}/chunks. This
+is the phase's real gate: it proves the S3 event notification, the extract
+Lambda/local-worker, PyMuPDF extraction, the header/footer filter, and
+chunking all work end to end against real (or LocalStack) infra, not just
+that a status string changed. `deploy-prod.yml` passes no --login-* args, so
+this (like the other login-gated checks) never runs against prod.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import random
 import string
@@ -125,6 +138,85 @@ def check_frontend(frontend_url: str, timeout: float) -> None:
     )
 
 
+# A 3-page PDF: a running header ("Bookloud Smoke Test Guide") + a bare
+# footer page number on every page, and a distinct "Bookloud smoke test"
+# marker in each page's body text. Exercising the header/footer filter needs
+# >=3 pages (domain/layout.py's RUNNING_LINE_MIN_PAGES) for the *repeated
+# header* to be dropped -- the footer page number is dropped unconditionally
+# regardless of page count, but the header alone wouldn't prove much on a
+# 1-2 page doc, hence 3 rather than the "two-page" figure in PLANS/phase-3.md
+# §9.3's description (flagged here as a deliberate, harmless deviation).
+#
+# Regenerated with (from backend/, inside the project's venv):
+#   import pymupdf, io, base64
+#   doc = pymupdf.open()
+#   for i in range(3):
+#       page = doc.new_page(width=595, height=842)
+#       page.insert_text((72, 30), "Bookloud Smoke Test Guide", fontsize=10)
+#       page.insert_text((72, 400),
+#           f"Bookloud smoke test body content on page {i + 1} of 3. This "
+#           "paragraph proves extraction, chunking, and the header and "
+#           "footer filter all ran inside the deployed extract Lambda.",
+#           fontsize=11)
+#       page.insert_text((72, 820), f"Page {i + 1}", fontsize=9)
+#   buf = io.BytesIO(); doc.save(buf)
+#   print(base64.b64encode(buf.getvalue()).decode("ascii"))
+_SMOKE_PDF_B64 = (
+    "JVBERi0xLjcKJcK1wrYKJSBXcml0dGVuIGJ5IE11UERGIDEuMjkuMAoKMSAwIG9iago8PC9UeXBl"
+    "L0NhdGFsb2cvUGFnZXMgMiAwIFIvSW5mbzw8L1Byb2R1Y2VyKE11UERGIDEuMjkuMCk+Pj4+CmVu"
+    "ZG9iagoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0NvdW50IDMvS2lkc1s0IDAgUiAxMCAwIFIgMTUg"
+    "MCBSXT4+CmVuZG9iagoKMyAwIG9iago8PC9Gb250PDwvaGVsdiA1IDAgUj4+Pj4KZW5kb2JqCgo0"
+    "IDAgb2JqCjw8L1R5cGUvUGFnZS9NZWRpYUJveFswIDAgNTk1IDg0Ml0vUm90YXRlIDAvUmVzb3Vy"
+    "Y2VzIDMgMCBSL1BhcmVudCAyIDAgUi9Db250ZW50c1s2IDAgUiA3IDAgUiA4IDAgUl0+PgplbmRv"
+    "YmoKCjUgMCBvYmoKPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNh"
+    "L0VuY29kaW5nL1dpbkFuc2lFbmNvZGluZz4+CmVuZG9iagoKNiAwIG9iago8PC9MZW5ndGggOTUv"
+    "RmlsdGVyL0ZsYXRlRGVjb2RlPj4Kc3RyZWFtCnja4yrkcgrhMlQwAEJDBXMjBQtDI4WQXC79jNSc"
+    "MgVDA4WQNIVoGxMjszQgTDJLNkszNzUzMTIwNTZLAYuYAtkmZqbmxuZAURNzoKylGZBvFxvixeUa"
+    "whXIBQBNrRZ0CmVuZHN0cmVhbQplbmRvYmoKCjcgMCBvYmoKPDwvTGVuZ3RoIDIxNS9GaWx0ZXIv"
+    "RmxhdGVEZWNvZGU+PgpzdHJlYW0KeNpVULFKhjEM3PsUfQPbNL20IA6Ci5vQTVzs/3046ODi83uJ"
+    "yK8UwuVySa5Jn+l+pZoLX80mWVXy+kg3b8f7V641rzM/36rg5HvFxmkdKsUaLsF0YkW3ZmThOrVJ"
+    "1IgOr3hkzozKggrznlaDA1ETVrpiYFr70Zi4ziOz4RzxafA97Os2TEPDrZgxe8fOQXcHXU1GC64S"
+    "aXgcvtcjOXcs1yrg/7NfFuzfdtVscFLso1Ofzd9Pn/FnrqtL3GciLvTfpRTdRBdeSFHluHtZj+lh"
+    "paf0DSqBVxgKZW5kc3RyZWFtCmVuZG9iagoKOCAwIG9iago8PC9MZW5ndGggNTg+PgpzdHJlYW0K"
+    "CnEKQlQKMSAwIDAgMSA3MiAyMiBUbQovaGVsdiA5IFRmIFs8NTA2MTY3NjUyMDMxPl1USgpFVApR"
+    "CgplbmRzdHJlYW0KZW5kb2JqCgo5IDAgb2JqCjw8L0ZvbnQ8PC9oZWx2IDUgMCBSPj4+PgplbmRv"
+    "YmoKCjEwIDAgb2JqCjw8L1R5cGUvUGFnZS9NZWRpYUJveFswIDAgNTk1IDg0Ml0vUm90YXRlIDAv"
+    "UmVzb3VyY2VzIDkgMCBSL1BhcmVudCAyIDAgUi9Db250ZW50c1sxMSAwIFIgMTIgMCBSIDEzIDAg"
+    "Ul0+PgplbmRvYmoKCjExIDAgb2JqCjw8L0xlbmd0aCA5NS9GaWx0ZXIvRmxhdGVEZWNvZGU+Pgpz"
+    "dHJlYW0KeNrjKuRyCuEyVDAAQkMFcyMFC0MjhZBcLv2M1JwyBUMDhZA0hWgbEyOzNCBMMks2SzM3"
+    "NTMxMjA1NksBi5gC2SZmpubG5kBRE3OgrKUZkG8XG+LF5RrCFcgFAE2tFnQKZW5kc3RyZWFtCmVu"
+    "ZG9iagoKMTIgMCBvYmoKPDwvTGVuZ3RoIDIxNS9GaWx0ZXIvRmxhdGVEZWNvZGU+PgpzdHJlYW0K"
+    "eNpVULFKhjEM3PsUfQPbNL20IA6Ci5vQTVzs/3046ODi83uJyK8UwuVySa5Jn+l+pZoLX80mWVXy"
+    "+kg3b8f7V641rzM/36rg5HvFxmkdKsUaLsF0YkW3ZmThOrVJ1IgOr3hkzozKggrznibBgagJK10x"
+    "MK39aExc55HZcI74NPge9nUbpqHhVsyYvWPnoLuDriajBVeJNDwO3+uRnDuWaxXw/9kvC/Zvu2o2"
+    "OCn20anP5u+nz/gz19Ul7jMRF/rvUopuogsvpKhy3L2sx/Sw0lP6BiuKVxkKZW5kc3RyZWFtCmVu"
+    "ZG9iagoKMTMgMCBvYmoKPDwvTGVuZ3RoIDU4Pj4Kc3RyZWFtCgpxCkJUCjEgMCAwIDEgNzIgMjIg"
+    "VG0KL2hlbHYgOSBUZiBbPDUwNjE2NzY1MjAzMj5dVEoKRVQKUQoKZW5kc3RyZWFtCmVuZG9iagoK"
+    "MTQgMCBvYmoKPDwvRm9udDw8L2hlbHYgNSAwIFI+Pj4+CmVuZG9iagoKMTUgMCBvYmoKPDwvVHlw"
+    "ZS9QYWdlL01lZGlhQm94WzAgMCA1OTUgODQyXS9Sb3RhdGUgMC9SZXNvdXJjZXMgMTQgMCBSL1Bh"
+    "cmVudCAyIDAgUi9Db250ZW50c1sxNiAwIFIgMTcgMCBSIDE4IDAgUl0+PgplbmRvYmoKCjE2IDAg"
+    "b2JqCjw8L0xlbmd0aCA5NS9GaWx0ZXIvRmxhdGVEZWNvZGU+PgpzdHJlYW0KeNrjKuRyCuEyVDAA"
+    "QkMFcyMFC0MjhZBcLv2M1JwyBUMDhZA0hWgbEyOzNCBMMks2SzM3NTMxMjA1NksBi5gC2SZmpubG"
+    "5kBRE3OgrKUZkG8XG+LF5RrCFcgFAE2tFnQKZW5kc3RyZWFtCmVuZG9iagoKMTcgMCBvYmoKPDwv"
+    "TGVuZ3RoIDIxNi9GaWx0ZXIvRmxhdGVEZWNvZGU+PgpzdHJlYW0KeNpVUL1qgzEM3P0UfoP4Rz7Z"
+    "UDIUumQLeCtd6nwfHdohS5+/J5WQBIM4nU7SWeEaXmfIMfHlqCWKlDh/wuFr+/6NOce5x/cXKdj5"
+    "PrGwa4OUpBUXZxqxoGlVsjCd6CCqRJtVLDJnRmVChlpPrc7BEStN0DG0/mu0mM4is24c8a6wPexr"
+    "2lVcw60YPnv5zk53G10NRnUuE4l77LbXIjlzXO5VwP6nNxbsX3rXLHCS76NTm83fD5vxMNfUye8z"
+    "4Bd6dlmSLKILLyTIZTt+zFN4m+Ec/gAsk1caCmVuZHN0cmVhbQplbmRvYmoKCjE4IDAgb2JqCjw8"
+    "L0xlbmd0aCA1OD4+CnN0cmVhbQoKcQpCVAoxIDAgMCAxIDcyIDIyIFRtCi9oZWx2IDkgVGYgWzw1"
+    "MDYxNjc2NTIwMzM+XVRKCkVUClEKCmVuZHN0cmVhbQplbmRvYmoKCnhyZWYKMCAxOQowMDAwMDAw"
+    "MDAwIDY1NTM1IGYgCjAwMDAwMDAwNDIgMDAwMDAgbiAKMDAwMDAwMDEyMCAwMDAwMCBuIAowMDAw"
+    "MDAwMTg2IDAwMDAwIG4gCjAwMDAwMDAyMjcgMDAwMDAgbiAKMDAwMDAwMDM0NiAwMDAwMCBuIAow"
+    "MDAwMDAwNDM1IDAwMDAwIG4gCjAwMDAwMDA1OTggMDAwMDAgbiAKMDAwMDAwMDg4MiAwMDAwMCBu"
+    "IAowMDAwMDAwOTg5IDAwMDAwIG4gCjAwMDAwMDEwMzAgMDAwMDAgbiAKMDAwMDAwMTE1MyAwMDAw"
+    "MCBuIAowMDAwMDAxMzE3IDAwMDAwIG4gCjAwMDAwMDE2MDIgMDAwMDAgbiAKMDAwMDAwMTcxMCAw"
+    "MDAwMCBuIAowMDAwMDAxNzUyIDAwMDAwIG4gCjAwMDAwMDE4NzYgMDAwMDAgbiAKMDAwMDAwMjA0"
+    "MCAwMDAwMCBuIAowMDAwMDAyMzI2IDAwMDAwIG4gCgp0cmFpbGVyCjw8L1NpemUgMTkvUm9vdCAx"
+    "IDAgUi9JRFs8QzM4MzI4MUMwNEMzQkU1MjEzQzM5QTQwQzI4QjA5QzI+PDM5QzgzQTY4REZGOTMz"
+    "ODkyMDM1N0MxODIwRDk0NDFBPl0+PgpzdGFydHhyZWYKMjQzNAolJUVPRgo="
+)
+
+
 def _cognito(endpoint: str, target: str, body: dict, timeout: float = 15) -> tuple[int, dict]:
     """Plain Cognito JSON API call: POST {endpoint} with an X-Amz-Target
     header. No SigV4 -- the app client has no secret."""
@@ -163,9 +255,11 @@ def check_books_endpoint(api_url: str, timeout: float) -> None:
     check(status == 401, f"expected 401 for anonymous GET /books, got {status}")
 
 
-def check_books_endpoint_authenticated(
-    api_url: str, cognito_endpoint: str, cognito_client_id: str, username: str, password: str
-) -> None:
+def _login(cognito_endpoint: str, cognito_client_id: str, username: str, password: str) -> str:
+    """``InitiateAuth`` with ``USER_PASSWORD_AUTH`` for an existing,
+    permanent-password user; returns the id token. Shared by every check
+    below that needs an authenticated request -- previously duplicated
+    inline in each one."""
     status, data = _cognito(
         cognito_endpoint,
         "InitiateAuth",
@@ -176,7 +270,13 @@ def check_books_endpoint_authenticated(
         },
     )
     check(200 <= status < 300, f"InitiateAuth for {username!r} failed: {status} {data}")
-    id_token = data["AuthenticationResult"]["IdToken"]
+    return data["AuthenticationResult"]["IdToken"]
+
+
+def check_books_endpoint_authenticated(
+    api_url: str, cognito_endpoint: str, cognito_client_id: str, username: str, password: str
+) -> None:
+    id_token = _login(cognito_endpoint, cognito_client_id, username, password)
 
     url = f"{api_url.rstrip('/')}/books"
     req = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {id_token}"})
@@ -233,17 +333,7 @@ def check_wrong_password_rejected(cognito_endpoint: str, cognito_client_id: str)
 def _login_and_check_me(
     api_url: str, cognito_endpoint: str, cognito_client_id: str, username: str, password: str
 ) -> None:
-    status, data = _cognito(
-        cognito_endpoint,
-        "InitiateAuth",
-        {
-            "AuthFlow": "USER_PASSWORD_AUTH",
-            "ClientId": cognito_client_id,
-            "AuthParameters": {"USERNAME": username, "PASSWORD": password},
-        },
-    )
-    check(200 <= status < 300, f"InitiateAuth for {username!r} failed: {status} {data}")
-    id_token = data["AuthenticationResult"]["IdToken"]
+    id_token = _login(cognito_endpoint, cognito_client_id, username, password)
 
     url = f"{api_url.rstrip('/')}/me"
     req = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {id_token}"})
@@ -318,6 +408,126 @@ def check_new_password_challenge_flow(
     )
 
 
+def _build_multipart_upload(fields: dict, pdf_bytes: bytes) -> tuple[bytes, str]:
+    """Hand-build a ``multipart/form-data`` body for the presigned POST
+    (stdlib only, no ``requests``/``urllib3`` multipart helper available):
+    every entry of ``fields`` first, the ``file`` field **last** -- S3
+    ignores anything after the file field, so ordering here is load-bearing,
+    matching the client contract PLANS/phase-3.md §4.1 documents for the
+    phase 6 frontend."""
+    boundary = "----bookloudSmokeTestBoundary"
+    parts: list[bytes] = []
+    for name, value in fields.items():
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
+        )
+    parts.append(
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="source.pdf"\r\n'
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode("utf-8")
+    )
+    parts.append(pdf_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def _authed_get(url: str, id_token: str, timeout: float) -> tuple[int, str]:
+    req = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {id_token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8")
+
+
+def _poll_book_status(api_url: str, book_id: str, id_token: str, timeout: float) -> dict:
+    url = f"{api_url.rstrip('/')}/books/{book_id}"
+    deadline = time.monotonic() + timeout
+    last_body: dict | None = None
+    while time.monotonic() < deadline:
+        status, body = _authed_get(url, id_token, 10)
+        check(status == 200, f"GET {url} failed while polling: {status} {body}")
+        last_body = json.loads(body)
+        if last_body["status"] in ("EXTRACTED", "FAILED"):
+            return last_body
+        time.sleep(3)
+    raise AssertionError(
+        f"extraction did not reach EXTRACTED/FAILED within {timeout}s; last status: {last_body}"
+    )
+
+
+def check_upload_and_extraction(
+    api_url: str,
+    cognito_endpoint: str,
+    cognito_client_id: str,
+    username: str,
+    password: str,
+    extraction_timeout: float,
+) -> None:
+    """PLANS/phase-3.md §9.3 -- the phase's real gate. POST /books -> upload
+    the embedded fixture PDF via the presigned POST -> poll GET /books/{id}
+    until EXTRACTED/FAILED -> GET /books/{id}/chunks, asserting the extracted
+    text carries the fixture's marker string. Proves the S3 event
+    notification, the extract Lambda (or local worker), PyMuPDF extraction,
+    the header/footer filter, and chunking all work end to end."""
+    id_token = _login(cognito_endpoint, cognito_client_id, username, password)
+
+    create_url = f"{api_url.rstrip('/')}/books"
+    create_req = urllib.request.Request(
+        create_url,
+        method="POST",
+        headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+        data=json.dumps({"title": "Smoke Test Upload"}).encode("utf-8"),
+    )
+    with urllib.request.urlopen(create_req, timeout=15) as resp:
+        create_status = resp.status
+        create_body = json.loads(resp.read().decode("utf-8"))
+    check(create_status == 201, f"expected 201 creating book, got {create_status}")
+    book_id = create_body["book"]["id"]
+    upload = create_body["upload"]
+    print(f"OK  POST {create_url} -> {create_status} (book {book_id})")
+
+    pdf_bytes = base64.b64decode(_SMOKE_PDF_B64)
+    multipart_body, content_type = _build_multipart_upload(upload["fields"], pdf_bytes)
+    upload_req = urllib.request.Request(
+        upload["url"], method="POST", data=multipart_body, headers={"Content-Type": content_type}
+    )
+    try:
+        with urllib.request.urlopen(upload_req, timeout=30) as resp:
+            upload_status = resp.status
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise AssertionError(f"presigned upload POST failed: {exc.code} {detail}") from exc
+    print(f"OK  POST {upload['url']} (presigned upload) -> {upload_status}")
+    check(upload_status == 204, f"expected 204 from the presigned upload, got {upload_status}")
+
+    final = _poll_book_status(api_url, book_id, id_token, extraction_timeout)
+    print(
+        f"OK  extraction finished -> status={final['status']} "
+        f"chunksTotal={final.get('chunksTotal')} pageCount={final.get('pageCount')}"
+    )
+    check(
+        final["status"] == "EXTRACTED",
+        f"expected EXTRACTED, got {final['status']} (failureReason={final.get('failureReason')})",
+    )
+    check(final.get("chunksTotal", 0) >= 1, "expected chunksTotal >= 1")
+    check(final.get("pageCount", 0) >= 1, "expected pageCount >= 1")
+
+    chunks_url = f"{api_url.rstrip('/')}/books/{book_id}/chunks"
+    status, body = _authed_get(chunks_url, id_token, 15)
+    check(status == 200, f"expected 200 for GET {chunks_url}, got {status}")
+    chunks = json.loads(body)
+    check(len(chunks) >= 1, "expected at least one chunk")
+    full_text = "".join(chunk.get("text", "") for chunk in chunks)
+    check(
+        "Bookloud smoke test" in full_text,
+        "extracted chunk text does not contain the fixture's marker string",
+    )
+    print(f"OK  GET {chunks_url} -> {status} ({len(chunks)} chunk(s))")
+
+
 def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_id: str) -> None:
     """SignUp a throwaway user, then log in and hit /me -- covers "signup" +
     "login" + authenticated access in one deployed-environment check. Never
@@ -344,6 +554,7 @@ def main() -> int:
     parser.add_argument("--expect-commit", default=None)
     parser.add_argument("--expect-environment", default=None)
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--extraction-timeout", type=float, default=120)
     parser.add_argument("--cognito-endpoint", default=None)
     parser.add_argument("--cognito-region", default=None)
     parser.add_argument("--cognito-client-id", default=None)
@@ -391,6 +602,14 @@ def main() -> int:
                 args.cognito_client_id,
                 args.login_username,
                 args.login_password,
+            )
+            check_upload_and_extraction(
+                args.api_url,
+                cognito_endpoint,
+                args.cognito_client_id,
+                args.login_username,
+                args.login_password,
+                args.extraction_timeout,
             )
 
         if args.newuser_username and args.newuser_temp_password:

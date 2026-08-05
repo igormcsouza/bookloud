@@ -21,6 +21,7 @@ from src.shared_kernel.domain.errors import ValidationError
 
 class BookStatus(StrEnum):
     UPLOADED = "UPLOADED"  # set by Book.create() -- phase 2
+    EXTRACTING = "EXTRACTING"  # first SET in phase 3 (extract Lambda claim)
     EXTRACTED = "EXTRACTED"  # first SET in phase 3 (extract Lambda)
     READY = "READY"  # first SET in phase 5 (stitcher)
     FAILED = "FAILED"  # first SET in phase 3/4 error paths
@@ -44,3 +45,15 @@ class ChunkStatus(StrEnum):
             return cls(value)  # type: ignore[arg-type]
         except ValueError as exc:
             raise ValidationError("Invalid chunk status") from exc
+
+
+class ExtractionFailure(StrEnum):
+    """Permanent extraction failure reasons (PLANS/phase-3.md §5.2/§8.3) --
+    stored verbatim as ``Book.failure_reason`` when ``status == FAILED``."""
+
+    CORRUPT_PDF = "CORRUPT_PDF"
+    ENCRYPTED_PDF = "ENCRYPTED_PDF"
+    EMPTY_PDF = "EMPTY_PDF"
+    NO_TEXT_LAYER = "NO_TEXT_LAYER"
+    TOO_LARGE = "TOO_LARGE"
+    UNKNOWN = "UNKNOWN"

@@ -4,17 +4,20 @@ from datetime import UTC, datetime
 
 import pytest
 
-from src.contexts.library.application.commands import CreateBookCommand
+from src.contexts.library.application.commands import RequestBookUploadCommand
 from src.contexts.library.application.use_cases import (
-    CreateBook,
     DeleteBook,
     GetBook,
     ListBookChunks,
     ListBooks,
+    ReissueBookUpload,
+    RequestBookUpload,
 )
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
-from src.shared_kernel.domain.errors import NotFoundError
+from src.contexts.library.domain.storage import PresignedUpload
+from src.contexts.library.domain.value_objects import BookStatus
+from src.shared_kernel.domain.errors import ConflictError, NotFoundError
 
 FIXED_NOW = datetime(2026, 8, 4, 12, 0, 0, tzinfo=UTC)
 
@@ -55,7 +58,7 @@ class FakeBookRepository:
     def delete(self, user_id: str, book_id: str) -> None:
         self._store.pop((user_id, book_id), None)
 
-    def update_status(self, user_id: str, book_id: str, status) -> None:
+    def update_status(self, user_id: str, book_id: str, status, **kwargs) -> None:
         raise NotImplementedError
 
     def increment_chunks_done(self, user_id: str, book_id: str) -> int:
@@ -98,6 +101,26 @@ class SpyChunkRepository:
         return count
 
 
+class FakePdfStorage:
+    """Records every ``presigned_upload`` key requested."""
+
+    def __init__(self) -> None:
+        self.presigned_calls: list[str] = []
+
+    def presigned_upload(self, *, key: str) -> PresignedUpload:
+        self.presigned_calls.append(key)
+        return PresignedUpload(
+            url="https://bucket.s3.amazonaws.com/",
+            fields={"key": key, "Content-Type": "application/pdf"},
+            key=key,
+            expires_in=900,
+            max_bytes=52428800,
+        )
+
+    def get_bytes(self, *, key: str) -> bytes:
+        raise NotImplementedError
+
+
 @pytest.fixture
 def book_repo() -> FakeBookRepository:
     return FakeBookRepository()
@@ -108,16 +131,115 @@ def chunk_repo() -> SpyChunkRepository:
     return SpyChunkRepository()
 
 
-# --- CreateBook --------------------------------------------------------------
+@pytest.fixture
+def pdf_storage() -> FakePdfStorage:
+    return FakePdfStorage()
 
 
-def test_create_book_persists_and_uses_injected_id_and_clock(book_repo) -> None:
-    use_case = CreateBook(book_repo, FixedClock(), SequentialIdGenerator())
-    book = use_case.execute(CreateBookCommand(user_id="user-1", title="My Book"))
+# --- RequestBookUpload ---------------------------------------------------------
 
-    assert book.id == "id-1"
-    assert book.created_at == FIXED_NOW.isoformat()
-    assert book_repo.get("user-1", "id-1") == book
+
+def test_request_book_upload_persists_book_with_source_key(book_repo, pdf_storage) -> None:
+    use_case = RequestBookUpload(book_repo, pdf_storage, FixedClock(), SequentialIdGenerator())
+    result = use_case.execute(RequestBookUploadCommand(user_id="user-1", title="My Book"))
+
+    assert result.book.id == "id-1"
+    assert result.book.source_key == "books/user-1/id-1/source.pdf"
+    assert result.book.status.value == "UPLOADED"
+    stored = book_repo.get("user-1", "id-1")
+    assert stored == result.book
+
+
+def test_request_book_upload_uses_injected_id_and_clock(book_repo, pdf_storage) -> None:
+    use_case = RequestBookUpload(book_repo, pdf_storage, FixedClock(), SequentialIdGenerator())
+    result = use_case.execute(RequestBookUploadCommand(user_id="user-1", title="My Book"))
+
+    assert result.book.created_at == FIXED_NOW.isoformat()
+
+
+def test_request_book_upload_returns_presigned_upload_for_the_same_key(
+    book_repo, pdf_storage
+) -> None:
+    use_case = RequestBookUpload(book_repo, pdf_storage, FixedClock(), SequentialIdGenerator())
+    result = use_case.execute(RequestBookUploadCommand(user_id="user-1", title="My Book"))
+
+    assert result.upload.key == result.book.source_key
+    assert pdf_storage.presigned_calls == [result.book.source_key]
+
+
+def test_request_book_upload_rejects_blank_title(book_repo, pdf_storage) -> None:
+    from src.shared_kernel.domain.errors import ValidationError
+
+    use_case = RequestBookUpload(book_repo, pdf_storage, FixedClock(), SequentialIdGenerator())
+    with pytest.raises(ValidationError):
+        use_case.execute(RequestBookUploadCommand(user_id="user-1", title=""))
+    # Nothing should have been saved or presigned for a rejected request.
+    assert pdf_storage.presigned_calls == []
+
+
+# --- ReissueBookUpload ----------------------------------------------------------
+
+
+def _uploaded_book(**overrides) -> Book:
+    return Book.create(
+        id="book-1",
+        user_id="user-1",
+        title_raw="Title",
+        now=FIXED_NOW,
+        source_key="books/user-1/book-1/source.pdf",
+        **overrides,
+    )
+
+
+def test_reissue_book_upload_for_uploaded_book_returns_presigned_upload(
+    book_repo, pdf_storage
+) -> None:
+    book_repo.save(_uploaded_book())
+
+    upload = ReissueBookUpload(book_repo, pdf_storage).execute("user-1", "book-1")
+
+    assert upload.key == "books/user-1/book-1/source.pdf"
+    assert pdf_storage.presigned_calls == ["books/user-1/book-1/source.pdf"]
+
+
+def test_reissue_book_upload_for_failed_book_succeeds(book_repo, pdf_storage) -> None:
+    book = _uploaded_book()
+    book.status = BookStatus.FAILED
+    book_repo.save(book)
+
+    upload = ReissueBookUpload(book_repo, pdf_storage).execute("user-1", "book-1")
+    assert upload.key == "books/user-1/book-1/source.pdf"
+
+
+@pytest.mark.parametrize("status", [BookStatus.EXTRACTING, BookStatus.EXTRACTED, BookStatus.READY])
+def test_reissue_book_upload_for_in_progress_book_raises_conflict(
+    book_repo, pdf_storage, status: BookStatus
+) -> None:
+    book = _uploaded_book()
+    book.status = status
+    book_repo.save(book)
+
+    with pytest.raises(ConflictError):
+        ReissueBookUpload(book_repo, pdf_storage).execute("user-1", "book-1")
+    assert pdf_storage.presigned_calls == []
+
+
+def test_reissue_book_upload_for_another_users_book_raises_not_found(
+    book_repo, pdf_storage
+) -> None:
+    book = Book.create(
+        id="book-1", user_id="user-a", title_raw="Title", now=FIXED_NOW, source_key="books/user-a/book-1/source.pdf"
+    )
+    book_repo.save(book)
+
+    with pytest.raises(NotFoundError):
+        ReissueBookUpload(book_repo, pdf_storage).execute("user-b", "book-1")
+    assert pdf_storage.presigned_calls == []
+
+
+def test_reissue_book_upload_for_nonexistent_book_raises_not_found(book_repo, pdf_storage) -> None:
+    with pytest.raises(NotFoundError):
+        ReissueBookUpload(book_repo, pdf_storage).execute("user-1", "no-such-book")
 
 
 # --- ListBooks -----------------------------------------------------------------

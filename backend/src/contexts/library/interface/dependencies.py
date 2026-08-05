@@ -5,17 +5,27 @@ request. This is also what lets the moto fixture work with zero
 ``app.dependency_overrides`` -- ``DynamoDbBookRepository()``/
 ``DynamoDbChunkRepository()`` call ``library_table()`` at call time, by
 which point a test's ``mock_aws()``/``monkeypatch`` is already active.
+
+``get_pdf_storage``/``get_pdf_extractor`` are plain factory functions (not
+only FastAPI ``Depends`` providers): ``interface/extract_handler.py``'s
+Lambda composition root calls them directly too, so the Library context has
+exactly one place that knows how to build each adapter.
 """
 
 from __future__ import annotations
 
+from src.config import settings
+from src.contexts.library.domain.extraction import PdfTextExtractor
 from src.contexts.library.domain.repository import BookRepository, ChunkRepository
+from src.contexts.library.domain.storage import PdfStorage
 from src.contexts.library.infrastructure.dynamodb_book_repository import (
     DynamoDbBookRepository,
 )
 from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
     DynamoDbChunkRepository,
 )
+from src.contexts.library.infrastructure.pymupdf_extractor import PyMuPdfTextExtractor
+from src.contexts.library.infrastructure.s3_pdf_storage import S3PdfStorage
 from src.infrastructure.clock import SystemClock
 from src.infrastructure.ids import Uuid4IdGenerator
 from src.shared_kernel.application.ports import Clock, IdGenerator
@@ -35,3 +45,11 @@ def get_clock() -> Clock:
 
 def get_id_generator() -> IdGenerator:
     return Uuid4IdGenerator()
+
+
+def get_pdf_storage() -> PdfStorage:
+    return S3PdfStorage(bucket=settings.pdf_bucket)
+
+
+def get_pdf_extractor() -> PdfTextExtractor:
+    return PyMuPdfTextExtractor()

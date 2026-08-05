@@ -19,7 +19,7 @@ from src.contexts.library.infrastructure.keys import PK, SK, pk_user, sk_book
 
 
 def book_to_item(book: Book) -> dict:
-    return {
+    item = {
         PK: pk_user(book.user_id),
         SK: sk_book(book.id),
         "entityType": "BOOK",
@@ -32,7 +32,13 @@ def book_to_item(book: Book) -> dict:
         "pageCount": book.page_count,
         "createdAt": book.created_at,
         "updatedAt": book.updated_at,
+        # boto3 maps None -> NULL; write it explicitly rather than "" so
+        # item_to_book's `.get(...)` round-trips a real None.
+        "sourceKey": book.source_key,
     }
+    if book.failure_reason is not None:
+        item["failureReason"] = book.failure_reason
+    return item
 
 
 def item_to_book(item: dict) -> Book:
@@ -48,4 +54,6 @@ def item_to_book(item: dict) -> Book:
         page_count=int(item.get("pageCount", 0)),
         created_at=item.get("createdAt", ""),
         updated_at=item.get("updatedAt", ""),
+        source_key=item.get("sourceKey"),
+        failure_reason=item.get("failureReason"),
     )

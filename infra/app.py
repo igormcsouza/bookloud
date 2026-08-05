@@ -22,11 +22,21 @@ environment: str = app.node.try_get_context("environment") or Config.DEFAULT_ENV
 # deployed code matches the commit under test.
 git_sha: str = app.node.try_get_context("git_sha") or "local"
 
-# Independent stacks first.
+# Storage and Auth are independent of each other; Pipeline now imports
+# Storage (it re-imports pdf_bucket by name and takes the table directly --
+# see pipeline_stack.py's module docstring for why that avoids a circular
+# CloudFormation dependency with the S3 -> SQS notification). Dependency
+# chain: Storage -> Pipeline -> Api, with Auth -> Api alongside it.
 storage = StorageStack(app, stack_name("Storage", environment), environment=environment, env=env)
 auth = AuthStack(app, stack_name("Auth", environment), environment=environment, env=env)
 pipeline = PipelineStack(
-    app, stack_name("Pipeline", environment), environment=environment, env=env
+    app,
+    stack_name("Pipeline", environment),
+    environment=environment,
+    pdf_bucket_name=storage.pdf_bucket.bucket_name,
+    table=storage.table,
+    git_sha=git_sha,
+    env=env,
 )
 
 # Api imports Storage + Pipeline + Auth (the Cognito JWT authorizer).

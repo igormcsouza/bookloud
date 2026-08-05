@@ -47,8 +47,40 @@ class BookRepository(Protocol):
     def delete(self, user_id: str, book_id: str) -> None: ...  # pragma: no cover
 
     def update_status(
-        self, user_id: str, book_id: str, status: BookStatus
-    ) -> None: ...  # pragma: no cover
+        self,
+        user_id: str,
+        book_id: str,
+        status: BookStatus,
+        *,
+        expected_statuses: Sequence[BookStatus] | None = None,
+        chunks_total: int | None = None,
+        page_count: int | None = None,
+        failure_reason: str | None = None,
+        clear_failure_reason: bool = False,
+        updated_at: str | None = None,
+    ) -> None:
+        """One generalized targeted update rather than three bolted-on
+        methods (PLANS/phase-3.md §5.3) -- extraction needs to set status +
+        chunksTotal + pageCount + updatedAt atomically, and to *clear*
+        failureReason on retry.
+
+        - ``expected_statuses``, when given, ANDs an additional
+          ``#status IN (...)`` condition onto the existing
+          ``attribute_exists(PK)`` check -- this is what makes the extract
+          Lambda's atomic ``EXTRACTING`` claim usable (§8.2): the claim only
+          succeeds when the book is currently ``UPLOADED``/``FAILED``.
+        - On a ``ConditionalCheckFailedException``, the adapter
+          disambiguates: re-``get_item``, item absent -> ``NotFoundError``
+          (preserving phase-2 behaviour), item present -> ``ConflictError``
+          (409) -- so the caller can tell "book is gone" from "book is
+          already claimed by another invocation".
+        - ``failure_reason`` set together with ``clear_failure_reason=True``
+          is a programming error -> ``ValueError`` (not a domain error;
+          nothing an end user did wrong).
+        - Every phase-2 call site (``update_status(u, b, EXTRACTED)`` with
+          no kwargs) keeps working unchanged.
+        """
+        ...  # pragma: no cover
 
     def increment_chunks_done(self, user_id: str, book_id: str) -> int: ...  # pragma: no cover
 
