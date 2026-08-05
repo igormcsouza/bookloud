@@ -2,7 +2,9 @@ import os
 
 import aws_cdk as cdk
 from aws_cdk import aws_apigatewayv2 as apigwv2
+from aws_cdk import aws_apigatewayv2_authorizers as apigwv2_authorizers
 from aws_cdk import aws_apigatewayv2_integrations as apigwv2_integrations
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_s3 as s3
@@ -13,9 +15,11 @@ from .config import Config, http_api_name
 
 
 class ApiStack(cdk.Stack):
-    """Health-check Lambda + HTTP API. No Cognito authorizer yet — Phase 1
-    adds ``HttpUserPoolAuthorizer`` on ``/{proxy+}`` only; ``AuthStack`` is
-    intentionally not referenced here in Phase 0.
+    """Health-check Lambda + HTTP API, now with a Cognito JWT authorizer
+    (Phase 1's "the Phase 0 deferral"): ``HttpUserPoolAuthorizer`` guards the
+    ``/{proxy+}`` catch-all; the health/docs routes stay explicitly public via
+    ``HttpNoneAuthorizer``. The backend Lambda itself never validates tokens
+    — see ``backend/src/auth/dependencies.py``.
     """
 
     def __init__(
@@ -28,6 +32,8 @@ class ApiStack(cdk.Stack):
         audio_bucket: s3.Bucket,
         marks_bucket: s3.Bucket,
         extract_queue: sqs.Queue,
+        user_pool: cognito.IUserPool,
+        user_pool_client: cognito.IUserPoolClient,
         environment: str,
         git_sha: str,
         **kwargs,
@@ -86,7 +92,9 @@ class ApiStack(cdk.Stack):
 
         # OPTIONS is deliberately excluded so preflight requests fall through
         # to API Gateway's built-in CORS auto-response (configured above)
-        # instead of being matched by these routes.
+        # instead of being matched by these routes -- and so CORS preflights
+        # bypass the authorizer below (no OPTIONS route means no OPTIONS
+        # authorization to configure).
         route_methods = [
             apigwv2.HttpMethod.GET,
             apigwv2.HttpMethod.HEAD,
@@ -95,14 +103,32 @@ class ApiStack(cdk.Stack):
             apigwv2.HttpMethod.DELETE,
         ]
 
-        # Explicit public routes, plus a catch-all for everything else. No
-        # authorizer at all in Phase 0 — Phase 1 adds one scoped to
-        # "/{proxy+}" only, leaving these paths public.
+        authorizer = apigwv2_authorizers.HttpUserPoolAuthorizer(
+            "CognitoAuthorizer",
+            user_pool,
+            user_pool_clients=[user_pool_client],
+        )
+
+        # Explicit public routes (HttpNoneAuthorizer is required, not
+        # decorative: once any authorizer exists on the API, being explicit
+        # here is what keeps these paths reachable without a token), plus a
+        # catch-all requiring a valid Cognito JWT for everything else. No
+        # default_authorizer on the HttpApi -- each route states its own.
         public_paths = ["/health", "/", "/docs", "/redoc", "/openapi.json"]
         for path in public_paths:
-            http_api.add_routes(path=path, methods=route_methods, integration=integration)
+            http_api.add_routes(
+                path=path,
+                methods=route_methods,
+                integration=integration,
+                authorizer=apigwv2.HttpNoneAuthorizer(),
+            )
 
-        http_api.add_routes(path="/{proxy+}", methods=route_methods, integration=integration)
+        http_api.add_routes(
+            path="/{proxy+}",
+            methods=route_methods,
+            integration=integration,
+            authorizer=authorizer,
+        )
 
         self.http_api = http_api
         self.api_function = fn

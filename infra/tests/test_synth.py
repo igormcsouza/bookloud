@@ -97,6 +97,34 @@ def test_auth_stack_username_only_sign_in(environment: str) -> None:
     assert "AliasAttributes" not in props
 
 
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_auth_stack_has_presignup_trigger(environment: str) -> None:
+    """PreSignUp auto-confirm trigger: the pool has no auto-verified
+    attributes, so a self-signed-up user needs a deterministic, email-free
+    way out of UNCONFIRMED."""
+    template = _synth(AuthStack, environment)
+    pools = template.find_resources("AWS::Cognito::UserPool")
+    (props,) = [r["Properties"] for r in pools.values()]
+    assert "LambdaConfig" in props
+    assert "PreSignUp" in props["LambdaConfig"]
+    # Exactly one Lambda in this stack: the PreSignUp trigger itself.
+    template.resource_count_is("AWS::Lambda::Function", 1)
+
+
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_auth_stack_client_explicit_auth_flows(environment: str) -> None:
+    """CDK appends ALLOW_REFRESH_TOKEN_AUTH automatically alongside the
+    USER_PASSWORD_AUTH flow we request -- assert it explicitly so a CDK
+    upgrade can't silently break the refresh flow the frontend BFF depends
+    on."""
+    template = _synth(AuthStack, environment)
+    clients = template.find_resources("AWS::Cognito::UserPoolClient")
+    (props,) = [r["Properties"] for r in clients.values()]
+    flows = set(props["ExplicitAuthFlows"])
+    assert "ALLOW_USER_PASSWORD_AUTH" in flows
+    assert "ALLOW_REFRESH_TOKEN_AUTH" in flows
+
+
 # --- PipelineStack -----------------------------------------------------
 
 
@@ -120,22 +148,42 @@ def test_pipeline_stack_has_redrive_policies(environment: str) -> None:
 # --- FrontendStack -------------------------------------------------------
 
 
+_FRONTEND_KWARGS = dict(
+    api_base_url="https://api.example.com",
+    cognito_client_id="test-client-id",
+    cognito_region="us-east-1",
+)
+
+
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_frontend_stack_synthesizes_without_a_build(environment: str) -> None:
     """No `.open-next` build exists in this checkout -> the placeholder Lambda
     code path is exercised, proving synth never hard-depends on a frontend
     build."""
-    template = _synth(FrontendStack, environment, api_base_url="https://api.example.com")
+    template = _synth(FrontendStack, environment, **_FRONTEND_KWARGS)
     template.resource_count_is("AWS::CloudFront::Distribution", 1)
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_frontend_stack_has_two_cache_behaviours(environment: str) -> None:
-    template = _synth(FrontendStack, environment, api_base_url="https://api.example.com")
+    template = _synth(FrontendStack, environment, **_FRONTEND_KWARGS)
     (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
     config = distribution["Properties"]["DistributionConfig"]
     assert "DefaultCacheBehavior" in config
     assert len(config["CacheBehaviors"]) == 1
+
+
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_frontend_stack_has_cognito_client_id_env(environment: str) -> None:
+    """The SSR Lambda's BFF route handlers (frontend/lib/cognito.ts) need
+    COGNITO_CLIENT_ID at runtime, not build time -- no NEXT_PUBLIC_* value."""
+    template = _synth(FrontendStack, environment, **_FRONTEND_KWARGS)
+    functions = template.find_resources(
+        "AWS::Lambda::Function",
+        {"Properties": {"Environment": {"Variables": Match.object_like({"BUCKET_NAME": Match.any_value()})}}},
+    )
+    (props,) = [r["Properties"] for r in functions.values()]
+    assert props["Environment"]["Variables"]["COGNITO_CLIENT_ID"] == "test-client-id"
 
 
 # --- Stack naming ----------------------------------------------------------
@@ -160,14 +208,13 @@ def test_stack_naming_convention(stack_cls, component, environment: str) -> None
 # --- ApiStack + full app wiring (requires Docker) ---------------------------
 
 
-@pytest.mark.docker
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_api_stack_synthesizes(environment: str) -> None:
+def _synth_api_stack(environment: str):
     from stacks.api_stack import ApiStack
 
     app = cdk.App()
     storage = StorageStack(app, f"TestStorage-{environment}", environment=environment)
     pipeline = PipelineStack(app, f"TestPipeline-{environment}", environment=environment)
+    auth = AuthStack(app, f"TestAuth-{environment}", environment=environment)
     api = ApiStack(
         app,
         f"TestApi-{environment}",
@@ -176,13 +223,49 @@ def test_api_stack_synthesizes(environment: str) -> None:
         audio_bucket=storage.audio_bucket,
         marks_bucket=storage.marks_bucket,
         extract_queue=pipeline.extract_queue,
+        user_pool=auth.user_pool,
+        user_pool_client=auth.user_pool_client,
         environment=environment,
         git_sha="test-sha",
     )
-    template = Template.from_stack(api)
+    return Template.from_stack(api)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_synthesizes(environment: str) -> None:
+    template = _synth_api_stack(environment)
+    # 1 API Lambda + 1 PreSignUp trigger Lambda (from the nested AuthStack
+    # construct tree -- but AuthStack is a separate stack, so only the API
+    # Lambda lands in *this* stack's template).
     template.resource_count_is("AWS::Lambda::Function", 1)
     template.resource_count_is("AWS::ApiGatewayV2::Api", 1)
 
     routes = template.find_resources("AWS::ApiGatewayV2::Route")
     route_keys = {r["Properties"]["RouteKey"] for r in routes.values()}
     assert any("/health" in key for key in route_keys)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_jwt_authorizer(environment: str) -> None:
+    """This is the regression test for the whole phase -- it is what proves
+    "protected route rejection without token" at the infra layer."""
+    template = _synth_api_stack(environment)
+
+    authorizers = template.find_resources("AWS::ApiGatewayV2::Authorizer")
+    assert len(authorizers) == 1
+    (authorizer_props,) = [r["Properties"] for r in authorizers.values()]
+    assert authorizer_props["AuthorizerType"] == "JWT"
+
+    routes = template.find_resources("AWS::ApiGatewayV2::Route")
+    by_key = {r["Properties"]["RouteKey"]: r["Properties"] for r in routes.values()}
+
+    proxy_route = by_key["ANY /{proxy+}"] if "ANY /{proxy+}" in by_key else next(
+        props for key, props in by_key.items() if "/{proxy+}" in key
+    )
+    assert proxy_route["AuthorizationType"] == "JWT"
+    assert "AuthorizerId" in proxy_route
+
+    health_route = next(props for key, props in by_key.items() if "/health" in key)
+    assert health_route["AuthorizationType"] == "NONE"

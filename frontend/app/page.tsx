@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiUrl } from "@/lib/api";
+import UserBadge from "@/components/UserBadge";
 
 type HealthState =
   | { status: "loading" }
@@ -61,8 +62,11 @@ export default function Home() {
         Read your PDFs aloud with word-level highlighting, synced to audio,
         plus a chat sidebar scoped to the section you&apos;re reading.
       </p>
-      <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 text-sm font-mono">
+      <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 text-sm font-mono mb-4">
         <HealthBadge />
+      </div>
+      <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 text-sm font-mono">
+        <UserBadge />
       </div>
     </main>
   );

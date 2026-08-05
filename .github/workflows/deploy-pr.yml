@@ -153,7 +153,10 @@ jobs:
             --api-url "${{ steps.deploy-backend.outputs.api_url }}" \
             --frontend-url "${{ steps.frontend-url.outputs.url }}" \
             --expect-commit "${{ github.sha }}" \
-            --expect-environment "${{ env.ENV_NAME }}"
+            --expect-environment "${{ env.ENV_NAME }}" \
+            --cognito-client-id "${{ steps.deploy-backend.outputs.user_pool_client_id }}" \
+            --cognito-region "${{ secrets.AWS_REGION }}" \
+            --auth-signup
 
       - name: Comment on PR with deployment URLs
         uses: actions/github-script@v9

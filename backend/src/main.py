@@ -16,6 +16,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.auth.controllers import router as auth_router
+from src.auth.local_dev import LocalAuthMiddleware, should_enable
 from src.config import settings
 from src.health.controllers import router as health_router
 from src.shared_kernel.domain.errors import DomainError
@@ -37,6 +39,10 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(auth_router)
+
+if should_enable(settings.environment):
+    app.add_middleware(LocalAuthMiddleware)
 
 
 @app.exception_handler(ClientError)

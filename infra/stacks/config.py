@@ -2,7 +2,9 @@
 
 The env var name constants (``ENV_*``) must stay in lockstep with
 ``backend/src/config.py``'s field names — separately deployed projects,
-cannot share an import; rename both or neither.
+cannot share an import; rename both or neither. The ``ENV_COGNITO_*``
+constants must also stay in lockstep with ``frontend/lib/cognito.ts``, which
+reads the same names off the SSR Lambda's runtime environment.
 """
 
 from __future__ import annotations
@@ -24,6 +26,13 @@ class Config:
 
     # --- env var name read by frontend/lib/api.ts ---
     ENV_API_BASE_URL = "NEXT_PUBLIC_API_BASE_URL"
+
+    # --- env vars set on the SSR Lambda, read by frontend/lib/cognito.ts ---
+    # Deliberately NOT NEXT_PUBLIC_* -- server-only, read at runtime by the
+    # Next.js BFF route handlers, never baked into the client bundle.
+    ENV_COGNITO_CLIENT_ID = "COGNITO_CLIENT_ID"
+    ENV_COGNITO_REGION = "COGNITO_REGION"
+    ENV_COGNITO_ENDPOINT = "COGNITO_ENDPOINT"  # local dev only (cognito-local); unset in AWS
 
 
 def is_prod(environment: str) -> bool:

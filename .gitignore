@@ -48,3 +48,4 @@ cdk.out/
 # --- Local secrets ---
 .env.local
 .env.*.local
+local/.cognito.env
