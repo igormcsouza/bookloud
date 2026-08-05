@@ -24,6 +24,14 @@ class Config:
     ENV_EXTRACT_QUEUE_URL = "EXTRACT_QUEUE_URL"
     ENV_LOG_LEVEL = "LOG_LEVEL"
 
+    # S3 key prefix for uploaded source PDFs -- must stay in lockstep with
+    # backend/src/contexts/library/infrastructure/s3_keys.py's
+    # ``SOURCE_PREFIX`` and local/setup.sh's notification filter (separately
+    # deployed projects, cannot share an import). Used as the S3 event
+    # notification's key-prefix filter in PipelineStack (PLANS/phase-3.md
+    # §6.1).
+    SOURCE_PDF_PREFIX = "books/"
+
     # --- env var name read by frontend/lib/api.ts ---
     ENV_API_BASE_URL = "NEXT_PUBLIC_API_BASE_URL"
 

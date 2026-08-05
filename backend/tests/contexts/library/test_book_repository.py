@@ -10,7 +10,7 @@ from src.contexts.library.domain.value_objects import BookStatus
 from src.contexts.library.infrastructure.dynamodb_book_repository import (
     DynamoDbBookRepository,
 )
-from src.shared_kernel.domain.errors import NotFoundError
+from src.shared_kernel.domain.errors import ConflictError, NotFoundError
 from tests.contexts.library.conftest import seed_book
 
 
@@ -201,3 +201,110 @@ def test_list_for_user_paginates() -> None:
         "PK": "USER#user-1",
         "SK": "BOOK#book-1",
     }
+
+
+# --- update_status: extraction kwargs (PLANS/phase-3.md §5.3) --------------
+
+
+def test_update_status_sets_chunks_total_page_count_and_updated_at(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+
+    book_repo.update_status(
+        "user-1",
+        "book-1",
+        BookStatus.EXTRACTED,
+        chunks_total=7,
+        page_count=42,
+        updated_at="2026-08-05T00:00:00+00:00",
+    )
+
+    fetched = book_repo.get("user-1", "book-1")
+    assert fetched.status == BookStatus.EXTRACTED
+    assert fetched.chunks_total == 7
+    assert fetched.page_count == 42
+    assert fetched.updated_at == "2026-08-05T00:00:00+00:00"
+
+
+def test_update_status_sets_failure_reason(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+
+    book_repo.update_status("user-1", "book-1", BookStatus.FAILED, failure_reason="CORRUPT_PDF")
+
+    fetched = book_repo.get("user-1", "book-1")
+    assert fetched.status == BookStatus.FAILED
+    assert fetched.failure_reason == "CORRUPT_PDF"
+
+
+def test_update_status_clear_failure_reason_removes_attribute(book_repo, dynamodb_table) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.FAILED, failure_reason="CORRUPT_PDF")
+
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, clear_failure_reason=True)
+
+    fetched = book_repo.get("user-1", "book-1")
+    assert fetched.failure_reason is None
+    # The attribute must be genuinely absent (REMOVE), not set to NULL --
+    # book_mapper.py's convention is "absent, not null" for failureReason.
+    raw_item = dynamodb_table.get_item(Key={"PK": "USER#user-1", "SK": "BOOK#book-1"})["Item"]
+    assert "failureReason" not in raw_item
+
+
+def test_update_status_failure_reason_and_clear_together_raises_value_error(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    with pytest.raises(ValueError):
+        book_repo.update_status(
+            "user-1",
+            "book-1",
+            BookStatus.FAILED,
+            failure_reason="CORRUPT_PDF",
+            clear_failure_reason=True,
+        )
+
+
+def test_update_status_without_kwargs_still_works_like_phase_2(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED)
+    assert book_repo.get("user-1", "book-1").status == BookStatus.EXTRACTED
+
+
+# --- update_status: expected_statuses / ConflictError vs NotFoundError -----
+
+
+def test_update_status_expected_statuses_succeeds_when_matching(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")  # UPLOADED by default
+
+    book_repo.update_status(
+        "user-1",
+        "book-1",
+        BookStatus.EXTRACTING,
+        expected_statuses=(BookStatus.UPLOADED, BookStatus.FAILED),
+    )
+
+    assert book_repo.get("user-1", "book-1").status == BookStatus.EXTRACTING
+
+
+def test_update_status_expected_statuses_conflict_when_not_matching(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTING)  # now EXTRACTING
+
+    # A second concurrent claim attempt must see ConflictError, not
+    # NotFoundError -- the book exists, it's just not in an expected state.
+    with pytest.raises(ConflictError):
+        book_repo.update_status(
+            "user-1",
+            "book-1",
+            BookStatus.EXTRACTING,
+            expected_statuses=(BookStatus.UPLOADED, BookStatus.FAILED),
+        )
+    # The claim attempt must not have mutated the book's status.
+    assert book_repo.get("user-1", "book-1").status == BookStatus.EXTRACTING
+
+
+def test_update_status_expected_statuses_not_found_when_book_missing(book_repo) -> None:
+    with pytest.raises(NotFoundError):
+        book_repo.update_status(
+            "user-1",
+            "no-such-book",
+            BookStatus.EXTRACTING,
+            expected_statuses=(BookStatus.UPLOADED, BookStatus.FAILED),
+        )

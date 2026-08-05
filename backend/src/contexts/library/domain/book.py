@@ -46,9 +46,19 @@ class Book:
     page_count: int
     created_at: str
     updated_at: str
+    source_key: str | None = None  # S3 key in pdf_bucket; set at creation (phase 3)
+    failure_reason: str | None = None  # ExtractionFailure value; None unless FAILED
 
     @classmethod
-    def create(cls, *, id: str, user_id: str, title_raw: object, now: datetime) -> Book:
+    def create(
+        cls,
+        *,
+        id: str,
+        user_id: str,
+        title_raw: object,
+        now: datetime,
+        source_key: str | None = None,
+    ) -> Book:
         if not isinstance(title_raw, str) or not title_raw.strip():
             raise ValidationError("Title is required")
         if not user_id or not user_id.strip():
@@ -69,4 +79,6 @@ class Book:
             page_count=0,
             created_at=timestamp,
             updated_at=timestamp,
+            source_key=source_key,
+            failure_reason=None,
         )

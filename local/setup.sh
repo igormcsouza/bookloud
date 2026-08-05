@@ -41,6 +41,31 @@ for base in extract synthesize; do
     || echo "  (bookloud-local-${base} already exists)"
 done
 
+echo "Configuring S3 -> SQS notification on the pdf bucket (idempotent) ..."
+# S3 -> SQS is long-standing LocalStack *community* functionality (no
+# SERVICES change, no Pro token) -- PLANS/phase-3.md §9.1. Mirrors
+# infra/stacks/pipeline_stack.py's real notification: prefix "books/", suffix
+# ".pdf", targeting the extract queue. put-bucket-notification-configuration
+# replaces the whole config each call, so this is naturally idempotent.
+awslocal s3api put-bucket-notification-configuration \
+  --bucket bookloud-local-pdfs \
+  --notification-configuration '{
+    "QueueConfigurations": [
+      {
+        "QueueArn": "arn:aws:sqs:us-east-1:000000000000:bookloud-local-extract",
+        "Events": ["s3:ObjectCreated:*"],
+        "Filter": {
+          "Key": {
+            "FilterRules": [
+              {"Name": "prefix", "Value": "books/"},
+              {"Name": "suffix", "Value": ".pdf"}
+            ]
+          }
+        }
+      }
+    ]
+  }'
+
 echo "Bootstrapping cognito-local (pool/client/dev user) ..."
 # The retry *is* the readiness check -- cognito-local's own health endpoint
 # isn't worth depending on; just keep hitting the bootstrap script until it

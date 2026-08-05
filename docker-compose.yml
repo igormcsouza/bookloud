@@ -51,6 +51,11 @@ services:
       - AUDIO_BUCKET=bookloud-local-audio
       - MARKS_BUCKET=bookloud-local-marks
       - EXTRACT_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-extract
+      # generate_presigned_post signs URLs against the client's own endpoint
+      # (AWS_ENDPOINT_URL, i.e. http://localstack:4566 inside compose) --
+      # unreachable from the browser on the host. This override makes
+      # presigned upload URLs host-reachable (PLANS/phase-3.md §9.4).
+      - S3_PUBLIC_ENDPOINT_URL=http://localhost:4566
       # Used only by local/cognito_bootstrap.py (run inside this container --
       # it already has boto3), not by the app itself: the backend never
       # talks to Cognito directly (see PLANS/phase-1.md §1).
@@ -63,6 +68,33 @@ services:
         condition: service_healthy
       cognito-local:
         condition: service_started
+
+  # Runs the same handle_records the extract Lambda's `handler` calls, in a
+  # poll loop against LocalStack's SQS instead of a real event source mapping
+  # -- LocalStack community can't run our container-image Lambda (PLANS/
+  # phase-3.md §9.2).
+  extract-worker:
+    build:
+      context: ./backend
+      target: dev
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=local
+      - GIT_SHA=local
+      - LOG_LEVEL=DEBUG
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=local
+      - AWS_SECRET_ACCESS_KEY=local
+      - TABLE_NAME=bookloud-local
+      - PDF_BUCKET=bookloud-local-pdfs
+      - EXTRACT_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-extract
+    volumes:
+      - ./backend:/app
+    command: ["uv", "run", "python", "-m", "src.contexts.library.interface.local_extract_worker"]
+    depends_on:
+      localstack:
+        condition: service_healthy
 
   frontend:
     profiles: ["ui"]

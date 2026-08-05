@@ -8,6 +8,7 @@ Uses the boto3 **resource** API (``Table``), not the low-level client, so no
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from boto3.dynamodb.conditions import Key
@@ -18,7 +19,7 @@ from src.contexts.library.domain.value_objects import BookStatus
 from src.contexts.library.infrastructure.book_mapper import book_to_item, item_to_book
 from src.contexts.library.infrastructure.keys import BOOK_PREFIX, PK, SK, pk_user, sk_book
 from src.infrastructure.dynamodb import library_table
-from src.shared_kernel.domain.errors import NotFoundError
+from src.shared_kernel.domain.errors import ConflictError, NotFoundError
 
 
 class DynamoDbBookRepository:
@@ -64,20 +65,76 @@ class DynamoDbBookRepository:
     def delete(self, user_id: str, book_id: str) -> None:
         self._table.delete_item(Key={PK: pk_user(user_id), SK: sk_book(book_id)})
 
-    def update_status(self, user_id: str, book_id: str, status: BookStatus) -> None:
+    def update_status(
+        self,
+        user_id: str,
+        book_id: str,
+        status: BookStatus,
+        *,
+        expected_statuses: Sequence[BookStatus] | None = None,
+        chunks_total: int | None = None,
+        page_count: int | None = None,
+        failure_reason: str | None = None,
+        clear_failure_reason: bool = False,
+        updated_at: str | None = None,
+    ) -> None:
+        if failure_reason is not None and clear_failure_reason:
+            # Programming error, not a domain error -- the caller asked to
+            # both set and clear the same attribute in one call.
+            raise ValueError("failure_reason and clear_failure_reason are mutually exclusive")
+
+        # `status` is a DynamoDB reserved word -- must be aliased in any
+        # UpdateExpression/ProjectionExpression/ConditionExpression.
+        set_clauses = ["#status = :status"]
+        names: dict[str, str] = {"#status": "status"}
+        values: dict[str, Any] = {":status": status.value}
+
+        if chunks_total is not None:
+            set_clauses.append("chunksTotal = :chunksTotal")
+            values[":chunksTotal"] = chunks_total
+        if page_count is not None:
+            set_clauses.append("pageCount = :pageCount")
+            values[":pageCount"] = page_count
+        if failure_reason is not None:
+            set_clauses.append("failureReason = :failureReason")
+            values[":failureReason"] = failure_reason
+        if updated_at is not None:
+            set_clauses.append("updatedAt = :updatedAt")
+            values[":updatedAt"] = updated_at
+
+        update_expression = "SET " + ", ".join(set_clauses)
+        if clear_failure_reason:
+            # A single UpdateExpression may combine SET and REMOVE.
+            # failureReason is absent (not NULL) when unset -- see
+            # book_mapper.py -- so retrying a previously FAILED book must
+            # REMOVE it, not SET it to None.
+            update_expression += " REMOVE failureReason"
+
+        condition_expression = "attribute_exists(PK)"
+        if expected_statuses:
+            expected_names = [f":exp{i}" for i in range(len(expected_statuses))]
+            for name, expected in zip(expected_names, expected_statuses):
+                values[name] = expected.value
+            condition_expression += f" AND #status IN ({', '.join(expected_names)})"
+
         try:
             self._table.update_item(
                 Key={PK: pk_user(user_id), SK: sk_book(book_id)},
-                # `status` is a DynamoDB reserved word -- must be aliased in
-                # any UpdateExpression/ProjectionExpression/ConditionExpression.
-                UpdateExpression="SET #status = :status",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={":status": status.value},
-                ConditionExpression="attribute_exists(PK)",
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ConditionExpression=condition_expression,
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                raise NotFoundError("Book not found") from exc
+                # Disambiguate "book is gone" from "book exists but failed
+                # the expected_statuses condition" -- without this the
+                # atomic EXTRACTING claim (PLANS/phase-3.md §8.2) can't tell
+                # a genuinely missing book from one already claimed by
+                # another concurrent invocation.
+                if self.get(user_id, book_id) is None:
+                    raise NotFoundError("Book not found") from exc
+                raise ConflictError("Book is not in an expected status") from exc
             raise
 
     def increment_chunks_done(self, user_id: str, book_id: str) -> int:

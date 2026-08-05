@@ -5,13 +5,16 @@ synced to audio, plus a chat sidebar for asking questions about the book,
 scoped to the section currently being read.
 
 Built phase by phase per `IMPLEMENTATION_PLAN.md`. This repo is currently at
-**Phase 2**: Storage & data model. Every non-public backend route requires a
-valid Cognito JWT; the frontend has working login/logout/session-refresh via
-a Next.js backend-for-frontend; local dev emulates Cognito with
-`jagregory/cognito-local`. The backend's `Library` bounded context now owns
-`Book`/`Chunk` CRUD against the single DynamoDB table (`GET /books`,
-`GET /books/{id}`; creation is unit-tested but has no route yet -- phase 3's
-presigned-upload endpoint calls it).
+**Phase 3**: Upload & extraction pipeline. Every non-public backend route
+requires a valid Cognito JWT; the frontend has working login/logout/
+session-refresh via a Next.js backend-for-frontend; local dev emulates
+Cognito with `jagregory/cognito-local`. The backend's `Library` bounded
+context owns `Book`/`Chunk` CRUD against the single DynamoDB table, plus (new
+in phase 3) the full upload -> extract pipeline: `POST /books` creates a book
+and returns a presigned S3 upload; the PDF landing in the bucket fires an S3
+event -> SQS -> the extract Lambda, which runs PyMuPDF text extraction
+(filtering running headers/footers/footnotes), chunks the text, writes
+`CHUNK#n` rows, and flips the book to `EXTRACTED` (or `FAILED` + a reason).
 
 ## Library context (backend)
 
@@ -20,17 +23,42 @@ the repo's `{domain,application,infrastructure,interface}` layout:
 
 ```
 library/
-├── domain/          Book (aggregate root), Chunk (its own aggregate --
-│                    see below), BookStatus/ChunkStatus, BookRepository/
-│                    ChunkRepository (Protocols, no ABCs)
-├── application/      CreateBook, GetBook, ListBooks, DeleteBook,
-│                    ListBookChunks use cases
-├── infrastructure/   keys.py (PK/SK helpers), book_mapper.py/
-│                    chunk_mapper.py (dict <-> entity), the two DynamoDB
-│                    repository adapters
+├── domain/           Book (aggregate root, now carries sourceKey/
+│                    failureReason), Chunk (its own aggregate -- see
+│                    below, now carries pageStart/pageEnd),
+│                    BookStatus/ChunkStatus/ExtractionFailure,
+│                    BookRepository/ChunkRepository/PdfStorage/
+│                    PdfTextExtractor (Protocols, no ABCs), plus two pure
+│                    (no pymupdf/boto3) modules: layout.py (header/footer/
+│                    footnote policy) and chunking.py (text -> chunk
+│                    boundaries)
+├── application/      RequestBookUpload (create + presign, replaces
+│                    phase 2's CreateBook), ReissueBookUpload, GetBook,
+│                    ListBooks, DeleteBook, ListBookChunks, ExtractBook
+│                    (the extract Lambda's use case) use cases
+├── infrastructure/   keys.py/s3_keys.py (PK/SK + S3 key helpers),
+│                    book_mapper.py/chunk_mapper.py (dict <-> entity),
+│                    the two DynamoDB repository adapters,
+│                    s3_pdf_storage.py (presigned POST + get_bytes),
+│                    pymupdf_extractor.py (the only module importing
+│                    pymupdf)
 └── interface/        FastAPI Depends providers, camelCase response
-                     schemas, GET /books + GET /books/{id} controllers
+                     schemas, POST /books + POST /books/{id}/upload-url +
+                     GET /books + GET /books/{id} + GET /books/{id}/chunks
+                     controllers, extract_handler.py (the SQS Lambda
+                     handler), local_extract_worker.py (the LocalStack-dev
+                     poll-loop equivalent)
 ```
+
+**Upload contract** (what the phase 6 reader UI will call): `POST /books
+{"title": "..."}` returns `{book, upload: {url, fields, key, expiresIn,
+maxBytes}}`. Build a `FormData`, append every entry of `upload.fields` first,
+append the file **last** under the field name `file` (S3 ignores anything
+after the file field), `POST` to `upload.url`, expect `204`. Then poll
+`GET /books/{id}` until `status` is `EXTRACTED`/`FAILED`, and
+`GET /books/{id}/chunks` for the extracted text. `POST /books/{id}/upload-url`
+re-issues a presigned upload for retry (only while `status` is
+`UPLOADED`/`FAILED`; `409` otherwise).
 
 **Single-table key patterns** (table: `bookloud-<env>`, PK/SK both strings):
 
@@ -119,9 +147,10 @@ them to choose their own password before they can use the app.
 Requires Docker, Python 3.12+, Node 24, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-make up      # LocalStack + cognito-local + backend (uvicorn, hot reload) on :8000
+make up      # LocalStack + cognito-local + backend (uvicorn, hot reload) +
+             # extract-worker (poll loop over the extract queue) on :8000
 make ui      # + Next.js frontend on :3000 (optional)
-make smoke   # smoke test against the running stack
+make smoke   # smoke test against the running stack (incl. upload + extraction)
 make down    # tear everything down
 ```
 
@@ -154,9 +183,12 @@ bookloud/
 ├── backend/    FastAPI, DDD-flavoured (contexts/<ctx>/{domain,application,
 │               infrastructure,interface}, shared_kernel/), packaged as a
 │               Lambda container image. GET /health, GET /me (auth),
-│               GET /books + GET /books/{id} (contexts/library/, phase 2)
-│               today; the extraction/TTS pipeline and chat land in phases
-│               3-7. src/auth/ is cross-cutting, not a context.
+│               the full Library upload/extraction surface
+│               (contexts/library/, phases 2-3) today; TTS synthesis and
+│               chat land in phases 4-7. src/auth/ is cross-cutting, not a
+│               context. The same image also backs the extract Lambda
+│               (infra/stacks/pipeline_stack.py), differing only by its
+│               container `cmd`.
 ├── frontend/   Next.js 15 (App Router) + Tailwind, deployed via OpenNext to
 │               Lambda + CloudFront. Landing page, login (incl. forced
 │               first-login password change), and the auth BFF route
@@ -165,14 +197,21 @@ bookloud/
 │               the UI (admin-only provisioning, see Auth model above).
 ├── infra/      Python CDK app: AuthStack (Cognito, self_sign_up_enabled=
 │               False, PreSignUp trigger kept but unreachable), StorageStack
-│               (DynamoDB + S3), ApiStack (HTTP API + Lambda + Cognito JWT
-│               authorizer), PipelineStack (SQS), FrontendStack (CloudFront +
-│               Lambda + S3).
-├── local/      docker-compose helper scripts: setup.sh seeds LocalStack +
+│               (DynamoDB + S3), PipelineStack (extract/synthesize SQS
+│               queues + DLQs, the extract Lambda, and its S3 -> SQS
+│               notification), ApiStack (HTTP API + Lambda + Cognito JWT
+│               authorizer), FrontendStack (CloudFront + Lambda + S3).
+│               Dependency order: Storage -> Pipeline -> Api -> Frontend
+│               (Auth feeds into Api and Frontend too).
+├── local/      docker-compose helper scripts: setup.sh seeds LocalStack
+│               (table/buckets/queues + the S3 -> SQS notification) +
 │               bootstraps cognito-local, cognito_bootstrap.py provisions
 │               the local Cognito pool/client/dev user + newuser (temp
 │               password), smoke_test.py is the stdlib-only smoke test used
-│               locally, in CI, and against every deployed environment.
+│               locally, in CI, and against every deployed environment. The
+│               `extract-worker` compose service runs the extract Lambda's
+│               handler code in a poll loop (LocalStack community can't run
+│               our container-image Lambda).
 ├── docker-compose.yml, Makefile
 ├── .github/workflows/   ci.yml (reusable), deploy-pr.yml, destroy-pr.yml,
 │                        deploy-prod.yml

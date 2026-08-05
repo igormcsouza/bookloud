@@ -6,6 +6,6 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class CreateBookCommand:
+class RequestBookUploadCommand:
     user_id: str
     title: str

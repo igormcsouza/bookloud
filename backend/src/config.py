@@ -32,5 +32,13 @@ class Settings(BaseSettings):
     # local dev so every AWS client talks to LocalStack instead.
     aws_endpoint_url: str = ""
 
+    # PLANS/phase-3.md §9.4: generate_presigned_post builds URLs from the
+    # signing client's endpoint, so inside compose that would be
+    # http://localstack:4566/... -- unreachable from the browser/host. Set to
+    # http://localhost:4566 in compose so presigned upload URLs are
+    # host-reachable; empty (falls back to aws_endpoint_url, i.e. None in
+    # real AWS) everywhere else. Never set by CDK.
+    s3_public_endpoint_url: str = ""
+
 
 settings = Settings()

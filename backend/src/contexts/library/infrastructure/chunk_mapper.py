@@ -31,6 +31,8 @@ def chunk_to_item(chunk: Chunk) -> dict:
         "audioKey": chunk.audio_key,
         "marksKey": chunk.marks_key,
         "status": chunk.status.value,
+        "pageStart": chunk.page_start,
+        "pageEnd": chunk.page_end,
     }
 
 
@@ -55,4 +57,6 @@ def item_to_chunk(item: dict) -> Chunk:
         audio_key=item.get("audioKey"),
         marks_key=item.get("marksKey"),
         status=ChunkStatus.parse(item.get("status", ChunkStatus.PENDING.value)),
+        page_start=int(item.get("pageStart", 0)),
+        page_end=int(item.get("pageEnd", 0)),
     )

@@ -139,23 +139,114 @@ def test_auth_stack_client_explicit_auth_flows(environment: str) -> None:
 
 
 # --- PipelineStack -----------------------------------------------------
+#
+# PipelineStack now builds a DockerImageFunction (the extract Lambda, phase
+# 3), so every synth here requires a Docker daemon -- see this module's
+# docstring. `_synth_pipeline_stack` builds a StorageStack first (the extract
+# Lambda's re-imported pdf_bucket + table come from it).
 
 
+def _synth_pipeline_stack(environment: str) -> Template:
+    app = cdk.App()
+    storage = StorageStack(app, f"TestStorageForPipeline-{environment}", environment=environment)
+    pipeline = PipelineStack(
+        app,
+        f"TestPipeline-{environment}",
+        environment=environment,
+        pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        table=storage.table,
+        git_sha="test-sha",
+    )
+    return Template.from_stack(pipeline)
+
+
+@pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_synthesizes(environment: str) -> None:
-    template = _synth(PipelineStack, environment)
+    template = _synth_pipeline_stack(environment)
     template.resource_count_is("AWS::SQS::Queue", 4)
+    # The extract Lambda + the (auto-created, inline-Python, no-Docker)
+    # BucketNotificationsHandler singleton that an *imported* bucket's
+    # add_event_notification synthesizes.
+    template.resource_count_is("AWS::Lambda::Function", 2)
 
 
+@pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_has_redrive_policies(environment: str) -> None:
-    template = _synth(PipelineStack, environment)
+    template = _synth_pipeline_stack(environment)
     queues_with_redrive = template.find_resources(
         "AWS::SQS::Queue", {"Properties": {"RedrivePolicy": Match.any_value()}}
     )
     # extract + synthesize each have a redrive policy pointing at their DLQ;
     # the two DLQs themselves do not.
     assert len(queues_with_redrive) == 2
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_extract_queue_visibility_timeout(environment: str) -> None:
+    """6x the extract Lambda's 120s timeout (AWS's guidance) -- a shorter
+    visibility timeout would cause duplicate concurrent invocations on the
+    same message."""
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::SQS::Queue",
+        {"QueueName": Match.string_like_regexp("^bookloud-.*-extract$"), "VisibilityTimeout": 720},
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_has_s3_bucket_notification(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.resource_count_is("Custom::S3BucketNotifications", 1)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_queue_policy_allows_s3_to_send(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    policies = template.find_resources("AWS::SQS::QueuePolicy")
+    assert len(policies) == 1
+    (props,) = [p["Properties"] for p in policies.values()]
+    principals = [
+        stmt["Principal"].get("Service")
+        for stmt in props["PolicyDocument"]["Statement"]
+        if isinstance(stmt.get("Principal"), dict)
+    ]
+    assert "s3.amazonaws.com" in principals
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_extract_lambda_event_source_mapping(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.resource_count_is("AWS::Lambda::EventSourceMapping", 1)
+    template.has_resource_properties("AWS::Lambda::EventSourceMapping", {"BatchSize": 1})
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_extract_lambda_role_grants(environment: str) -> None:
+    """Regression guard on `pdf_bucket.grant_read(extract_fn)` +
+    `table.grant_read_write_data(extract_fn)` -- the extract Lambda actually
+    depends on GetObject (fetch the source PDF) and UpdateItem (the
+    EXTRACTING claim / status flip via BookRepository.update_status)."""
+    template = _synth_pipeline_stack(environment)
+
+    policies = template.find_resources("AWS::IAM::Policy")
+    actions: list[str] = []
+    for policy in policies.values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+
+    assert "s3:GetObject*" in actions or "s3:GetObject" in actions
+    assert "dynamodb:UpdateItem" in actions
 
 
 # --- FrontendStack -------------------------------------------------------
@@ -202,13 +293,31 @@ def test_frontend_stack_has_cognito_client_id_env(environment: str) -> None:
 # --- Stack naming ----------------------------------------------------------
 
 
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_naming_convention(environment: str) -> None:
+    # PipelineStack now requires Docker (it builds the extract Lambda's
+    # image), so it's out of the generic, Docker-free naming test below and
+    # gets its own docker-marked version instead.
+    app = cdk.App()
+    construct_id = f"BookloudPipeline-{environment}"
+    storage = StorageStack(app, f"TestStorageForNaming-{environment}", environment=environment)
+    stack = PipelineStack(
+        app,
+        construct_id,
+        environment=environment,
+        pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        table=storage.table,
+    )
+    assert stack.stack_name == construct_id
+
+
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 @pytest.mark.parametrize(
     "stack_cls,component",
     [
         (StorageStack, "Storage"),
         (AuthStack, "Auth"),
-        (PipelineStack, "Pipeline"),
     ],
 )
 def test_stack_naming_convention(stack_cls, component, environment: str) -> None:
@@ -226,7 +335,13 @@ def _synth_api_stack(environment: str):
 
     app = cdk.App()
     storage = StorageStack(app, f"TestStorage-{environment}", environment=environment)
-    pipeline = PipelineStack(app, f"TestPipeline-{environment}", environment=environment)
+    pipeline = PipelineStack(
+        app,
+        f"TestPipeline-{environment}",
+        environment=environment,
+        pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        table=storage.table,
+    )
     auth = AuthStack(app, f"TestAuth-{environment}", environment=environment)
     api = ApiStack(
         app,

@@ -73,6 +73,33 @@ def test_item_to_book_missing_optional_attrs_defaults() -> None:
     assert book.updated_at == ""
 
 
+def test_book_to_item_writes_source_key() -> None:
+    item = book_to_item(_book(source_key="books/user-1/book-1/source.pdf"))
+    assert item["sourceKey"] == "books/user-1/book-1/source.pdf"
+
+
+def test_book_to_item_omits_failure_reason_when_none() -> None:
+    item = book_to_item(_book(failure_reason=None))
+    assert "failureReason" not in item
+
+
+def test_book_to_item_writes_failure_reason_when_set() -> None:
+    item = book_to_item(_book(failure_reason="CORRUPT_PDF"))
+    assert item["failureReason"] == "CORRUPT_PDF"
+
+
+def test_item_to_book_source_key_and_failure_reason_absent_map_to_none() -> None:
+    item = {
+        PK: "USER#user-1",
+        SK: "BOOK#book-1",
+        "bookId": "book-1",
+        "userId": "user-1",
+    }
+    book = item_to_book(item)
+    assert book.source_key is None
+    assert book.failure_reason is None
+
+
 def test_item_to_book_ignores_unknown_attrs() -> None:
     item = book_to_item(_book())
     item["someFutureAttribute"] = "unrelated"
@@ -149,6 +176,34 @@ def test_audio_marks_key_absent_maps_to_none() -> None:
     chunk = item_to_chunk(item)
     assert chunk.audio_key is None
     assert chunk.marks_key is None
+
+
+def test_chunk_to_item_writes_page_start_end() -> None:
+    item = chunk_to_item(_chunk(page_start=3, page_end=5))
+    assert item["pageStart"] == 3
+    assert item["pageEnd"] == 5
+
+
+def test_item_to_chunk_coerces_decimal_page_start_end() -> None:
+    item = chunk_to_item(_chunk(page_start=3, page_end=5))
+    item["pageStart"] = Decimal("3")
+    item["pageEnd"] = Decimal("5")
+    chunk = item_to_chunk(item)
+    assert chunk.page_start == 3
+    assert isinstance(chunk.page_start, int)
+    assert chunk.page_end == 5
+
+
+def test_item_to_chunk_page_start_end_default_to_zero_when_missing() -> None:
+    item = {
+        PK: "BOOK#book-1",
+        SK: "CHUNK#000000",
+        "bookId": "book-1",
+        "chunkIndex": 0,
+    }
+    chunk = item_to_chunk(item)
+    assert chunk.page_start == 0
+    assert chunk.page_end == 0
 
 
 def test_item_to_chunk_falls_back_to_sk_when_chunk_index_missing() -> None:

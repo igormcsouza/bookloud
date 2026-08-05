@@ -38,6 +38,19 @@ def test_book_create_strips_title() -> None:
     assert book.title == "Padded"
 
 
+def test_book_create_sets_source_key_when_provided() -> None:
+    book = Book.create(
+        id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW, source_key="books/user-1/book-1/source.pdf"
+    )
+    assert book.source_key == "books/user-1/book-1/source.pdf"
+
+
+def test_book_create_defaults_source_key_and_failure_reason_to_none() -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+    assert book.source_key is None
+    assert book.failure_reason is None
+
+
 @pytest.mark.parametrize("bad_title", ["", "   ", None, 123])
 def test_book_create_rejects_blank_or_non_str_title(bad_title: object) -> None:
     with pytest.raises(ValidationError):
@@ -82,6 +95,43 @@ def test_chunk_create_char_end_equal_char_start_is_ok() -> None:
         book_id="book-1", user_id="user-1", index=0, text="", char_start=5, char_end=5
     )
     assert chunk.char_start == chunk.char_end == 5
+
+
+def test_chunk_create_defaults_page_start_end_to_zero() -> None:
+    chunk = Chunk.create(
+        book_id="book-1", user_id="user-1", index=0, text="hello", char_start=0, char_end=5
+    )
+    assert chunk.page_start == 0
+    assert chunk.page_end == 0
+
+
+def test_chunk_create_sets_page_start_end_when_provided() -> None:
+    chunk = Chunk.create(
+        book_id="book-1",
+        user_id="user-1",
+        index=0,
+        text="hello",
+        char_start=0,
+        char_end=5,
+        page_start=2,
+        page_end=3,
+    )
+    assert chunk.page_start == 2
+    assert chunk.page_end == 3
+
+
+def test_chunk_create_page_end_before_page_start_raises() -> None:
+    with pytest.raises(ValidationError):
+        Chunk.create(
+            book_id="book-1",
+            user_id="user-1",
+            index=0,
+            text="x",
+            char_start=0,
+            char_end=1,
+            page_start=5,
+            page_end=2,
+        )
 
 
 # --- BookStatus / ChunkStatus parsing ----------------------------------------

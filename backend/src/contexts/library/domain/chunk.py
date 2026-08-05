@@ -24,6 +24,8 @@ class Chunk:
     audio_key: str | None
     marks_key: str | None
     status: ChunkStatus
+    page_start: int = 0  # 1-based, inclusive; 0 default keeps phase-2 fixtures compiling
+    page_end: int = 0  # 1-based, inclusive
 
     @classmethod
     def create(
@@ -35,11 +37,15 @@ class Chunk:
         text: str,
         char_start: int,
         char_end: int,
+        page_start: int = 0,
+        page_end: int = 0,
     ) -> Chunk:
         if index < 0:
             raise ValidationError("Chunk index must be non-negative")
         if char_end < char_start:
             raise ValidationError("char_end must be >= char_start")
+        if page_end < page_start:
+            raise ValidationError("page_end must be >= page_start")
 
         return cls(
             book_id=book_id,
@@ -51,4 +57,6 @@ class Chunk:
             audio_key=None,
             marks_key=None,
             status=ChunkStatus.PENDING,
+            page_start=page_start,
+            page_end=page_end,
         )
