@@ -40,7 +40,7 @@ export default function UserBadge() {
 
   if (me.status === "loading") {
     return (
-      <span className="text-slate-400" role="status">
+      <span className="text-sage" role="status">
         Checking session…
       </span>
     );
@@ -56,12 +56,12 @@ export default function UserBadge() {
 
   return (
     <div className="flex items-center justify-between gap-4">
-      <span className="text-emerald-300" role="status">
+      <span className="text-moss-300" role="status">
         Signed in as {me.username}
       </span>
       <button
         onClick={handleSignOut}
-        className="text-sm text-slate-300 hover:text-white underline"
+        className="text-sm text-sage hover:text-paper underline"
       >
         Sign out
       </button>

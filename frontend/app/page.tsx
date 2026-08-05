@@ -33,7 +33,7 @@ function HealthBadge() {
 
   if (health.status === "loading") {
     return (
-      <span className="text-slate-400" role="status">
+      <span className="text-sage" role="status">
         API: checking…
       </span>
     );
@@ -41,7 +41,7 @@ function HealthBadge() {
 
   if (health.status === "ok") {
     return (
-      <span className="text-emerald-300" role="status">
+      <span className="text-moss-300" role="status">
         API: ok ({health.commit})
       </span>
     );
@@ -57,15 +57,15 @@ function HealthBadge() {
 export default function Home() {
   return (
     <main className="max-w-2xl mx-auto py-16 px-4">
-      <h1 className="text-4xl font-bold text-indigo-300 mb-3">Bookloud</h1>
-      <p className="text-slate-300 mb-6">
+      <h1 className="text-4xl font-bold text-moss-300 mb-3">Bookloud</h1>
+      <p className="text-sage mb-6">
         Read your PDFs aloud with word-level highlighting, synced to audio,
         plus a chat sidebar scoped to the section you&apos;re reading.
       </p>
-      <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 text-sm font-mono mb-4">
+      <div className="bg-ink-900 border border-ink-800 rounded-lg px-4 py-3 text-sm font-mono mb-4">
         <HealthBadge />
       </div>
-      <div className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 text-sm font-mono">
+      <div className="bg-ink-900 border border-ink-800 rounded-lg px-4 py-3 text-sm font-mono">
         <UserBadge />
       </div>
     </main>

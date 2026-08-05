@@ -93,7 +93,7 @@ export default function SignupForm({ emailRequired }: SignupFormProps) {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
+              className="w-full bg-moss-500 hover:bg-moss-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
             >
               {submitting ? "Confirming…" : "Confirm"}
             </button>
@@ -167,15 +167,15 @@ export default function SignupForm({ emailRequired }: SignupFormProps) {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
+            className="w-full bg-moss-500 hover:bg-moss-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
           >
             {submitting ? "Creating account…" : "Sign up"}
           </button>
         </div>
 
-        <p className="text-sm text-slate-400 text-center">
+        <p className="text-sm text-sage text-center">
           Already have an account?{" "}
-          <Link href="/login" className="text-indigo-300 hover:underline">
+          <Link href="/login" className="text-moss-300 hover:underline">
             Sign in
           </Link>
         </p>

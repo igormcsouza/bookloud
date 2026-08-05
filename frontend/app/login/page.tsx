@@ -99,7 +99,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
+              className="w-full bg-moss-500 hover:bg-moss-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
             >
               {submitting ? "Setting password…" : "Set password"}
             </button>
@@ -145,7 +145,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
+            className="w-full bg-moss-500 hover:bg-moss-400 disabled:opacity-50 text-white font-semibold py-2 rounded-lg"
           >
             {submitting ? "Signing in…" : "Sign in"}
           </button>
