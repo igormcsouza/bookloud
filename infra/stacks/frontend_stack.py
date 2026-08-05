@@ -33,6 +33,8 @@ class FrontendStack(cdk.Stack):
         construct_id: str,
         *,
         api_base_url: str,
+        cognito_client_id: str,
+        cognito_region: str,
         environment: str,
         **kwargs,
     ) -> None:
@@ -75,6 +77,16 @@ class FrontendStack(cdk.Stack):
             timeout=cdk.Duration.seconds(30),
             environment={
                 Config.ENV_API_BASE_URL: api_base_url,
+                # Server-only, deliberately NOT NEXT_PUBLIC_* -- read at
+                # runtime by the Next.js BFF route handlers
+                # (frontend/lib/cognito.ts), never baked into the client
+                # bundle. No COGNITO_ENDPOINT: unset/empty in AWS makes
+                # lib/cognito.ts derive the real Cognito regional endpoint.
+                Config.ENV_COGNITO_CLIENT_ID: cognito_client_id,
+                Config.ENV_COGNITO_REGION: cognito_region,
+                # Read by the signup route handler to enforce Q3 (email
+                # required only in prod) server-side.
+                Config.ENV_ENVIRONMENT: environment,
                 # OpenNext reads BUCKET_NAME to locate ISR cache in S3.
                 "BUCKET_NAME": self.assets_bucket.bucket_name,
             },

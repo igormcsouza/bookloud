@@ -1,5 +1,10 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+}));
+
 import Home from "@/app/page";
 
 afterEach(() => {
@@ -19,7 +24,7 @@ describe("Home", () => {
     render(<Home />);
     expect(screen.getByRole("heading", { name: "Bookloud" })).toBeInTheDocument();
     expect(screen.getByText(/word-level highlighting/i)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("API: ok"));
+    await waitFor(() => expect(screen.getByText(/^API:/)).toHaveTextContent("API: ok"));
   });
 
   it("shows the API health badge as ok when the backend responds", async () => {
@@ -32,7 +37,7 @@ describe("Home", () => {
     );
     render(<Home />);
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("API: ok (abc1234)"),
+      expect(screen.getByText(/^API:/)).toHaveTextContent("API: ok (abc1234)"),
     );
   });
 
@@ -40,7 +45,7 @@ describe("Home", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
     render(<Home />);
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("API: unreachable"),
+      expect(screen.getByText(/^API:/)).toHaveTextContent("API: unreachable"),
     );
   });
 
@@ -51,7 +56,7 @@ describe("Home", () => {
     );
     render(<Home />);
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("API: unreachable"),
+      expect(screen.getByText(/^API:/)).toHaveTextContent("API: unreachable"),
     );
   });
 });

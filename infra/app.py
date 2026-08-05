@@ -29,8 +29,7 @@ pipeline = PipelineStack(
     app, stack_name("Pipeline", environment), environment=environment, env=env
 )
 
-# Api imports Storage + Pipeline. AuthStack is intentionally not referenced
-# here in Phase 0 -- Phase 1 adds the JWT authorizer wiring.
+# Api imports Storage + Pipeline + Auth (the Cognito JWT authorizer).
 api = ApiStack(
     app,
     stack_name("Api", environment),
@@ -39,16 +38,24 @@ api = ApiStack(
     audio_bucket=storage.audio_bucket,
     marks_bucket=storage.marks_bucket,
     extract_queue=pipeline.extract_queue,
+    user_pool=auth.user_pool,
+    user_pool_client=auth.user_pool_client,
     environment=environment,
     git_sha=git_sha,
     env=env,
 )
 
-# Frontend imports Api.
+# Frontend imports Api + Auth (Cognito config for the SSR Lambda's BFF route
+# handlers). Dependency graph: Storage, Auth, Pipeline -> Api -> Frontend,
+# with Auth -> Frontend as well. Teardown order in destroy-pr.yml
+# (Frontend -> Api -> Pipeline -> Auth -> Storage) is already correct for
+# this and needs no change.
 FrontendStack(
     app,
     stack_name("Frontend", environment),
     api_base_url=api.http_api.url or "",
+    cognito_client_id=auth.user_pool_client.user_pool_client_id,
+    cognito_region=auth.region,
     environment=environment,
     env=env,
 )

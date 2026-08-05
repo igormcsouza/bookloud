@@ -41,6 +41,23 @@ for base in extract synthesize; do
     || echo "  (bookloud-local-${base} already exists)"
 done
 
+echo "Bootstrapping cognito-local (pool/client/dev user) ..."
+# The retry *is* the readiness check -- cognito-local's own health endpoint
+# isn't worth depending on; just keep hitting the bootstrap script until it
+# succeeds (it's idempotent).
+cognito_ready=false
+for _ in $(seq 1 20); do
+  if docker compose exec -T backend uv run python /local-shared/cognito_bootstrap.py; then
+    cognito_ready=true
+    break
+  fi
+  sleep 2
+done
+if [ "$cognito_ready" != "true" ]; then
+  echo "ERROR: cognito-local bootstrap did not succeed." >&2
+  exit 1
+fi
+
 echo "Waiting for the backend on :8000 ..."
 for _ in $(seq 1 60); do
   if curl -sf http://localhost:8000/health >/dev/null 2>&1; then break; fi

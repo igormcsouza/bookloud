@@ -1,6 +1,7 @@
-# Local dev stack: LocalStack (S3/SQS/DynamoDB) + backend (uvicorn, hot
-# reload) + frontend (optional, `ui` profile). Cognito is LocalStack Pro
-# only; Phase 0 needs no local auth (see PLANS/phase-0.md §10, Q12).
+# Local dev stack: LocalStack (S3/SQS/DynamoDB) + cognito-local (Cognito
+# emulation -- LocalStack's own Cognito support is Pro-only, see
+# PLANS/phase-1.md §4) + backend (uvicorn, hot reload) + frontend (optional,
+# `ui` profile).
 services:
   localstack:
     # Pinned: newer LocalStack tags gate startup behind a Pro auth token even
@@ -17,6 +18,18 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  cognito-local:
+    image: jagregory/cognito-local:latest
+    ports:
+      - "9229:9229"
+    volumes:
+      # cognito-local's own default (UsernameAttributes: ["email"]) would
+      # make every AdminCreateUser/SignUp reject a plain username -- this
+      # overrides it to match the real pool (username-only, no aliases).
+      # Read-write: cognito-local persists pool/user state back into this
+      # same file (it's both its config and its datastore).
+      - ./local/cognito-local-config.json:/app/.cognito/config.json
 
   backend:
     build:
@@ -38,11 +51,18 @@ services:
       - AUDIO_BUCKET=bookloud-local-audio
       - MARKS_BUCKET=bookloud-local-marks
       - EXTRACT_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-extract
+      # Used only by local/cognito_bootstrap.py (run inside this container --
+      # it already has boto3), not by the app itself: the backend never
+      # talks to Cognito directly (see PLANS/phase-1.md §1).
+      - COGNITO_ENDPOINT_URL=http://cognito-local:9229
     volumes:
       - ./backend:/app
+      - ./local:/local-shared
     depends_on:
       localstack:
         condition: service_healthy
+      cognito-local:
+        condition: service_started
 
   frontend:
     profiles: ["ui"]
@@ -53,5 +73,15 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    environment:
+      # Runtime (not build args): read server-side only, by
+      # frontend/lib/cognito.ts's BFF route handlers -- never baked into the
+      # client bundle. Values come from local/.cognito.env, written by
+      # cognito_bootstrap.py (see `make ui`).
+      - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID}
+      - COGNITO_REGION=us-east-1
+      - COGNITO_ENDPOINT=http://cognito-local:9229
+      - ENVIRONMENT=local
     depends_on:
       - backend
+      - cognito-local
