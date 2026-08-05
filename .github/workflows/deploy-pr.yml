@@ -98,6 +98,43 @@ jobs:
           print(f"user_pool_client_id={auth.get('UserPoolClientId', '')}")
           PY
 
+      # Self-signup is disabled on the pool (admin-only provisioning, see
+      # PLANS/phase-1.md §11) -- Cognito itself rejects SignUp, so the smoke
+      # test can't create its own users. Seed two throwaway ones the way an
+      # admin actually would: a normal permanent-password login, and a
+      # temp-password one to exercise the NEW_PASSWORD_REQUIRED challenge.
+      # Both live only in this PR's pool and vanish with it on teardown.
+      - name: Seed smoke-test users
+        id: seed-users
+        env:
+          USER_POOL_ID: ${{ steps.deploy-backend.outputs.user_pool_id }}
+        run: |
+          LOGIN_USER="smoke-login-${GITHUB_RUN_ID}"
+          LOGIN_PASS="Smoke-$(openssl rand -hex 8)!A1"
+          NEWUSER="smoke-newuser-${GITHUB_RUN_ID}"
+          NEWUSER_TEMP_PASS="Temp-$(openssl rand -hex 8)!A1"
+
+          aws cognito-idp admin-create-user \
+            --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
+            --message-action SUPPRESS >/dev/null
+          aws cognito-idp admin-set-user-password \
+            --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
+            --password "$LOGIN_PASS" --permanent >/dev/null
+
+          aws cognito-idp admin-create-user \
+            --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
+            --message-action SUPPRESS >/dev/null
+          aws cognito-idp admin-set-user-password \
+            --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
+            --password "$NEWUSER_TEMP_PASS" >/dev/null
+
+          {
+            echo "login_username=${LOGIN_USER}"
+            echo "login_password=${LOGIN_PASS}"
+            echo "newuser_username=${NEWUSER}"
+            echo "newuser_temp_password=${NEWUSER_TEMP_PASS}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -156,7 +193,10 @@ jobs:
             --expect-environment "${{ env.ENV_NAME }}" \
             --cognito-client-id "${{ steps.deploy-backend.outputs.user_pool_client_id }}" \
             --cognito-region "${{ secrets.AWS_REGION }}" \
-            --auth-signup
+            --login-username "${{ steps.seed-users.outputs.login_username }}" \
+            --login-password "${{ steps.seed-users.outputs.login_password }}" \
+            --newuser-username "${{ steps.seed-users.outputs.newuser_username }}" \
+            --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}"
 
       - name: Comment on PR with deployment URLs
         uses: actions/github-script@v9
