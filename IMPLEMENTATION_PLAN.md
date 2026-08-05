@@ -108,7 +108,7 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 
 - [x] Phase 0 — Repo, infra scaffolding & CI/CD bootstrap
 - [x] Phase 1 — Auth (Cognito)
-- [ ] Phase 2 — Storage & data model
+- [x] Phase 2 — Storage & data model
 - [ ] Phase 3 — Upload & extraction pipeline
 - [ ] Phase 4 — TTS synthesis pipeline
 - [ ] Phase 5 — Stitching & status polling

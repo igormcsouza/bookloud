@@ -5,10 +5,59 @@ synced to audio, plus a chat sidebar for asking questions about the book,
 scoped to the section currently being read.
 
 Built phase by phase per `IMPLEMENTATION_PLAN.md`. This repo is currently at
-**Phase 1**: Cognito auth. Every non-public backend route requires a valid
-Cognito JWT; the frontend has working login/logout/session-refresh via a
-Next.js backend-for-frontend; local dev emulates Cognito with
-`jagregory/cognito-local`.
+**Phase 2**: Storage & data model. Every non-public backend route requires a
+valid Cognito JWT; the frontend has working login/logout/session-refresh via
+a Next.js backend-for-frontend; local dev emulates Cognito with
+`jagregory/cognito-local`. The backend's `Library` bounded context now owns
+`Book`/`Chunk` CRUD against the single DynamoDB table (`GET /books`,
+`GET /books/{id}`; creation is unit-tested but has no route yet -- phase 3's
+presigned-upload endpoint calls it).
+
+## Library context (backend)
+
+`backend/src/contexts/library/` is a DDD-flavoured bounded context following
+the repo's `{domain,application,infrastructure,interface}` layout:
+
+```
+library/
+├── domain/          Book (aggregate root), Chunk (its own aggregate --
+│                    see below), BookStatus/ChunkStatus, BookRepository/
+│                    ChunkRepository (Protocols, no ABCs)
+├── application/      CreateBook, GetBook, ListBooks, DeleteBook,
+│                    ListBookChunks use cases
+├── infrastructure/   keys.py (PK/SK helpers), book_mapper.py/
+│                    chunk_mapper.py (dict <-> entity), the two DynamoDB
+│                    repository adapters
+└── interface/        FastAPI Depends providers, camelCase response
+                     schemas, GET /books + GET /books/{id} controllers
+```
+
+**Single-table key patterns** (table: `bookloud-<env>`, PK/SK both strings):
+
+| item | PK | SK |
+|---|---|---|
+| book | `USER#<sub>` | `BOOK#<bookId>` |
+| chunk | `BOOK#<bookId>` | `CHUNK#<index>` (zero-padded to 6 digits, e.g. `CHUNK#000007`) |
+
+Isolation is enforced **by the key**, not a post-read check: every
+`BookRepository` method takes `(user_id, book_id)` and addresses
+`USER#<sub>`'s partition directly, so a wrong user id simply finds nothing --
+a missing book and someone else's book are both a `404`, never a `403`.
+
+**Chunks are a separate aggregate from `Book`, not embedded in the book
+item** -- unlike this repo's DDD reference (jgautocar), which embeds
+tasks/photos in the parent item with no independent repository. Three
+reasons: the schema already puts chunks in their own items; a whole book's
+extracted text would blow past DynamoDB's 400 KB item limit; and, decisively,
+phase 4's chunk synthesis runs one Lambda per chunk in parallel with fan-in
+via an atomic `chunksDone` counter on the book record -- read-modify-write of
+one embedded aggregate from N concurrent Lambdas would lose updates.
+Consequently `ChunkRepository` takes a bare `book_id: str` (chunk items carry
+no user in their key) and enforces no access control itself; every use case
+that touches chunks authorizes the book first via `BookRepository.get(user_id,
+book_id)` before ever calling into `ChunkRepository`.
+
+See `PLANS/phase-2.md` for the full design rationale and decisions log.
 
 ## Auth model
 
@@ -104,9 +153,10 @@ both -> `down`.
 bookloud/
 ├── backend/    FastAPI, DDD-flavoured (contexts/<ctx>/{domain,application,
 │               infrastructure,interface}, shared_kernel/), packaged as a
-│               Lambda container image. GET /health + GET /me (auth) today;
-│               book/chunk CRUD, the extraction/TTS pipeline, and chat land
-│               in phases 2-7. src/auth/ is cross-cutting, not a context.
+│               Lambda container image. GET /health, GET /me (auth),
+│               GET /books + GET /books/{id} (contexts/library/, phase 2)
+│               today; the extraction/TTS pipeline and chat land in phases
+│               3-7. src/auth/ is cross-cutting, not a context.
 ├── frontend/   Next.js 15 (App Router) + Tailwind, deployed via OpenNext to
 │               Lambda + CloudFront. Landing page, login (incl. forced
 │               first-login password change), and the auth BFF route

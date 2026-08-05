@@ -282,3 +282,28 @@ def test_api_stack_jwt_authorizer(environment: str) -> None:
 
     health_route = next(props for key, props in by_key.items() if "/health" in key)
     assert health_route["AuthorizationType"] == "NONE"
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_lambda_role_grants_dynamodb_query(environment: str) -> None:
+    """PLANS/phase-2.md §8: regression guard on the `table.grant_read_write_data(fn)`
+    grant Phase 2's Library context repositories now actually depend on
+    (``Query`` backs ``list_for_user``/``list_for_book``). CDK's
+    ``grant_read_write_data`` bundles the IAM actions into one or more
+    ``AWS::IAM::Policy`` resources attached to the function's role; find them
+    and assert `dynamodb:Query` appears in at least one statement's Action
+    list."""
+    template = _synth_api_stack(environment)
+
+    policies = template.find_resources("AWS::IAM::Policy")
+    actions: list[str] = []
+    for policy in policies.values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+
+    assert "dynamodb:Query" in actions

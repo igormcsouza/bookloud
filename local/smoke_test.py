@@ -24,6 +24,13 @@ Usage:
 
 Auth checks (PLANS/phase-1.md §6.1) are all skipped unless their inputs are
 supplied, except the anonymous-401 check, which always runs.
+
+Library checks (PLANS/phase-2.md §8): anonymous `GET /books` -> 401 always
+runs; `GET /books` -> 200 + JSON array runs whenever --login-username/
+--login-password are supplied (piggybacking on the same login the auth
+checks use), proving the Library context's DynamoDB repository works
+against a real DynamoDB API (LocalStack in local-smoke, real AWS in
+deploy-pr/deploy-prod).
 """
 
 from __future__ import annotations
@@ -135,6 +142,50 @@ def _cognito(endpoint: str, target: str, body: dict, timeout: float = 15) -> tup
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8") or "{}")
+
+
+def check_books_endpoint(api_url: str, timeout: float) -> None:
+    """PLANS/phase-2.md §8/§9: anonymous GET /books -> 401 (same authorizer
+    boundary as GET /me); authenticated GET /books -> 200 with a JSON array.
+    This is what proves the Library context's DynamoDB repository actually
+    works against a real DynamoDB API (LocalStack or real AWS) rather than
+    just moto -- the TABLE_NAME env var, the IAM grant, and the deployed
+    table's key schema all get exercised here."""
+    url = f"{api_url.rstrip('/')}/books"
+
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+    print(f"OK  GET {url} (no token) -> {status}")
+    check(status == 401, f"expected 401 for anonymous GET /books, got {status}")
+
+
+def check_books_endpoint_authenticated(
+    api_url: str, cognito_endpoint: str, cognito_client_id: str, username: str, password: str
+) -> None:
+    status, data = _cognito(
+        cognito_endpoint,
+        "InitiateAuth",
+        {
+            "AuthFlow": "USER_PASSWORD_AUTH",
+            "ClientId": cognito_client_id,
+            "AuthParameters": {"USERNAME": username, "PASSWORD": password},
+        },
+    )
+    check(200 <= status < 300, f"InitiateAuth for {username!r} failed: {status} {data}")
+    id_token = data["AuthenticationResult"]["IdToken"]
+
+    url = f"{api_url.rstrip('/')}/books"
+    req = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {id_token}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        status = resp.status
+        body = json.loads(resp.read().decode("utf-8"))
+    print(f"OK  GET {url} (as {username}) -> {status} ({len(body)} book(s))")
+    check(status == 200, f"expected 200 for authenticated GET /books, got {status}")
+    check(isinstance(body, list), f"expected a JSON array, got {type(body).__name__}")
 
 
 def check_anonymous_me_rejected(api_url: str, timeout: float) -> None:
@@ -312,6 +363,7 @@ def main() -> int:
 
     # Always: prove the authorizer rejects anonymous requests.
     check_anonymous_me_rejected(args.api_url, args.timeout)
+    check_books_endpoint(args.api_url, args.timeout)
 
     if args.cognito_client_id:
         cognito_endpoint = args.cognito_endpoint or (
@@ -327,6 +379,13 @@ def main() -> int:
 
         if args.login_username and args.login_password:
             _login_and_check_me(
+                args.api_url,
+                cognito_endpoint,
+                args.cognito_client_id,
+                args.login_username,
+                args.login_password,
+            )
+            check_books_endpoint_authenticated(
                 args.api_url,
                 cognito_endpoint,
                 args.cognito_client_id,

@@ -3,8 +3,8 @@
 The same ``app`` object is used by local dev (uvicorn), the tests, and the
 Lambda handler (``lambda_function.py``, via Mangum). Configuration is
 entirely env-var driven (``src/config.py``). Domain routes live in their own
-packages and are included here; ``library/``, ``reading/``, ``chat/`` land in
-phases 2-7.
+packages and are included here; ``library/`` lands in phase 2 (this
+change), ``reading/``, ``chat/`` land in phases 5-7.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from src.auth.controllers import router as auth_router
 from src.auth.local_dev import LocalAuthMiddleware, should_enable
 from src.config import settings
+from src.contexts.library.interface.controllers import router as library_router
 from src.health.controllers import router as health_router
 from src.shared_kernel.domain.errors import DomainError
 
@@ -40,6 +41,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(library_router)
 
 if should_enable(settings.environment):
     app.add_middleware(LocalAuthMiddleware)

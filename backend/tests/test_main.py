@@ -47,3 +47,25 @@ def test_domain_error_default_status_code() -> None:
 def test_conflict_error_status_code() -> None:
     exc = ConflictError("already exists")
     assert exc.status_code == 409
+
+
+def _all_route_paths(app) -> set[str]:
+    """Flatten ``app.routes``: top-level ``Route``s plus, on newer FastAPI
+    versions, routes nested inside ``_IncludedRouter`` wrappers created by
+    ``include_router``."""
+    paths: set[str] = set()
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        if path is not None:
+            paths.add(path)
+        nested_router = getattr(route, "original_router", None)
+        if nested_router is not None:
+            paths.update(getattr(sub, "path", None) for sub in nested_router.routes)
+    paths.discard(None)
+    return paths
+
+
+def test_library_router_routes_registered() -> None:
+    paths = _all_route_paths(app)
+    assert "/books" in paths
+    assert "/books/{book_id}" in paths
