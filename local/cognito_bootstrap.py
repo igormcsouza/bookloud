@@ -19,7 +19,12 @@ no admin-created users).
 3. get-or-create user "dev" via admin_create_user(MessageAction="SUPPRESS")
    + admin_set_user_password(Password="devpassword", Permanent=True) -- a
    confirmed, known-good login for `make smoke` and manual dev.
-4. write /local-shared/.cognito.env.
+4. get-or-create user "newuser" via admin_create_user(MessageAction="SUPPRESS")
+   + admin_set_user_password(Password="TempPass123!", Permanent=False) --
+   a temporary, non-permanent password so the NEW_PASSWORD_REQUIRED
+   first-login challenge (PLANS/phase-1.md §11, admin-only provisioning)
+   has something to exercise locally.
+5. write /local-shared/.cognito.env.
 """
 
 from __future__ import annotations
@@ -32,6 +37,10 @@ POOL_NAME = "bookloud-local"
 CLIENT_NAME = "WebClient"
 DEV_USERNAME = "dev"
 DEV_PASSWORD = "devpassword"
+# Admin-provisioned user with a temporary (non-permanent) password, so the
+# NEW_PASSWORD_REQUIRED challenge has something to exercise locally.
+NEWUSER_USERNAME = "newuser"
+NEWUSER_TEMP_PASSWORD = "TempPass123!"
 REGION = os.environ.get("COGNITO_REGION", "us-east-1")
 OUTPUT_FILE = "/local-shared/.cognito.env"
 
@@ -96,12 +105,35 @@ def _ensure_dev_user(client, pool_id: str) -> None:
     )
 
 
+def _ensure_newuser(client, pool_id: str) -> None:
+    """Admin-provisioned user, temporary password -- exercises the
+    NEW_PASSWORD_REQUIRED first-login challenge locally. Re-running this
+    (idempotent bootstrap) re-sets the temporary password each time, so the
+    challenge is always exercisable even after a previous local/smoke_test.py
+    run already completed it once."""
+    try:
+        client.admin_create_user(
+            UserPoolId=pool_id,
+            Username=NEWUSER_USERNAME,
+            MessageAction="SUPPRESS",
+        )
+    except client.exceptions.UsernameExistsException:
+        pass
+    client.admin_set_user_password(
+        UserPoolId=pool_id,
+        Username=NEWUSER_USERNAME,
+        Password=NEWUSER_TEMP_PASSWORD,
+        Permanent=False,
+    )
+
+
 def bootstrap() -> tuple[str, str]:
-    """Ensure the pool/client/dev-user exist; return (pool_id, client_id)."""
+    """Ensure the pool/client/dev-user/newuser exist; return (pool_id, client_id)."""
     client = _client()
     pool_id = _get_or_create_pool(client)
     client_id = _get_or_create_client(client, pool_id)
     _ensure_dev_user(client, pool_id)
+    _ensure_newuser(client, pool_id)
     return pool_id, client_id
 
 
@@ -115,6 +147,10 @@ def main() -> None:
 
     print(f"Cognito ready: pool={pool_id} client={client_id}")
     print(f"dev user: {DEV_USERNAME} / {DEV_PASSWORD}")
+    print(
+        f"newuser (temp password, forces NEW_PASSWORD_REQUIRED): "
+        f"{NEWUSER_USERNAME} / {NEWUSER_TEMP_PASSWORD}"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

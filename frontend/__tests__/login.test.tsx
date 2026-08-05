@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
 const loginMock = vi.fn();
+const completeNewPasswordMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
@@ -10,6 +11,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/auth", () => ({
   login: (...args: unknown[]) => loginMock(...args),
+  completeNewPassword: (...args: unknown[]) => completeNewPasswordMock(...args),
 }));
 
 import LoginPage from "@/app/login/page";
@@ -17,6 +19,7 @@ import LoginPage from "@/app/login/page";
 beforeEach(() => {
   replace.mockClear();
   loginMock.mockClear();
+  completeNewPasswordMock.mockClear();
 });
 
 afterEach(() => {
@@ -30,7 +33,7 @@ function fillForm(username: string, password: string) {
 
 describe("LoginPage", () => {
   it("calls login and navigates home on a successful submit", async () => {
-    loginMock.mockResolvedValue(undefined);
+    loginMock.mockResolvedValue({ status: "ok" });
     render(<LoginPage />);
 
     fillForm("reader", "hunter2");
@@ -54,9 +57,9 @@ describe("LoginPage", () => {
   });
 
   it("disables the submit button while the request is in flight", async () => {
-    let resolveLogin: () => void;
+    let resolveLogin: (v: { status: "ok" }) => void;
     loginMock.mockReturnValue(
-      new Promise<void>((resolve) => {
+      new Promise((resolve) => {
         resolveLogin = resolve;
       }),
     );
@@ -68,7 +71,66 @@ describe("LoginPage", () => {
     await waitFor(() => expect(screen.getByRole("button")).toBeDisabled());
     expect(screen.getByRole("button")).toHaveTextContent(/signing in/i);
 
-    resolveLogin!();
+    resolveLogin!({ status: "ok" });
     await waitFor(() => expect(replace).toHaveBeenCalled());
+  });
+
+  it("shows the new-password form when login returns new_password_required", async () => {
+    loginMock.mockResolvedValue({ status: "new_password_required", session: "sess-token" });
+    render(<LoginPage />);
+
+    fillForm("newuser", "TempPass123!");
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /choose a new password/i })).toBeInTheDocument(),
+    );
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("blocks submission client-side when new passwords do not match", async () => {
+    loginMock.mockResolvedValue({ status: "new_password_required", session: "sess-token" });
+    render(<LoginPage />);
+
+    fillForm("newuser", "TempPass123!");
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    await waitFor(() => screen.getByLabelText(/^new password$/i));
+
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPass1!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "Mismatch1!" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /set password/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Passwords do not match."),
+    );
+    expect(completeNewPasswordMock).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("completes the new-password challenge and navigates home", async () => {
+    loginMock.mockResolvedValue({ status: "new_password_required", session: "sess-token" });
+    completeNewPasswordMock.mockResolvedValue(undefined);
+    render(<LoginPage />);
+
+    fillForm("newuser", "TempPass123!");
+    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    await waitFor(() => screen.getByLabelText(/^new password$/i));
+
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPass1!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "NewPass1!" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /set password/i }));
+
+    await waitFor(() =>
+      expect(completeNewPasswordMock).toHaveBeenCalledWith("newuser", "sess-token", "NewPass1!"),
+    );
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
   });
 });

@@ -707,6 +707,63 @@ Playwright specs (phase 6/8).
 
 ---
 
+## 11. Addendum — user provisioning switched to admin-only (post-plan revision)
+
+After the plan above was implemented (PR #2, branch `phase-1`), the human decided user accounts
+should be **admin-provisioned only** — no public self-signup. Revised, before merge:
+
+- **`infra/stacks/auth_stack.py`**: `self_sign_up_enabled=False` on the user pool. This is the real
+  enforcement — Cognito's public `SignUp` API rejects every call with `NotAuthorizedException:
+  "Sign up isn't allowed for this user pool"` regardless of what the frontend does, satisfying "stop
+  it, enforce on backend too." The PreSignUp auto-confirm Lambda trigger **stays wired** (harmless —
+  unreachable once self-signup is off, since `SignUp` is rejected before the trigger would fire) —
+  human chose "keep code but disable" over deleting it, in case self-signup is ever revisited.
+- **Frontend `app/login/page.tsx`**: remove the "Sign up" link. **`app/signup/page.tsx`,
+  `app/api/auth/{signup,confirm}/route.ts`, and their tests are left in the repo unreached** — no nav
+  path to them; hitting `/signup` directly still renders the page, but submitting now surfaces
+  Cognito's rejection through the existing `httpStatusForCognitoError` mapping (`NotAuthorizedException
+  → 401`) rather than succeeding. No route removed, no test deleted.
+- **New: forced first-login password change.** Admin creates a user (AWS Console or
+  `aws cognito-idp admin-create-user` / `admin-set-user-password` without `--permanent`) with a
+  temporary password. That user's first `InitiateAuth` returns `ChallengeName:
+  NEW_PASSWORD_REQUIRED` + a `Session` token instead of tokens. New pieces:
+  - `lib/cognito.ts`: `respondToNewPasswordChallenge(session, username, newPassword)` →
+    `RespondToAuthChallenge` with `ChallengeResponses: {USERNAME, NEW_PASSWORD}`.
+  - `app/api/auth/login/route.ts`: when Cognito's response has `ChallengeName ===
+    "NEW_PASSWORD_REQUIRED"`, return `200 {status:"new_password_required", session}` instead of
+    setting the refresh cookie.
+  - New `app/api/auth/new-password/route.ts`: `{username, session, newPassword}` →
+    `respondToNewPasswordChallenge` → on success, sets the refresh cookie and returns
+    `{idToken, expiresIn, username}` exactly like a normal login.
+  - `lib/auth.ts`: `login()` returns a discriminated result (`{status:"ok"}` vs
+    `{status:"new_password_required", session}`); new `completeNewPassword(username, session,
+    newPassword)`.
+  - `app/login/page.tsx`: on `new_password_required`, swap the form for a "choose a new password"
+    + confirm-password step, matching `AuthCard`'s existing visual language; on success,
+    `router.replace("/")`.
+  - **Out of scope, per human's explicit call:** no general "change password while logged in"
+    self-service page — first-login forced change only.
+- **Local dev** (`local/cognito_bootstrap.py`): keep the existing `dev`/`devpassword` user exactly as
+  is (`AdminSetUserPassword(..., Permanent=True)` — no forced-change friction for routine local
+  work/`make smoke`). Add a **second** seeded user, `newuser` / `TempPass123!`, created with
+  `Permanent=False` specifically so the `NEW_PASSWORD_REQUIRED` path has something to exercise
+  locally and in an added smoke-test check (`local/smoke_test.py`: login as `newuser` → assert
+  challenge response → `RespondToAuthChallenge` with a fresh password → assert `/me` 200 afterward).
+- **Tests to update**: `infra/tests/test_synth.py` (assert `self_sign_up_enabled=False` — this
+  inverts whatever the original Phase 1 assertion said); new frontend tests for the challenge
+  branch in `__tests__/login.test.tsx` and `__tests__/auth-routes.test.ts`; new backend/local-dev
+  coverage isn't needed (this flow is entirely Cognito + frontend, the backend dependency/middleware
+  are unchanged).
+- **README**: document the provisioning process — how the human adds a new reader (console or CLI
+  `admin-create-user` + `admin-set-user-password` without `--permanent`), and that first login
+  prompts for a new password.
+- Section 8's file list gains: `app/api/auth/new-password/route.ts` (new),
+  `__tests__/new-password-route.test.ts` or folded into `auth-routes.test.ts` (new assertions),
+  `local/cognito_bootstrap.py` (change: second seeded user), `local/smoke_test.py` (change: new
+  challenge-flow check), `README.md` (change: provisioning instructions).
+
+---
+
 ## 10. Open questions / assumptions — human decisions needed before implementation
 
 **Q1 — Auth topology (blocking). DECIDED: Next.js BFF (option B).**

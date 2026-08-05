@@ -24,7 +24,8 @@ smoke:
 	python3 local/smoke_test.py --api-url http://localhost:8000 \
 		--cognito-endpoint http://localhost:9229 \
 		--cognito-client-id "$$COGNITO_CLIENT_ID" \
-		--login-username dev --login-password devpassword
+		--login-username dev --login-password devpassword \
+		--newuser-username newuser --newuser-temp-password 'TempPass123!'
 
 ## Print an id token for the seeded `dev` user, e.g.:
 ##   curl -H "Authorization: Bearer $(make -s token)" localhost:8000/me

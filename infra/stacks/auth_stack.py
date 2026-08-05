@@ -22,6 +22,17 @@ class AuthStack(cdk.Stack):
     deterministically, with no email dependency. Adding ``LambdaConfig`` to
     an existing pool is an in-place CloudFormation update, not a replacement
     -- verified via ``cdk diff`` (see PLANS/phase-1.md §2.2).
+
+    Post-plan revision (PLANS/phase-1.md §11): user provisioning is
+    admin-only, not self-signup. ``self_sign_up_enabled=False`` makes
+    Cognito itself reject every public ``SignUp`` call
+    (``NotAuthorizedException``), before the PreSignUp trigger would ever
+    fire. The trigger stays wired -- harmless dead code, kept in case
+    self-signup is revisited -- rather than deleted. Flipping
+    ``self_sign_up_enabled`` only changes ``AdminCreateUserConfig.
+    AllowAdminCreateUserOnly``, which CloudFormation updates in place (no
+    replacement); verified via template diff, same as the PreSignUp trigger
+    addition above.
     """
 
     def __init__(
@@ -59,7 +70,7 @@ class AuthStack(cdk.Stack):
             self,
             "UserPool",
             user_pool_name=cognito_pool_name(environment),
-            self_sign_up_enabled=True,
+            self_sign_up_enabled=False,
             sign_in_aliases=cognito.SignInAliases(username=True),
             lambda_triggers=cognito.UserPoolTriggers(pre_sign_up=pre_signup_fn),
             standard_attributes=cognito.StandardAttributes(

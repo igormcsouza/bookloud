@@ -18,6 +18,9 @@ Usage:
         [--auth-signup]                 # optional; signs up + logs in a throwaway user
         [--login-username USER]         # optional; logs in an existing user (e.g. local's seeded "dev")
         [--login-password PASS]
+        [--newuser-username USER]       # optional; exercises the NEW_PASSWORD_REQUIRED
+        [--newuser-temp-password PASS]  # challenge flow for an admin-provisioned user
+                                         # (e.g. local's seeded "newuser", PLANS/phase-1.md §11)
 
 Auth checks (PLANS/phase-1.md §6.1) are all skipped unless their inputs are
 supplied, except the anonymous-401 check, which always runs.
@@ -204,6 +207,66 @@ def _login_and_check_me(
     )
 
 
+def check_new_password_challenge_flow(
+    api_url: str,
+    cognito_endpoint: str,
+    cognito_client_id: str,
+    username: str,
+    temp_password: str,
+) -> None:
+    """Admin-provisioned users (PLANS/phase-1.md §11) are created with a
+    temporary, non-permanent password: their first InitiateAuth returns
+    NEW_PASSWORD_REQUIRED + a Session token instead of tokens. This proves
+    the whole forced-first-login flow end to end against a real (or
+    emulated) Cognito: challenge -> RespondToAuthChallenge -> /me 200."""
+    status, data = _cognito(
+        cognito_endpoint,
+        "InitiateAuth",
+        {
+            "AuthFlow": "USER_PASSWORD_AUTH",
+            "ClientId": cognito_client_id,
+            "AuthParameters": {"USERNAME": username, "PASSWORD": temp_password},
+        },
+    )
+    check(200 <= status < 300, f"InitiateAuth for {username!r} failed: {status} {data}")
+    check(
+        data.get("ChallengeName") == "NEW_PASSWORD_REQUIRED",
+        f"expected ChallengeName == 'NEW_PASSWORD_REQUIRED', got {data.get('ChallengeName')!r}",
+    )
+    session = data["Session"]
+    print(f"OK  InitiateAuth ({username}, temp password) -> {status} ChallengeName=NEW_PASSWORD_REQUIRED")
+
+    new_password = "Sm0ke-" + "".join(random.choices(string.ascii_letters + string.digits, k=12))
+    status, data = _cognito(
+        cognito_endpoint,
+        "RespondToAuthChallenge",
+        {
+            "ClientId": cognito_client_id,
+            "ChallengeName": "NEW_PASSWORD_REQUIRED",
+            "ChallengeResponses": {"USERNAME": username, "NEW_PASSWORD": new_password},
+            "Session": session,
+        },
+    )
+    check(
+        200 <= status < 300,
+        f"RespondToAuthChallenge for {username!r} failed: {status} {data}",
+    )
+    id_token = data["AuthenticationResult"]["IdToken"]
+    print(f"OK  RespondToAuthChallenge ({username}) -> {status}")
+
+    url = f"{api_url.rstrip('/')}/me"
+    req = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {id_token}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        status = resp.status
+        body = json.loads(resp.read().decode("utf-8"))
+    print(f"OK  GET {url} (as {username}, post-challenge) -> {status} (username={body.get('username')})")
+    check(status == 200, f"expected 200 for authenticated GET /me, got {status}")
+    check(
+        body.get("username") == username,
+        f"expected username == {username!r}, got {body.get('username')!r}",
+    )
+
+
 def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_id: str) -> None:
     """SignUp a throwaway user, then log in and hit /me -- covers "signup" +
     "login" + authenticated access in one deployed-environment check. Never
@@ -236,6 +299,8 @@ def main() -> int:
     parser.add_argument("--auth-signup", action="store_true")
     parser.add_argument("--login-username", default=None)
     parser.add_argument("--login-password", default=None)
+    parser.add_argument("--newuser-username", default=None)
+    parser.add_argument("--newuser-temp-password", default=None)
     args = parser.parse_args()
 
     print(f"Smoke test against api={args.api_url} frontend={args.frontend_url or '(skipped)'}")
@@ -267,6 +332,15 @@ def main() -> int:
                 args.cognito_client_id,
                 args.login_username,
                 args.login_password,
+            )
+
+        if args.newuser_username and args.newuser_temp_password:
+            check_new_password_challenge_flow(
+                args.api_url,
+                cognito_endpoint,
+                args.cognito_client_id,
+                args.newuser_username,
+                args.newuser_temp_password,
             )
 
     print("\nSMOKE TEST PASSED")

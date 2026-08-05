@@ -98,6 +98,19 @@ def test_auth_stack_username_only_sign_in(environment: str) -> None:
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_auth_stack_self_sign_up_disabled(environment: str) -> None:
+    """PLANS/phase-1.md §11: user provisioning is admin-only now, not
+    self-signup. self_sign_up_enabled=False synthesizes as
+    AdminCreateUserConfig.AllowAdminCreateUserOnly=True -- this is the real
+    enforcement (Cognito rejects SignUp regardless of what the frontend
+    does). Inverts the phase-1 assumption that self-signup was enabled."""
+    template = _synth(AuthStack, environment)
+    pools = template.find_resources("AWS::Cognito::UserPool")
+    (props,) = [r["Properties"] for r in pools.values()]
+    assert props["AdminCreateUserConfig"]["AllowAdminCreateUserOnly"] is True
+
+
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_auth_stack_has_presignup_trigger(environment: str) -> None:
     """PreSignUp auto-confirm trigger: the pool has no auto-verified
     attributes, so a self-signed-up user needs a deterministic, email-free

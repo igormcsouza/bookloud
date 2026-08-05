@@ -12,6 +12,18 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const data = await initiateAuthPassword(username, password);
+
+    // Admin-provisioned users (PLANS/phase-1.md §11) are created with a
+    // temporary, non-permanent password: their first InitiateAuth returns a
+    // challenge instead of tokens. Surface it to the client rather than
+    // setting the refresh cookie.
+    if (data.ChallengeName === "NEW_PASSWORD_REQUIRED") {
+      return NextResponse.json({
+        status: "new_password_required",
+        session: data.Session,
+      });
+    }
+
     const result = data.AuthenticationResult ?? {};
 
     const res = NextResponse.json({

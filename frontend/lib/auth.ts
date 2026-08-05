@@ -23,11 +23,39 @@ function storeSession(data: { idToken?: string; expiresIn?: number }): void {
   }
 }
 
-export async function login(username: string, password: string): Promise<void> {
+export type LoginResult = { status: "ok" } | { status: "new_password_required"; session: string };
+
+/**
+ * Admin-provisioned users (PLANS/phase-1.md §11) are created with a
+ * temporary, non-permanent password: their first login returns Cognito's
+ * NEW_PASSWORD_REQUIRED challenge instead of tokens. The caller (the login
+ * page) is expected to collect a new password and call
+ * completeNewPassword() with the returned session.
+ */
+export async function login(username: string, password: string): Promise<LoginResult> {
   const res = await postJson("/api/auth/login", { username, password });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.detail || "Login failed.");
+  }
+  if (data.status === "new_password_required") {
+    return { status: "new_password_required", session: data.session };
+  }
+  storeSession(data);
+  return { status: "ok" };
+}
+
+/** Completes a NEW_PASSWORD_REQUIRED challenge returned by login(). Stores
+ * the resulting id token exactly like login() does on success. */
+export async function completeNewPassword(
+  username: string,
+  session: string,
+  newPassword: string,
+): Promise<void> {
+  const res = await postJson("/api/auth/new-password", { username, session, newPassword });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "Setting a new password failed.");
   }
   storeSession(data);
 }

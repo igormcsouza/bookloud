@@ -80,6 +80,25 @@ export async function confirmSignUp(username: string, code: string): Promise<any
   });
 }
 
+/**
+ * Responds to Cognito's NEW_PASSWORD_REQUIRED challenge -- the mechanism by
+ * which an admin-provisioned user (created with a temporary, non-permanent
+ * password) sets their real password on first login. See
+ * PLANS/phase-1.md §11.
+ */
+export async function respondToNewPasswordChallenge(
+  session: string,
+  username: string,
+  newPassword: string,
+): Promise<any> {
+  return cognito("RespondToAuthChallenge", {
+    ClientId: CLIENT_ID,
+    ChallengeName: "NEW_PASSWORD_REQUIRED",
+    ChallengeResponses: { USERNAME: username, NEW_PASSWORD: newPassword },
+    Session: session,
+  });
+}
+
 /** Best-effort; may 400 on cognito-local. Callers should swallow errors. */
 export async function revokeToken(refreshToken: string): Promise<void> {
   await cognito("RevokeToken", { ClientId: CLIENT_ID, Token: refreshToken });
