@@ -77,6 +77,12 @@ The environment gate is checked **first and unconditionally** — a `google_tts_
 
 The `--skip-synthesis` escape hatch from the original plan is no longer needed for flakiness reasons but is kept anyway as a cheap way to shorten local iteration.
 
+**§6.3 reserved-concurrency correction — the plan's `reserved_concurrent_executions=10` is not deployable on this account and has been removed** (also overriding §2's Q13, §6.3's snippet, §12's "has `ReservedConcurrentExecutions: 10`" assertion, and §13's OQ-6). This AWS account's *total* Lambda concurrency limit is 10, and AWS rejects any reservation that drops unreserved concurrency below its floor of 10 — so every possible value fails, in prod exactly as in `pr-N`:
+
+> `Specified ReservedConcurrentExecutions for function decreases account's UnreservedConcurrentExecution below its minimum value of [10]`
+
+Caught by `deploy-pr` on PR #5 as a `CREATE_FAILED` on `SynthesizeFunction`. Nothing in the design is lost: §6.3's own reasoning already made the ESM's `ScalingConfig.MaximumConcurrency` the *real* throttle and reserved concurrency merely the backstop, and `max_concurrency=5` caps concurrent invocations without reserving account-wide capacity. The "belt-and-braces" half is simply unavailable until the account quota is raised. `test_pipeline_stack_synthesize_function_shape` now asserts `Match.absent()` so re-adding it fails a unit test instead of a six-minute deploy.
+
 **Frontend/UX note for phase 6 (no phase-4 code change, recorded so it isn't lost):** the per-chunk `failureReason` contract this phase already produces (`EXTERNAL_TTS_DISABLED` in dev/PR, `ALL_ENGINES_FAILED` in prod after real retries are exhausted) is exactly what a future reader UI needs to render "audio unavailable for this section — continue reading" instead of a hard error, and to let the user keep reading/scrolling text for chunks with no audio rather than blocking the whole book on one failed chunk. Phase 4 does not add any UI; it only makes sure the backend contract already supports that degradation.
 
 ---

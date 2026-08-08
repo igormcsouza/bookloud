@@ -276,7 +276,13 @@ def test_pipeline_stack_synthesize_function_shape(environment: str) -> None:
             "ImageConfig": {
                 "Command": ["src.contexts.library.interface.synthesize_handler.handler"]
             },
-            "ReservedConcurrentExecutions": 10,
+            # Absent, not 10. This account's total Lambda concurrency limit
+            # is 10 and AWS rejects any reservation that drops unreserved
+            # concurrency below its floor of 10, so setting this at all fails
+            # the deploy (see the comment in pipeline_stack.py). Asserting
+            # absence turns a re-added reservation into a failing unit test
+            # rather than a CREATE_FAILED six minutes into deploy-pr.
+            "ReservedConcurrentExecutions": Match.absent(),
             "Timeout": 300,
             "MemorySize": 1024,
         },

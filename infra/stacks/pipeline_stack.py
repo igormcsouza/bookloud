@@ -187,12 +187,18 @@ class PipelineStack(cdk.Stack):
             # frame scan.
             memory_size=1024,
             timeout=cdk.Duration.seconds(300),
-            # Backstop only. The ESM's max_concurrency below is the real
-            # throttle; this is deliberately HIGHER than it, because
-            # CreateEventSourceMapping rejects a ScalingConfig.
-            # MaximumConcurrency that exceeds the function's reserved
-            # concurrency.
-            reserved_concurrent_executions=10,
+            # NO reserved_concurrent_executions here, deliberately -- do not
+            # "restore" it. This account's total Lambda concurrency limit is
+            # 10, and AWS refuses any reservation that drops *unreserved*
+            # concurrency below its floor of 10. So every possible value is
+            # rejected with "Specified ReservedConcurrentExecutions ...
+            # decreases account's UnreservedConcurrentExecution below its
+            # minimum value of [10]", in prod exactly as in pr-N.
+            # Nothing is lost: reserved concurrency was only ever a backstop
+            # here (see PLANS/phase-4.md §6.3) -- the ESM's max_concurrency
+            # below is the real throttle on concurrent TTS calls, and it caps
+            # invocations without reserving account-wide capacity. Raising the
+            # account quota is the prerequisite for adding it back.
             environment={
                 Config.ENV_ENVIRONMENT: environment,
                 Config.ENV_GIT_SHA: git_sha,
