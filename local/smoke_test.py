@@ -645,6 +645,8 @@ def main() -> int:
     parser.add_argument("--expect-environment", default=None)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--extraction-timeout", type=float, default=120)
+    parser.add_argument("--synthesis-timeout", type=float, default=180)
+    parser.add_argument("--skip-synthesis", action="store_true")
     parser.add_argument("--cognito-endpoint", default=None)
     parser.add_argument("--cognito-region", default=None)
     parser.add_argument("--cognito-client-id", default=None)
@@ -693,13 +695,15 @@ def main() -> int:
                 args.login_username,
                 args.login_password,
             )
-            check_upload_and_extraction(
+            check_upload_and_synthesis(
                 args.api_url,
                 cognito_endpoint,
                 args.cognito_client_id,
                 args.login_username,
                 args.login_password,
                 args.extraction_timeout,
+                args.synthesis_timeout,
+                skip_synthesis=args.skip_synthesis,
             )
 
         if args.newuser_username and args.newuser_temp_password:

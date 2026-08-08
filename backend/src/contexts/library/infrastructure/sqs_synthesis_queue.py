@@ -21,9 +21,24 @@ _BATCH_SIZE = 10  # SendMessageBatch hard cap (also 256 KB total; entries
 class SqsSynthesisQueue:
     def __init__(self, *, queue_url: str, sqs: Any | None = None) -> None:
         self._queue_url = queue_url
-        # Built through src.infrastructure.aws.client("sqs") so LocalStack
-        # works with zero code change.
-        self._sqs = sqs if sqs is not None else client("sqs")
+        self._injected_sqs = sqs
+
+    @property
+    def _sqs(self) -> Any:
+        """Built lazily, on first send, through src.infrastructure.aws.client
+        ("sqs") so LocalStack works with zero code change.
+
+        Lazy for the same reason ``DynamoDbBookRepository`` resolves
+        ``library_table()`` at call time (see ``interface/dependencies.py``):
+        constructing this adapter is pure DI wiring and must not touch the
+        environment. Unlike S3, SQS has no global endpoint, so building the
+        client eagerly makes ``get_synthesis_queue()`` raise ``NoRegionError``
+        anywhere ``AWS_REGION`` is unset -- which is exactly the credential-free
+        environment the backend test job runs in.
+        """
+        if self._injected_sqs is None:
+            self._injected_sqs = client("sqs")
+        return self._injected_sqs
 
     def enqueue_chunks(self, *, user_id: str, book_id: str, chunk_indexes: Iterable[int]) -> int:
         indexes = list(chunk_indexes)
