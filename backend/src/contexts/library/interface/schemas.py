@@ -18,6 +18,7 @@ def book_to_dict(book: Book) -> dict:
         "status": book.status.value,
         "chunksTotal": book.chunks_total,
         "chunksDone": book.chunks_done,
+        "chunksFailed": book.chunks_failed,
         "pageCount": book.page_count,
         "failureReason": book.failure_reason,
         "createdAt": book.created_at,
@@ -36,6 +37,9 @@ def chunk_to_dict(chunk: Chunk) -> dict:
         "status": chunk.status.value,
         "pageStart": chunk.page_start,
         "pageEnd": chunk.page_end,
+        "durationMs": chunk.duration_ms,
+        "failureReason": chunk.failure_reason,
+        "synthesisSource": chunk.synthesis_source,
     }
 
 

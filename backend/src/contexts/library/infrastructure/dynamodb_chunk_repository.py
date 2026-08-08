@@ -25,7 +25,7 @@ from src.contexts.library.infrastructure.keys import (
     sk_chunk,
 )
 from src.infrastructure.dynamodb import library_table
-from src.shared_kernel.domain.errors import NotFoundError
+from src.shared_kernel.domain.errors import ConflictError, NotFoundError
 
 
 class DynamoDbChunkRepository:
@@ -77,35 +77,75 @@ class DynamoDbChunkRepository:
         index: int,
         status: ChunkStatus,
         *,
+        expected_statuses: Sequence[ChunkStatus] | None = None,
         audio_key: str | None = None,
         marks_key: str | None = None,
+        duration_ms: int | None = None,
+        synthesis_source: str | None = None,
+        failure_reason: str | None = None,
+        clear_failure_reason: bool = False,
     ) -> None:
+        if failure_reason is not None and clear_failure_reason:
+            # Programming error, not a domain error.
+            raise ValueError("failure_reason and clear_failure_reason are mutually exclusive")
+
         # `status` is a DynamoDB reserved word -- must be aliased in any
         # UpdateExpression/ProjectionExpression/ConditionExpression.
         set_clauses = ["#status = :status"]
-        names = {"#status": "status"}
+        names: dict[str, str] = {"#status": "status"}
         values: dict[str, Any] = {":status": status.value}
 
-        # Write audioKey/marksKey only when provided, so a status-only call
-        # (phase 3) never nulls out keys a previous call (phase 4) set.
+        # Write audioKey/marksKey/... only when provided, so a status-only
+        # call (phase 3) never nulls out keys a previous call (phase 4) set.
         if audio_key is not None:
             set_clauses.append("audioKey = :audioKey")
             values[":audioKey"] = audio_key
         if marks_key is not None:
             set_clauses.append("marksKey = :marksKey")
             values[":marksKey"] = marks_key
+        if duration_ms is not None:
+            set_clauses.append("durationMs = :durationMs")
+            values[":durationMs"] = duration_ms
+        if synthesis_source is not None:
+            set_clauses.append("synthesisSource = :synthesisSource")
+            values[":synthesisSource"] = synthesis_source
+        if failure_reason is not None:
+            set_clauses.append("failureReason = :failureReason")
+            values[":failureReason"] = failure_reason
+
+        update_expression = "SET " + ", ".join(set_clauses)
+        if clear_failure_reason:
+            # failureReason is absent (not NULL) when unset -- see
+            # chunk_mapper.py -- so a successful DONE transition after a
+            # prior FAILED attempt must REMOVE it, not SET it to None.
+            update_expression += " REMOVE failureReason"
+
+        condition_expression = "attribute_exists(PK)"
+        if expected_statuses:
+            expected_names = [f":exp{i}" for i in range(len(expected_statuses))]
+            for name, expected in zip(expected_names, expected_statuses):
+                values[name] = expected.value
+            condition_expression += f" AND #status IN ({', '.join(expected_names)})"
 
         try:
             self._table.update_item(
                 Key={PK: pk_book(book_id), SK: sk_chunk(index)},
-                UpdateExpression="SET " + ", ".join(set_clauses),
+                UpdateExpression=update_expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
-                ConditionExpression="attribute_exists(PK)",
+                ConditionExpression=condition_expression,
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                raise NotFoundError("Chunk not found") from exc
+                # Disambiguate "chunk is gone" from "chunk exists but failed
+                # the expected_statuses condition" -- the single most
+                # important line in phase 4 (§8.4's exactly-once counter
+                # gate: a ConflictError here means another invocation
+                # already reached the terminal state first, and this
+                # invocation must NOT increment chunksDone again).
+                if self.get(book_id, index) is None:
+                    raise NotFoundError("Chunk not found") from exc
+                raise ConflictError("Chunk is not in an expected status") from exc
             raise
 
     def delete_for_book(self, book_id: str) -> int:

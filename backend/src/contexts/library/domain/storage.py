@@ -31,3 +31,15 @@ class PdfStorage(Protocol):
     def presigned_upload(self, *, key: str) -> PresignedUpload: ...  # pragma: no cover
 
     def get_bytes(self, *, key: str) -> bytes: ...  # pragma: no cover
+
+
+class ObjectStorage(Protocol):
+    """Write-side port for ``audio_bucket``/``marks_bucket`` (PLANS/
+    phase-4.md §3). One adapter instance per bucket -- ``infrastructure/
+    s3_object_storage.py``'s ``S3ObjectStorage`` is constructed once per
+    bucket, not parameterized by bucket name per call, mirroring
+    ``S3PdfStorage``'s one-adapter-per-bucket shape."""
+
+    def put_bytes(self, *, key: str, data: bytes, content_type: str) -> None: ...  # pragma: no cover
+
+    def get_bytes(self, *, key: str) -> bytes: ...  # pragma: no cover

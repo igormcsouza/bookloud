@@ -23,31 +23,42 @@ the repo's `{domain,application,infrastructure,interface}` layout:
 
 ```
 library/
-├── domain/           Book (aggregate root, now carries sourceKey/
-│                    failureReason), Chunk (its own aggregate -- see
-│                    below, now carries pageStart/pageEnd),
-│                    BookStatus/ChunkStatus/ExtractionFailure,
+├── domain/           Book (aggregate root, carries sourceKey/
+│                    failureReason/chunksFailed), Chunk (its own aggregate
+│                    -- see below, carries pageStart/pageEnd plus
+│                    durationMs/synthesisSource/failureReason),
+│                    BookStatus/ChunkStatus/ExtractionFailure/
+│                    SynthesisFailure/SynthesisSource/MarksTiming,
 │                    BookRepository/ChunkRepository/PdfStorage/
-│                    PdfTextExtractor (Protocols, no ABCs), plus two pure
-│                    (no pymupdf/boto3) modules: layout.py (header/footer/
-│                    footnote policy) and chunking.py (text -> chunk
-│                    boundaries)
+│                    ObjectStorage/PdfTextExtractor/SpeechSynthesizer/
+│                    SynthesisQueue (Protocols, no ABCs), plus four pure
+│                    (no pymupdf/edge_tts/boto3) modules: layout.py
+│                    (header/footer/footnote policy), chunking.py (text ->
+│                    chunk boundaries) and marks.py (word timing alignment
+│                    + interpolation)
 ├── application/      RequestBookUpload (create + presign, replaces
 │                    phase 2's CreateBook), ReissueBookUpload, GetBook,
 │                    ListBooks, DeleteBook, ListBookChunks, ExtractBook
-│                    (the extract Lambda's use case) use cases
+│                    (the extract Lambda's use case), SynthesizeChunk (the
+│                    synthesize Lambda's use case)
 ├── infrastructure/   keys.py/s3_keys.py (PK/SK + S3 key helpers),
 │                    book_mapper.py/chunk_mapper.py (dict <-> entity),
 │                    the two DynamoDB repository adapters,
 │                    s3_pdf_storage.py (presigned POST + get_bytes),
+│                    s3_object_storage.py, sqs_synthesis_queue.py,
 │                    pymupdf_extractor.py (the only module importing
-│                    pymupdf)
+│                    pymupdf), edge_tts_synthesizer.py (the only module
+│                    importing edge_tts), google_tts_synthesizer.py (REST
+│                    via urllib, no GCP SDK), fallback_synthesizer.py,
+│                    stub_synthesizer.py, secrets.py, mp3.py (pure MP3
+│                    frame-header duration parser)
 └── interface/        FastAPI Depends providers, camelCase response
                      schemas, POST /books + POST /books/{id}/upload-url +
                      GET /books + GET /books/{id} + GET /books/{id}/chunks
-                     controllers, extract_handler.py (the SQS Lambda
-                     handler), local_extract_worker.py (the LocalStack-dev
-                     poll-loop equivalent)
+                     controllers, extract_handler.py + synthesize_handler.py
+                     (the two SQS Lambda handlers), local_extract_worker.py
+                     + local_synthesize_worker.py (their LocalStack-dev
+                     poll-loop equivalents)
 ```
 
 **Upload contract** (what the phase 6 reader UI will call): `POST /books
@@ -59,6 +70,57 @@ after the file field), `POST` to `upload.url`, expect `204`. Then poll
 `GET /books/{id}/chunks` for the extracted text. `POST /books/{id}/upload-url`
 re-issues a presigned upload for retry (only while `status` is
 `UPLOADED`/`FAILED`; `409` otherwise).
+
+**Synthesis pipeline.** When extraction finishes, the extract Lambda publishes
+one SQS message per chunk (fan-out), and the synthesize Lambda processes each
+independently: it atomically claims the chunk (`-> SYNTHESIZING`), calls TTS,
+writes an MP3 to `audio_bucket` and a word-timestamp JSON to `marks_bucket`,
+then flips the chunk to `DONE` and atomically increments the book's
+`chunksDone`. Fan-in is that counter -- phase 5's stitcher fires when
+`chunksDone == chunksTotal`. The counter increment is gated on the *conditional*
+terminal update succeeding, which is what makes duplicate SQS deliveries,
+duplicate fan-out publishes and crashed-mid-flight invocations all safe with no
+distributed lock. A chunk that permanently fails still counts toward
+`chunksDone` (and bumps `chunksFailed`), so one bad chunk can never wedge a
+book below `chunksTotal` forever.
+
+S3 layout: `audio/<userId>/<bookId>/<index:06d>.mp3` and
+`marks/<userId>/<bookId>/<index:06d>.json`. The marks JSON is what phase 6's
+highlight sync binary-searches on every `timeupdate`:
+
+```json
+{"version": 1, "bookId": "...", "chunkIndex": 7, "source": "edge-tts",
+ "timing": "measured", "durationMs": 118240, "wordCount": 302,
+ "words": [{"t": 0, "d": 320, "s": 0, "e": 7, "w": "Chapter"}]}
+```
+
+`t`/`d` are milliseconds; `s`/`e` are char offsets **relative to the chunk
+text**; `words` is sorted by `t`. `timing` is `measured` when the engine gave
+real per-word events (edge-tts) or `estimated` when they were interpolated
+between sentence anchors (Google, which only exposes SSML `<mark>` timepoints).
+
+**Real TTS runs in prod only.** `get_speech_synthesizer()` checks
+`ENVIRONMENT != "prod"` first and unconditionally, returning a
+`StubSynthesizer` for local dev and every ephemeral PR stack. The stub raises a
+*permanent* `SynthesisDisabled`, so those chunks go straight to
+`FAILED`/`EXTERNAL_TTS_DISABLED` with no retries and no network call ever. This
+keeps developer laptops and CI off Microsoft's undocumented free endpoint and
+makes the smoke test fully deterministic -- it asserts the fan-out/claim/counter
+machinery (`chunksDone == chunksTotal == chunksFailed`) rather than real audio.
+Consequently no automated test exercises the real engines; that is deliberate.
+
+**Enabling the Google Cloud TTS fallback** (optional, prod-only, currently
+dormant): create a GCP project, enable the Cloud Text-to-Speech API, create an
+API key restricted to that single API, then store it once:
+
+```bash
+aws secretsmanager create-secret \
+  --name bookloud/google-tts-api-key --secret-string '<key>'
+```
+
+With the secret absent (the default everywhere today), the synthesize Lambda
+runs edge-tts alone and logs a single INFO at startup. See `PLANS/phase-4.md`
+for the full decisions log.
 
 **Single-table key patterns** (table: `bookloud-<env>`, PK/SK both strings):
 
@@ -148,9 +210,11 @@ Requires Docker, Python 3.12+, Node 24, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 make up      # LocalStack + cognito-local + backend (uvicorn, hot reload) +
-             # extract-worker (poll loop over the extract queue) on :8000
+             # extract-worker and synthesize-worker (poll loops over their
+             # respective queues) on :8000
 make ui      # + Next.js frontend on :3000 (optional)
-make smoke   # smoke test against the running stack (incl. upload + extraction)
+make smoke   # smoke test against the running stack (upload + extraction +
+             # synthesis fan-out/fan-in; TTS is stubbed outside prod)
 make down    # tear everything down
 ```
 
@@ -183,11 +247,12 @@ bookloud/
 ├── backend/    FastAPI, DDD-flavoured (contexts/<ctx>/{domain,application,
 │               infrastructure,interface}, shared_kernel/), packaged as a
 │               Lambda container image. GET /health, GET /me (auth),
-│               the full Library upload/extraction surface
-│               (contexts/library/, phases 2-3) today; TTS synthesis and
-│               chat land in phases 4-7. src/auth/ is cross-cutting, not a
-│               context. The same image also backs the extract Lambda
-│               (infra/stacks/pipeline_stack.py), differing only by its
+│               the full Library upload/extraction/synthesis surface
+│               (contexts/library/, phases 2-4) today; stitching, the
+│               reader UI and chat land in phases 5-7. src/auth/ is
+│               cross-cutting, not a context. The same image also backs the
+│               extract and synthesize Lambdas
+│               (infra/stacks/pipeline_stack.py), differing only by their
 │               container `cmd`.
 ├── frontend/   Next.js 15 (App Router) + Tailwind, deployed via OpenNext to
 │               Lambda + CloudFront. Landing page, login (incl. forced

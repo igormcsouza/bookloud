@@ -8,8 +8,10 @@ from src.contexts.library.application.extraction import ExtractBook, ExtractBook
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
 from src.contexts.library.domain.extraction import ExtractedDocument, ExtractedPage, ExtractionError
+from src.contexts.library.domain.repository import ChunkCounters
 from src.contexts.library.domain.value_objects import BookStatus, ExtractionFailure
 from src.shared_kernel.domain.errors import ConflictError, NotFoundError
+from tests.contexts.library.fakes import FakeSynthesisQueue
 
 FIXED_NOW = datetime(2026, 8, 5, 0, 0, 0, tzinfo=UTC)
 USER_ID = "user-1"
@@ -55,6 +57,8 @@ class RecordingBookRepository:
         *,
         expected_statuses=None,
         chunks_total=None,
+        chunks_done=None,
+        chunks_failed=None,
         page_count=None,
         failure_reason=None,
         clear_failure_reason: bool = False,
@@ -71,6 +75,10 @@ class RecordingBookRepository:
         book.status = status
         if chunks_total is not None:
             book.chunks_total = chunks_total
+        if chunks_done is not None:
+            book.chunks_done = chunks_done
+        if chunks_failed is not None:
+            book.chunks_failed = chunks_failed
         if page_count is not None:
             book.page_count = page_count
         if failure_reason is not None:
@@ -80,7 +88,7 @@ class RecordingBookRepository:
         if updated_at is not None:
             book.updated_at = updated_at
 
-    def increment_chunks_done(self, user_id: str, book_id: str) -> int:
+    def increment_chunks_done(self, user_id: str, book_id: str, *, failed: bool = False) -> ChunkCounters:
         raise NotImplementedError
 
 
@@ -181,7 +189,7 @@ def test_happy_path_extracts_writes_chunks_and_flips_to_extracted(book_repo, chu
     document = _document(text)
     pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
     extractor = FakeExtractor(document=document)
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -208,7 +216,7 @@ def test_save_before_status_flip_ordering(book_repo, chunk_repo, events) -> None
     document = _document("B" * 300)
     pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
     extractor = FakeExtractor(document=document)
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -230,7 +238,7 @@ def test_stale_chunk_cleanup_on_re_extraction(book_repo, chunk_repo) -> None:
     document = _document("C" * 300)
     pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
     extractor = FakeExtractor(document=document)
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -246,7 +254,7 @@ def test_retry_clears_previous_failure_reason(book_repo, chunk_repo) -> None:
     document = _document("D" * 300)
     pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
     extractor = FakeExtractor(document=document)
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -259,7 +267,7 @@ def test_retry_clears_previous_failure_reason(book_repo, chunk_repo) -> None:
 def test_book_not_found_is_skipped(book_repo, chunk_repo) -> None:
     pdf_storage = FakePdfStorage()
     extractor = FakeExtractor()
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(
         ExtractBookCommand(user_id=USER_ID, book_id="no-such-book", source_key=SOURCE_KEY)
@@ -273,7 +281,7 @@ def test_key_mismatch_is_skipped(book_repo, chunk_repo) -> None:
     _seed_book(book_repo)
     pdf_storage = FakePdfStorage()
     extractor = FakeExtractor()
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(
         ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key="books/other/key/source.pdf")
@@ -288,7 +296,7 @@ def test_already_claimed_or_in_progress_is_skipped(book_repo, chunk_repo, status
     _seed_book(book_repo, status=status)
     pdf_storage = FakePdfStorage()
     extractor = FakeExtractor()
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -318,7 +326,7 @@ def test_claim_not_found_race_between_get_and_claim_is_skipped(book_repo, chunk_
     book_repo.update_status = racing_update_status  # type: ignore[method-assign]
     pdf_storage = FakePdfStorage()
     extractor = FakeExtractor()
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -347,7 +355,7 @@ def test_extraction_error_flips_book_to_failed_with_reason(
     _seed_book(book_repo)
     pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
     extractor = FakeExtractor(error=ExtractionError(reason, "boom"))
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -363,7 +371,7 @@ def test_no_chunks_produced_raises_no_text_layer(book_repo, chunk_repo) -> None:
     document = _document("   ")  # whitespace only -> chunk_text returns []
     pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
     extractor = FakeExtractor(document=document)
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
@@ -378,7 +386,7 @@ def test_transient_error_reverts_book_to_uploaded_and_reraises(book_repo, chunk_
     _seed_book(book_repo)
     pdf_storage = FakePdfStorage(error=RuntimeError("S3 is down"))
     extractor = FakeExtractor()
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     with pytest.raises(RuntimeError, match="S3 is down"):
         use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
@@ -393,9 +401,110 @@ def test_transient_error_after_claiming_a_failed_book_still_releases_to_uploaded
     _seed_book(book_repo, status=BookStatus.FAILED)
     pdf_storage = FakePdfStorage(error=RuntimeError("DynamoDB throttled"))
     extractor = FakeExtractor()
-    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock())
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), FakeSynthesisQueue())
 
     with pytest.raises(RuntimeError):
         use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
 
     assert book_repo.get(USER_ID, BOOK_ID).status == BookStatus.UPLOADED
+
+
+# --- phase 4: synthesis fan-out (PLANS/phase-4.md §4) -----------------------
+
+
+def test_fan_out_published_after_extracted_flip(book_repo, chunk_repo, events) -> None:
+    """The publish must happen AFTER update_status:EXTRACTED -- publishing
+    before would let a fast worker finish and increment_chunks_done while
+    chunksTotal is still 0 (§4.2's decisive argument)."""
+    _seed_book(book_repo)
+    document = _document("A" * 300)
+    pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
+    extractor = FakeExtractor(document=document)
+    synthesis_queue = FakeSynthesisQueue()
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), synthesis_queue)
+
+    use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    assert events == [
+        "update_status:EXTRACTING",
+        "delete_for_book",
+        "save_all_chunks",
+        "update_status:EXTRACTED",
+    ]
+    assert len(synthesis_queue.calls) == 1
+
+
+def test_fan_out_covers_0_to_n_minus_1(book_repo, chunk_repo) -> None:
+    _seed_book(book_repo)
+    document = _document("B" * 600)  # long enough to produce multiple chunks
+    pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
+    extractor = FakeExtractor(document=document)
+    synthesis_queue = FakeSynthesisQueue()
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), synthesis_queue)
+
+    result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    (call,) = synthesis_queue.calls
+    assert call["user_id"] == USER_ID
+    assert call["book_id"] == BOOK_ID
+    assert call["chunk_indexes"] == list(range(result.chunks_written))
+
+
+def test_publish_failure_after_successful_flip_leaves_book_extracted_not_uploaded(
+    book_repo, chunk_repo
+) -> None:
+    """The load-bearing restructuring: a publish failure must NOT reset the
+    book to UPLOADED (that would re-extract and wipe chunks phase 4 may
+    already be working on) -- it re-raises so SQS redelivers, and the
+    REQUEUED branch turns that redelivery into a publish-only retry."""
+    _seed_book(book_repo)
+    document = _document("C" * 300)
+    pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
+    extractor = FakeExtractor(document=document)
+    synthesis_queue = FakeSynthesisQueue(error=RuntimeError("SQS is down"))
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), synthesis_queue)
+
+    with pytest.raises(RuntimeError, match="SQS is down"):
+        use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    book = book_repo.get(USER_ID, BOOK_ID)
+    assert book.status == BookStatus.EXTRACTED  # NOT reset to UPLOADED
+    assert book.chunks_total == 1
+
+
+def test_requeued_redelivery_republishes_without_re_extracting(book_repo, chunk_repo, events) -> None:
+    book = _seed_book(book_repo, status=BookStatus.EXTRACTED)
+    book.chunks_total = 3
+    pdf_storage = FakePdfStorage()
+    extractor = FakeExtractor()
+    synthesis_queue = FakeSynthesisQueue()
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), synthesis_queue)
+
+    result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    assert result.outcome == "REQUEUED"
+    assert result.chunks_written == 3
+    (call,) = synthesis_queue.calls
+    assert call["chunk_indexes"] == [0, 1, 2]
+    # No claim/extraction events -- the book was never re-extracted.
+    assert events == []
+
+
+def test_requeued_branch_does_not_fire_when_chunks_total_is_zero(book_repo, chunk_repo) -> None:
+    """An EXTRACTED book with chunksTotal == 0 is not a valid state in
+    practice (extraction always writes >= 1 chunk before flipping), but the
+    guard is explicit: REQUEUED requires chunks_total > 0, not just
+    status == EXTRACTED."""
+    _seed_book(book_repo, status=BookStatus.EXTRACTED)  # chunks_total defaults to 0
+    pdf_storage = FakePdfStorage()
+    extractor = FakeExtractor()
+    synthesis_queue = FakeSynthesisQueue()
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, extractor, FixedClock(), synthesis_queue)
+
+    result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    # Falls through to the normal claim path -- EXTRACTED isn't claimable,
+    # so this resolves as ALREADY_CLAIMED, not REQUEUED.
+    assert result.outcome == "SKIPPED"
+    assert result.reason == "ALREADY_CLAIMED"
+    assert synthesis_queue.calls == []

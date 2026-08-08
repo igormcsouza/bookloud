@@ -23,6 +23,7 @@ from src.contexts.library.interface.dependencies import (
     get_clock,
     get_pdf_extractor,
     get_pdf_storage,
+    get_synthesis_queue,
 )
 
 logger = logging.getLogger("bookloud.extract")
@@ -40,6 +41,7 @@ def handler(event: dict, context: object) -> None:
         pdf_storage=get_pdf_storage(),
         extractor=get_pdf_extractor(),
         clock=get_clock(),
+        synthesis_queue=get_synthesis_queue(),
     )
     handle_records(event.get("Records", []), use_case)
 

@@ -19,6 +19,7 @@ def test_book_to_dict_is_camel_case() -> None:
         "status": "UPLOADED",
         "chunksTotal": 0,
         "chunksDone": 0,
+        "chunksFailed": 0,
         "pageCount": 0,
         "failureReason": None,
         "createdAt": FIXED_NOW.isoformat(),
@@ -64,7 +65,28 @@ def test_chunk_to_dict_is_camel_case() -> None:
         "status": "PENDING",
         "pageStart": 1,
         "pageEnd": 2,
+        "durationMs": 0,
+        "failureReason": None,
+        "synthesisSource": None,
     }
+
+
+def test_book_to_dict_surfaces_chunks_failed() -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+    book.chunks_failed = 2
+    result = book_to_dict(book)
+    assert result["chunksFailed"] == 2
+
+
+def test_chunk_to_dict_surfaces_synthesis_fields_when_set() -> None:
+    chunk = Chunk.create(book_id="book-1", user_id="user-1", index=0, text="hi", char_start=0, char_end=2)
+    chunk.duration_ms = 5000
+    chunk.failure_reason = "ALL_ENGINES_FAILED"
+    chunk.synthesis_source = "google-tts"
+    result = chunk_to_dict(chunk)
+    assert result["durationMs"] == 5000
+    assert result["failureReason"] == "ALL_ENGINES_FAILED"
+    assert result["synthesisSource"] == "google-tts"
 
 
 def test_upload_to_dict_is_camel_case() -> None:

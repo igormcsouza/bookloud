@@ -10,7 +10,7 @@ from src.contexts.library.domain.value_objects import ChunkStatus
 from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
     DynamoDbChunkRepository,
 )
-from src.shared_kernel.domain.errors import NotFoundError
+from src.shared_kernel.domain.errors import ConflictError, NotFoundError
 from tests.contexts.library.conftest import seed_chunks
 
 
@@ -159,6 +159,105 @@ def test_list_for_book_paginates() -> None:
     assert stub_table.query.call_count == 2
     _, second_call_kwargs = stub_table.query.call_args_list[1]
     assert second_call_kwargs["ExclusiveStartKey"] == {"PK": "BOOK#book-1", "SK": "CHUNK#000000"}
+
+
+# --- phase 4: expected_statuses / ConflictError vs NotFoundError -----------
+
+
+def test_update_status_expected_statuses_succeeds_when_matching(chunk_repo) -> None:
+    seed_chunks(chunk_repo, book_id="book-1", count=1)  # PENDING by default
+
+    chunk_repo.update_status(
+        "book-1",
+        0,
+        ChunkStatus.SYNTHESIZING,
+        expected_statuses=(ChunkStatus.PENDING, ChunkStatus.SYNTHESIZING, ChunkStatus.FAILED),
+    )
+
+    assert chunk_repo.get("book-1", 0).status == ChunkStatus.SYNTHESIZING
+
+
+def test_update_status_expected_statuses_conflict_when_already_done(chunk_repo) -> None:
+    seed_chunks(chunk_repo, book_id="book-1", count=1)
+    chunk_repo.update_status("book-1", 0, ChunkStatus.DONE)
+
+    with pytest.raises(ConflictError):
+        chunk_repo.update_status(
+            "book-1",
+            0,
+            ChunkStatus.DONE,
+            expected_statuses=(ChunkStatus.PENDING, ChunkStatus.SYNTHESIZING, ChunkStatus.FAILED),
+        )
+    # The conflicting attempt must not have mutated anything further.
+    assert chunk_repo.get("book-1", 0).status == ChunkStatus.DONE
+
+
+def test_update_status_expected_statuses_not_found_when_chunk_missing(chunk_repo) -> None:
+    with pytest.raises(NotFoundError):
+        chunk_repo.update_status(
+            "no-such-book",
+            0,
+            ChunkStatus.SYNTHESIZING,
+            expected_statuses=(ChunkStatus.PENDING,),
+        )
+
+
+# --- phase 4: duration_ms / synthesis_source / failure_reason --------------
+
+
+def test_update_status_writes_duration_ms_and_synthesis_source(chunk_repo) -> None:
+    seed_chunks(chunk_repo, book_id="book-1", count=1)
+
+    chunk_repo.update_status(
+        "book-1", 0, ChunkStatus.DONE, duration_ms=118240, synthesis_source="edge-tts"
+    )
+
+    fetched = chunk_repo.get("book-1", 0)
+    assert fetched.duration_ms == 118240
+    assert fetched.synthesis_source == "edge-tts"
+
+
+def test_update_status_writes_failure_reason(chunk_repo) -> None:
+    seed_chunks(chunk_repo, book_id="book-1", count=1)
+
+    chunk_repo.update_status("book-1", 0, ChunkStatus.FAILED, failure_reason="ALL_ENGINES_FAILED")
+
+    assert chunk_repo.get("book-1", 0).failure_reason == "ALL_ENGINES_FAILED"
+
+
+def test_update_status_clear_failure_reason_removes_attribute(chunk_repo, dynamodb_table) -> None:
+    seed_chunks(chunk_repo, book_id="book-1", count=1)
+    chunk_repo.update_status("book-1", 0, ChunkStatus.FAILED, failure_reason="EMPTY_TEXT")
+
+    chunk_repo.update_status("book-1", 0, ChunkStatus.DONE, clear_failure_reason=True)
+
+    fetched = chunk_repo.get("book-1", 0)
+    assert fetched.failure_reason is None
+    raw_item = dynamodb_table.get_item(Key={"PK": "BOOK#book-1", "SK": "CHUNK#000000"})["Item"]
+    assert "failureReason" not in raw_item
+
+
+def test_update_status_failure_reason_and_clear_together_raises_value_error(chunk_repo) -> None:
+    seed_chunks(chunk_repo, book_id="book-1", count=1)
+    with pytest.raises(ValueError):
+        chunk_repo.update_status(
+            "book-1", 0, ChunkStatus.FAILED, failure_reason="EMPTY_TEXT", clear_failure_reason=True
+        )
+
+
+def test_update_status_only_call_does_not_null_out_audio_or_marks_key(chunk_repo) -> None:
+    """A status-only call (e.g. the SYNTHESIZING claim) must never null out
+    audioKey/marksKey a previous call already wrote."""
+    seed_chunks(chunk_repo, book_id="book-1", count=1)
+    chunk_repo.update_status("book-1", 0, ChunkStatus.DONE, audio_key="audio/0.mp3", marks_key="marks/0.json")
+
+    chunk_repo.update_status(
+        "book-1", 0, ChunkStatus.SYNTHESIZING, expected_statuses=(ChunkStatus.DONE,)
+    )
+
+    fetched = chunk_repo.get("book-1", 0)
+    assert fetched.audio_key == "audio/0.mp3"
+    assert fetched.marks_key == "marks/0.json"
 
 
 def test_delete_for_book_paginates() -> None:

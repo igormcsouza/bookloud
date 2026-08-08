@@ -3,11 +3,11 @@
 # test -> teardown.
 .PHONY: up ui seed smoke token logs down test synth e2e
 
-## Build & start LocalStack + cognito-local + backend + extract-worker, then
-## create the table/buckets/queues and bootstrap the local Cognito
-## pool/client/dev user.
+## Build & start LocalStack + cognito-local + backend + extract-worker +
+## synthesize-worker, then create the table/buckets/queues and bootstrap the
+## local Cognito pool/client/dev user.
 up:
-	docker compose up -d --build localstack cognito-local backend extract-worker
+	docker compose up -d --build localstack cognito-local backend extract-worker synthesize-worker
 	./local/setup.sh
 
 ## Start the Next.js frontend too (http://localhost:3000). Reads the Cognito

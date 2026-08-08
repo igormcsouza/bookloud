@@ -188,6 +188,7 @@ def test_list_books_returns_camel_case_shape_newest_first(
         "status": "UPLOADED",
         "chunksTotal": 0,
         "chunksDone": 0,
+        "chunksFailed": 0,
         "pageCount": 0,
         "failureReason": None,
         "createdAt": newer.isoformat(),

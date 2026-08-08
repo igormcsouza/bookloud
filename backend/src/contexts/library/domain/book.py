@@ -48,6 +48,7 @@ class Book:
     updated_at: str
     source_key: str | None = None  # S3 key in pdf_bucket; set at creation (phase 3)
     failure_reason: str | None = None  # ExtractionFailure value; None unless FAILED
+    chunks_failed: int = 0  # count of chunks permanently FAILED synthesis (phase 4)
 
     @classmethod
     def create(

@@ -5,7 +5,7 @@ import aws_cdk as cdk
 
 from stacks.api_stack import ApiStack
 from stacks.auth_stack import AuthStack
-from stacks.config import Config, stack_name
+from stacks.config import Config, is_prod, stack_name
 from stacks.frontend_stack import FrontendStack
 from stacks.pipeline_stack import PipelineStack
 from stacks.storage_stack import StorageStack
@@ -23,10 +23,11 @@ environment: str = app.node.try_get_context("environment") or Config.DEFAULT_ENV
 git_sha: str = app.node.try_get_context("git_sha") or "local"
 
 # Storage and Auth are independent of each other; Pipeline now imports
-# Storage (it re-imports pdf_bucket by name and takes the table directly --
-# see pipeline_stack.py's module docstring for why that avoids a circular
-# CloudFormation dependency with the S3 -> SQS notification). Dependency
-# chain: Storage -> Pipeline -> Api, with Auth -> Api alongside it.
+# Storage (it re-imports pdf_bucket by name and takes the table/audio/marks
+# buckets directly -- see pipeline_stack.py's module docstring for why that
+# avoids a circular CloudFormation dependency with the S3 -> SQS
+# notification). Dependency chain: Storage -> Pipeline -> Api, with
+# Auth -> Api alongside it.
 storage = StorageStack(app, stack_name("Storage", environment), environment=environment, env=env)
 auth = AuthStack(app, stack_name("Auth", environment), environment=environment, env=env)
 pipeline = PipelineStack(
@@ -34,7 +35,18 @@ pipeline = PipelineStack(
     stack_name("Pipeline", environment),
     environment=environment,
     pdf_bucket_name=storage.pdf_bucket.bucket_name,
+    audio_bucket=storage.audio_bucket,
+    marks_bucket=storage.marks_bucket,
     table=storage.table,
+    # "" (unset) everywhere but prod by default -- OQ-A ships the Google
+    # fallback dormant until the secret is provisioned out of band (PLANS/
+    # phase-4.md §6.4/§13 OQ-A). A human can still override via -c
+    # google_tts_secret_name=... on any environment (e.g. to test the
+    # fallback path in prod before it's the default), but note this alone
+    # never turns on real calls outside prod -- get_speech_synthesizer()'s
+    # ENVIRONMENT == "prod" gate (§0) is unconditional and checked first.
+    google_tts_secret_name=app.node.try_get_context("google_tts_secret_name")
+    or (Config.GOOGLE_TTS_SECRET_NAME if is_prod(environment) else ""),
     git_sha=git_sha,
     env=env,
 )

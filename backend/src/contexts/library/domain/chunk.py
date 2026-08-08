@@ -26,6 +26,9 @@ class Chunk:
     status: ChunkStatus
     page_start: int = 0  # 1-based, inclusive; 0 default keeps phase-2 fixtures compiling
     page_end: int = 0  # 1-based, inclusive
+    duration_ms: int = 0  # measured MP3 duration; phase 5's offset math and phase 6's seek both need it
+    failure_reason: str | None = None  # SynthesisFailure value; None unless status == FAILED
+    synthesis_source: str | None = None  # SynthesisSource value; None until synthesized
 
     @classmethod
     def create(

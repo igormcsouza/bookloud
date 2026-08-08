@@ -182,6 +182,15 @@ def s3_and_dynamodb(dynamodb_table, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config.settings, "pdf_bucket", PDF_BUCKET)
     client = boto3.client("s3", region_name="us-east-1")
     client.create_bucket(Bucket=PDF_BUCKET)
+
+    # The extract Lambda is now a SynthesisQueue producer too (PLANS/
+    # phase-4.md §4) -- handler() reaches EXTRACTED and publishes the
+    # fan-out, so this fixture needs a real (moto) queue for that call to
+    # land on.
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    queue_url = sqs.create_queue(QueueName="bookloud-test-synthesize")["QueueUrl"]
+    monkeypatch.setattr(config.settings, "synthesize_queue_url", queue_url)
+
     return client
 
 
@@ -215,6 +224,38 @@ def test_handler_end_to_end_extracts_a_real_pdf_and_writes_chunks(
     chunks = chunk_repo.list_for_book(BOOK_ID)
     assert len(chunks) == updated.chunks_total
     assert "simple test document" in chunks[0].text
+
+
+def test_handler_end_to_end_publishes_synthesis_fan_out(s3_and_dynamodb, dynamodb_table) -> None:
+    """PLANS/phase-4.md §4: the extract Lambda publishes one SQS message per
+    chunk after the EXTRACTED flip -- proven here against a real (moto) SQS
+    queue, not a fake."""
+    import src.config as config
+    from src.contexts.library.infrastructure.dynamodb_book_repository import (
+        DynamoDbBookRepository,
+    )
+
+    key = source_pdf_key(USER_ID, BOOK_ID)
+    book_repo = DynamoDbBookRepository(table=dynamodb_table)
+    book = Book.create(
+        id=BOOK_ID, user_id=USER_ID, title_raw="Real Book", now=datetime.now(UTC), source_key=key
+    )
+    book_repo.save(book)
+    s3_and_dynamodb.put_object(Bucket=PDF_BUCKET, Key=key, Body=simple_text_pdf())
+
+    event = {"Records": [{"body": _s3_event_body(PDF_BUCKET, key)}]}
+    handler(event, None)
+
+    updated = book_repo.get(USER_ID, BOOK_ID)
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    response = sqs.receive_message(
+        QueueUrl=config.settings.synthesize_queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0
+    )
+    messages = response.get("Messages", [])
+    assert len(messages) == updated.chunks_total
+    bodies = [json.loads(m["Body"]) for m in messages]
+    assert {b["chunkIndex"] for b in bodies} == set(range(updated.chunks_total))
+    assert all(b["bookId"] == BOOK_ID for b in bodies)
 
 
 def test_handler_permanent_failure_flips_book_to_failed(s3_and_dynamodb, dynamodb_table) -> None:

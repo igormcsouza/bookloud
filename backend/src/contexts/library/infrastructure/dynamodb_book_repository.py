@@ -15,6 +15,7 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from src.contexts.library.domain.book import Book
+from src.contexts.library.domain.repository import ChunkCounters
 from src.contexts.library.domain.value_objects import BookStatus
 from src.contexts.library.infrastructure.book_mapper import book_to_item, item_to_book
 from src.contexts.library.infrastructure.keys import BOOK_PREFIX, PK, SK, pk_user, sk_book
@@ -73,6 +74,8 @@ class DynamoDbBookRepository:
         *,
         expected_statuses: Sequence[BookStatus] | None = None,
         chunks_total: int | None = None,
+        chunks_done: int | None = None,
+        chunks_failed: int | None = None,
         page_count: int | None = None,
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
@@ -92,6 +95,15 @@ class DynamoDbBookRepository:
         if chunks_total is not None:
             set_clauses.append("chunksTotal = :chunksTotal")
             values[":chunksTotal"] = chunks_total
+        if chunks_done is not None:
+            # PLANS/phase-4.md §5.4: the EXTRACTED flip resets both counters
+            # to 0 so re-extracting a previously-FAILED book doesn't leave a
+            # stale chunksDone/chunksFailed behind.
+            set_clauses.append("chunksDone = :chunksDone")
+            values[":chunksDone"] = chunks_done
+        if chunks_failed is not None:
+            set_clauses.append("chunksFailed = :chunksFailed")
+            values[":chunksFailed"] = chunks_failed
         if page_count is not None:
             set_clauses.append("pageCount = :pageCount")
             values[":pageCount"] = page_count
@@ -137,17 +149,32 @@ class DynamoDbBookRepository:
                 raise ConflictError("Book is not in an expected status") from exc
             raise
 
-    def increment_chunks_done(self, user_id: str, book_id: str) -> int:
+    def increment_chunks_done(
+        self, user_id: str, book_id: str, *, failed: bool = False
+    ) -> ChunkCounters:
+        update_expression = "ADD chunksDone :one"
+        if failed:
+            update_expression += ", chunksFailed :one"
         try:
             response = self._table.update_item(
                 Key={PK: pk_user(user_id), SK: sk_book(book_id)},
-                UpdateExpression="ADD chunksDone :one",
+                UpdateExpression=update_expression,
                 ExpressionAttributeValues={":one": 1},
                 ConditionExpression="attribute_exists(PK)",
-                ReturnValues="UPDATED_NEW",
+                # ALL_NEW (not UPDATED_NEW): the caller needs chunksTotal too
+                # (to compute is_complete), and ADD only ever touches
+                # chunksDone/chunksFailed -- UPDATED_NEW would omit
+                # chunksTotal entirely since this call never sets it.
+                ReturnValues="ALL_NEW",
             )
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 raise NotFoundError("Book not found") from exc
             raise
-        return int(response["Attributes"]["chunksDone"])
+        attrs = response["Attributes"]
+        # boto3 resource API returns Decimal for numbers -- coerce to int.
+        return ChunkCounters(
+            chunks_done=int(attrs.get("chunksDone", 0)),
+            chunks_total=int(attrs.get("chunksTotal", 0)),
+            chunks_failed=int(attrs.get("chunksFailed", 0)),
+        )

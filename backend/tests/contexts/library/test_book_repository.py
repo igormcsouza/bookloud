@@ -134,8 +134,8 @@ def test_update_status_nonexistent_book_raises_not_found_and_creates_nothing(
 # 13. increment_chunks_done returns 1 then 2; stored value matches
 def test_increment_chunks_done_returns_incrementing_values(book_repo) -> None:
     seed_book(book_repo, id="book-1", user_id="user-1")
-    assert book_repo.increment_chunks_done("user-1", "book-1") == 1
-    assert book_repo.increment_chunks_done("user-1", "book-1") == 2
+    assert book_repo.increment_chunks_done("user-1", "book-1").chunks_done == 1
+    assert book_repo.increment_chunks_done("user-1", "book-1").chunks_done == 2
     fetched = book_repo.get("user-1", "book-1")
     assert fetched.chunks_done == 2
 
@@ -308,3 +308,61 @@ def test_update_status_expected_statuses_not_found_when_book_missing(book_repo) 
             BookStatus.EXTRACTING,
             expected_statuses=(BookStatus.UPLOADED, BookStatus.FAILED),
         )
+
+
+# --- phase 4: ChunkCounters / chunksFailed / counter resets -----------------
+
+
+def test_increment_chunks_done_returns_chunk_counters_with_total(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, chunks_total=5)
+
+    counters = book_repo.increment_chunks_done("user-1", "book-1")
+
+    assert counters.chunks_done == 1
+    assert counters.chunks_total == 5
+    assert counters.chunks_failed == 0
+    assert counters.is_complete is False
+
+
+def test_increment_chunks_done_failed_bumps_both_counters(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, chunks_total=2)
+
+    counters = book_repo.increment_chunks_done("user-1", "book-1", failed=True)
+
+    assert counters.chunks_done == 1
+    assert counters.chunks_failed == 1
+
+    counters = book_repo.increment_chunks_done("user-1", "book-1")
+    assert counters.chunks_done == 2
+    assert counters.chunks_failed == 1
+    assert counters.is_complete is True
+
+
+def test_chunk_counters_is_complete_requires_positive_total() -> None:
+    from src.contexts.library.domain.repository import ChunkCounters
+
+    # chunks_total == 0 must never read as complete -- guards the
+    # "publish happened before the flip" class of bug (§4.2).
+    assert ChunkCounters(chunks_done=0, chunks_total=0, chunks_failed=0).is_complete is False
+    assert ChunkCounters(chunks_done=3, chunks_total=3, chunks_failed=0).is_complete is True
+    assert ChunkCounters(chunks_done=2, chunks_total=3, chunks_failed=0).is_complete is False
+
+
+def test_update_status_resets_chunks_done_and_chunks_failed(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, chunks_total=3)
+    book_repo.increment_chunks_done("user-1", "book-1", failed=True)
+    assert book_repo.get("user-1", "book-1").chunks_done == 1
+
+    # Re-extraction (phase 3: FAILED is claimable) must reset both counters
+    # to 0, or the fan-in arithmetic is wrong forever.
+    book_repo.update_status(
+        "user-1", "book-1", BookStatus.EXTRACTED, chunks_total=3, chunks_done=0, chunks_failed=0
+    )
+
+    fetched = book_repo.get("user-1", "book-1")
+    assert fetched.chunks_done == 0
+    assert fetched.chunks_failed == 0
+    assert fetched.chunks_total == 3

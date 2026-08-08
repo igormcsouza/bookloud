@@ -108,6 +108,28 @@ def test_item_to_book_ignores_unknown_attrs() -> None:
     assert book.id == "book-1"
 
 
+# --- Book: chunksFailed (PLANS/phase-4.md §5.2) ------------------------------
+
+
+def test_book_to_item_writes_chunks_failed() -> None:
+    item = book_to_item(_book(chunks_failed=3))
+    assert item["chunksFailed"] == 3
+
+
+def test_item_to_book_coerces_decimal_chunks_failed() -> None:
+    item = book_to_item(_book())
+    item["chunksFailed"] = Decimal("2")
+    book = item_to_book(item)
+    assert book.chunks_failed == 2
+    assert isinstance(book.chunks_failed, int)
+
+
+def test_item_to_book_chunks_failed_defaults_to_zero_when_missing() -> None:
+    item = {PK: "USER#user-1", SK: "BOOK#book-1", "bookId": "book-1", "userId": "user-1"}
+    book = item_to_book(item)
+    assert book.chunks_failed == 0
+
+
 # --- Chunk -------------------------------------------------------------------
 
 
@@ -214,3 +236,44 @@ def test_item_to_chunk_falls_back_to_sk_when_chunk_index_missing() -> None:
     }
     chunk = item_to_chunk(item)
     assert chunk.index == 9
+
+
+# --- Chunk: durationMs / failureReason / synthesisSource (PLANS/phase-4.md §5.2) --
+
+
+def test_chunk_to_item_writes_duration_ms() -> None:
+    item = chunk_to_item(_chunk(duration_ms=118240))
+    assert item["durationMs"] == 118240
+
+
+def test_item_to_chunk_coerces_decimal_duration_ms() -> None:
+    item = chunk_to_item(_chunk())
+    item["durationMs"] = Decimal("5000")
+    chunk = item_to_chunk(item)
+    assert chunk.duration_ms == 5000
+    assert isinstance(chunk.duration_ms, int)
+
+
+def test_chunk_to_item_omits_failure_reason_and_synthesis_source_when_none() -> None:
+    item = chunk_to_item(_chunk(failure_reason=None, synthesis_source=None))
+    assert "failureReason" not in item
+    assert "synthesisSource" not in item
+
+
+def test_chunk_to_item_writes_failure_reason_and_synthesis_source_when_set() -> None:
+    item = chunk_to_item(_chunk(failure_reason="ALL_ENGINES_FAILED", synthesis_source="edge-tts"))
+    assert item["failureReason"] == "ALL_ENGINES_FAILED"
+    assert item["synthesisSource"] == "edge-tts"
+
+
+def test_item_to_chunk_duration_failure_reason_synthesis_source_default_when_missing() -> None:
+    item = {PK: "BOOK#book-1", SK: "CHUNK#000000", "bookId": "book-1", "chunkIndex": 0}
+    chunk = item_to_chunk(item)
+    assert chunk.duration_ms == 0
+    assert chunk.failure_reason is None
+    assert chunk.synthesis_source is None
+
+
+def test_chunk_round_trip_with_synthesis_fields() -> None:
+    chunk = _chunk(duration_ms=5000, failure_reason="EMPTY_TEXT", synthesis_source="google-tts")
+    assert item_to_chunk(chunk_to_item(chunk)) == chunk

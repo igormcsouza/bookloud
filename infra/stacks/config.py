@@ -24,6 +24,31 @@ class Config:
     ENV_EXTRACT_QUEUE_URL = "EXTRACT_QUEUE_URL"
     ENV_LOG_LEVEL = "LOG_LEVEL"
 
+    # --- phase 4: synthesize Lambda env vars, read by backend/src/config.py ---
+    ENV_SYNTHESIZE_QUEUE_URL = "SYNTHESIZE_QUEUE_URL"
+    ENV_EDGE_TTS_VOICE = "EDGE_TTS_VOICE"
+    ENV_GOOGLE_TTS_VOICE = "GOOGLE_TTS_VOICE"
+    ENV_GOOGLE_TTS_SECRET_NAME = "GOOGLE_TTS_SECRET_NAME"
+    ENV_SYNTHESIZE_MAX_RECEIVE_COUNT = "SYNTHESIZE_MAX_RECEIVE_COUNT"
+
+    DEFAULT_EDGE_TTS_VOICE = "en-US-AriaNeural"
+    DEFAULT_GOOGLE_TTS_VOICE = "en-US-Neural2-C"
+    # Out-of-band secret (PLANS/phase-4.md §6.4): CDK never sees the value.
+    # One shared secret across every environment -- a personal app with one
+    # GCP key has nothing to isolate per-PR.
+    GOOGLE_TTS_SECRET_NAME = "bookloud/google-tts-api-key"
+    # 5, not 3: throttling from the ESM's MaximumConcurrency returns the
+    # message to the queue and *does* bump ApproximateReceiveCount, so a
+    # 3-attempt budget can be consumed by backpressure alone, DLQ-ing
+    # perfectly good chunks on a large book. Kept in lockstep with
+    # backend/src/config.py's synthesize_max_receive_count.
+    SYNTHESIZE_MAX_RECEIVE_COUNT = 5
+    # The ESM's max_concurrency -- the real throttle on concurrent synthesize
+    # invocations (see pipeline_stack.py's reserved-concurrency comment for
+    # the full reasoning). A single named constant so it's a one-line change
+    # if the 403 rate from edge-tts's free endpoint stays at zero.
+    SYNTHESIZE_MAX_CONCURRENCY = 5
+
     # S3 key prefix for uploaded source PDFs -- must stay in lockstep with
     # backend/src/contexts/library/infrastructure/s3_keys.py's
     # ``SOURCE_PREFIX`` and local/setup.sh's notification filter (separately

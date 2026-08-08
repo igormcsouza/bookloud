@@ -12,7 +12,12 @@ Usage:
         [--expect-environment ENV]      # optional
         [--timeout SECONDS]             # default 180
         [--extraction-timeout SECONDS]  # default 120; how long to poll GET /books/{id}
-                                         # for EXTRACTED/FAILED in check_upload_and_extraction
+                                         # for EXTRACTED/FAILED in check_upload_and_synthesis
+        [--synthesis-timeout SECONDS]   # default 180; how long to poll GET /books/{id}/chunks
+                                         # for every chunk to reach a terminal state
+        [--skip-synthesis]              # optional; skips the synthesis-phase assertions --
+                                         # a cheap way to shorten local iteration, not needed
+                                         # for flakiness reasons (see PLANS/phase-4.md §0)
         [--cognito-endpoint URL]        # optional; local/cognito-local. Derived from
                                          # --cognito-region against real AWS if omitted.
         [--cognito-region REGION]       # optional; used only to derive --cognito-endpoint
@@ -34,15 +39,29 @@ checks use), proving the Library context's DynamoDB repository works
 against a real DynamoDB API (LocalStack in local-smoke, real AWS in
 deploy-pr/deploy-prod).
 
-Upload/extraction check (PLANS/phase-3.md §9.3): `check_upload_and_extraction`
-also runs whenever --login-username/--login-password are supplied --
-POST /books -> upload the embedded fixture PDF via the presigned POST ->
-poll GET /books/{id} until EXTRACTED/FAILED -> GET /books/{id}/chunks. This
-is the phase's real gate: it proves the S3 event notification, the extract
-Lambda/local-worker, PyMuPDF extraction, the header/footer filter, and
-chunking all work end to end against real (or LocalStack) infra, not just
-that a status string changed. `deploy-prod.yml` passes no --login-* args, so
-this (like the other login-gated checks) never runs against prod.
+Upload/extraction/synthesis check (PLANS/phase-3.md §9.3, extended by
+PLANS/phase-4.md §0/§9.3): `check_upload_and_synthesis` (renamed from
+`check_upload_and_extraction`) runs whenever --login-username/
+--login-password are supplied -- POST /books -> upload the embedded fixture
+PDF via the presigned POST -> poll GET /books/{id} until EXTRACTED/FAILED ->
+GET /books/{id}/chunks -> poll chunks to a terminal state (DONE or FAILED).
+This is the phase's real gate: it proves the S3 event notification, the
+extract Lambda/local-worker, PyMuPDF extraction, the header/footer filter,
+chunking, the synthesis fan-out, the synthesize Lambda/local-worker, and the
+chunksDone/chunksTotal/chunksFailed counters all work end to end against
+real (or LocalStack) infra.
+
+**Real TTS engines are prod-only (PLANS/phase-4.md §0).** In every
+environment this smoke test runs against (`local-smoke`'s LocalStack
+instance and `deploy-pr`'s real-but-ephemeral AWS stack --
+`deploy-prod.yml` never runs this login-gated check at all, unchanged from
+every prior phase), `get_speech_synthesizer()` returns a `StubSynthesizer`.
+So the synthesis assertions are deterministic and engine-agnostic: every
+chunk reaches `FAILED`/`EXTERNAL_TTS_DISABLED` (not `DONE` -- there is no
+real audio to expect here), with `audioKey`/`marksKey`/`durationMs` still
+null/zero, and `chunksDone == chunksTotal == chunksFailed` -- the load-
+bearing fan-in proof that would have caught every ordering bug in the fan-
+out/claim/counter machinery. No live-endpoint dependency anywhere in CI.
 """
 
 from __future__ import annotations
@@ -458,20 +477,48 @@ def _poll_book_status(api_url: str, book_id: str, id_token: str, timeout: float)
     )
 
 
-def check_upload_and_extraction(
+def _poll_chunks_to_terminal(api_url: str, book_id: str, id_token: str, timeout: float) -> list[dict]:
+    """Poll GET /books/{id}/chunks every 3s until every chunk's status is
+    DONE or FAILED, or the timeout expires (PLANS/phase-4.md §9.3)."""
+    url = f"{api_url.rstrip('/')}/books/{book_id}/chunks"
+    deadline = time.monotonic() + timeout
+    last_chunks: list[dict] = []
+    while time.monotonic() < deadline:
+        status, body = _authed_get(url, id_token, 15)
+        check(status == 200, f"GET {url} failed while polling: {status} {body}")
+        last_chunks = json.loads(body)
+        if last_chunks and all(c["status"] in ("DONE", "FAILED") for c in last_chunks):
+            return last_chunks
+        time.sleep(3)
+    raise AssertionError(
+        f"synthesis did not reach a terminal state for every chunk within {timeout}s; "
+        f"last statuses: {[c.get('status') for c in last_chunks]}"
+    )
+
+
+def check_upload_and_synthesis(
     api_url: str,
     cognito_endpoint: str,
     cognito_client_id: str,
     username: str,
     password: str,
     extraction_timeout: float,
+    synthesis_timeout: float,
+    *,
+    skip_synthesis: bool = False,
 ) -> None:
-    """PLANS/phase-3.md §9.3 -- the phase's real gate. POST /books -> upload
-    the embedded fixture PDF via the presigned POST -> poll GET /books/{id}
-    until EXTRACTED/FAILED -> GET /books/{id}/chunks, asserting the extracted
-    text carries the fixture's marker string. Proves the S3 event
-    notification, the extract Lambda (or local worker), PyMuPDF extraction,
-    the header/footer filter, and chunking all work end to end."""
+    """PLANS/phase-3.md §9.3, extended by PLANS/phase-4.md §0/§9.3 -- the
+    phase's real gate. POST /books -> upload the embedded fixture PDF via
+    the presigned POST -> poll GET /books/{id} until EXTRACTED/FAILED ->
+    GET /books/{id}/chunks, asserting the extracted text carries the
+    fixture's marker string. Proves the S3 event notification, the extract
+    Lambda (or local worker), PyMuPDF extraction, the header/footer filter,
+    and chunking all work end to end.
+
+    Then (unless skip_synthesis): poll chunks to a terminal state and assert
+    against a stub engine (real edge-tts/Google are prod-only, §0) -- every
+    chunk FAILED/EXTERNAL_TTS_DISABLED, audioKey/marksKey/durationMs still
+    null/zero, and chunksDone == chunksTotal == chunksFailed on the book."""
     id_token = _login(cognito_endpoint, cognito_client_id, username, password)
 
     create_url = f"{api_url.rstrip('/')}/books"
@@ -526,6 +573,49 @@ def check_upload_and_extraction(
         "extracted chunk text does not contain the fixture's marker string",
     )
     print(f"OK  GET {chunks_url} -> {status} ({len(chunks)} chunk(s))")
+
+    if skip_synthesis:
+        print("SKIP synthesis phase (--skip-synthesis)")
+        return
+
+    # --- synthesis phase (PLANS/phase-4.md §0/§9.3) -------------------------
+    # Real edge-tts/Google are prod-only -- every environment this script
+    # runs against gets a StubSynthesizer, so the outcome is fully
+    # deterministic: every chunk reaches FAILED/EXTERNAL_TTS_DISABLED, never
+    # DONE, since there is no real audio to expect here.
+    terminal_chunks = _poll_chunks_to_terminal(api_url, book_id, id_token, synthesis_timeout)
+    sources = {c.get("index"): c.get("synthesisSource") for c in terminal_chunks}
+    print(f"OK  synthesis reached a terminal state for {len(terminal_chunks)} chunk(s); sources={sources}")
+
+    for chunk in terminal_chunks:
+        check(
+            chunk["status"] == "FAILED",
+            f"chunk {chunk.get('index')}: expected FAILED (stub-only environment), got {chunk['status']}",
+        )
+        check(
+            chunk.get("failureReason") == "EXTERNAL_TTS_DISABLED",
+            f"chunk {chunk.get('index')}: expected failureReason == 'EXTERNAL_TTS_DISABLED', "
+            f"got {chunk.get('failureReason')!r}",
+        )
+        check(chunk.get("audioKey") is None, f"chunk {chunk.get('index')}: expected audioKey to still be null")
+        check(chunk.get("marksKey") is None, f"chunk {chunk.get('index')}: expected marksKey to still be null")
+        check(
+            not chunk.get("durationMs"),
+            f"chunk {chunk.get('index')}: expected durationMs to still be 0/null",
+        )
+
+    # The real fan-in proof: this is the assertion that would have caught
+    # every ordering bug in the fan-out/claim/counter machinery.
+    final_book = _poll_book_status(api_url, book_id, id_token, 15)
+    chunks_done = final_book.get("chunksDone", 0)
+    chunks_total = final_book.get("chunksTotal", 0)
+    chunks_failed = final_book.get("chunksFailed", 0)
+    print(f"OK  book counters -> chunksDone={chunks_done} chunksTotal={chunks_total} chunksFailed={chunks_failed}")
+    check(
+        chunks_done == chunks_total == chunks_failed and chunks_total >= 1,
+        f"expected chunksDone == chunksTotal == chunksFailed >= 1, got "
+        f"chunksDone={chunks_done} chunksTotal={chunks_total} chunksFailed={chunks_failed}",
+    )
 
 
 def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_id: str) -> None:
