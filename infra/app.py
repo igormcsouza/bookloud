@@ -5,7 +5,7 @@ import aws_cdk as cdk
 
 from stacks.api_stack import ApiStack
 from stacks.auth_stack import AuthStack
-from stacks.config import Config, is_prod, stack_name
+from stacks.config import Config, stack_name
 from stacks.frontend_stack import FrontendStack
 from stacks.pipeline_stack import PipelineStack
 from stacks.storage_stack import StorageStack
@@ -38,15 +38,22 @@ pipeline = PipelineStack(
     audio_bucket=storage.audio_bucket,
     marks_bucket=storage.marks_bucket,
     table=storage.table,
-    # "" (unset) everywhere but prod by default -- OQ-A ships the Google
-    # fallback dormant until the secret is provisioned out of band (PLANS/
-    # phase-4.md §6.4/§13 OQ-A). A human can still override via -c
-    # google_tts_secret_name=... on any environment (e.g. to test the
-    # fallback path in prod before it's the default), but note this alone
-    # never turns on real calls outside prod -- get_speech_synthesizer()'s
-    # ENVIRONMENT == "prod" gate (§0) is unconditional and checked first.
-    google_tts_secret_name=app.node.try_get_context("google_tts_secret_name")
-    or (Config.GOOGLE_TTS_SECRET_NAME if is_prod(environment) else ""),
+    # "" (unset) EVERYWHERE by default, prod included -- this is what OQ-A's
+    # "ship the Google fallback dormant" actually requires. Defaulting prod to
+    # Config.GOOGLE_TTS_SECRET_NAME is not dormant: get_speech_synthesizer()
+    # calls get_secret() eagerly while *building* the synthesizer, before
+    # edge-tts is ever attempted, so a prod stack pointing at a secret that
+    # does not exist yet fails every chunk with ResourceNotFoundException --
+    # including the chunks edge-tts (which needs no credentials at all) would
+    # have synthesized fine.
+    # Turning the fallback on is therefore a deliberate two-step, in this
+    # order: create the secret out of band (PLANS/phase-4.md §6.4 --
+    # `aws secretsmanager create-secret --name bookloud/google-tts-api-key`),
+    # then deploy with -c google_tts_secret_name=bookloud/google-tts-api-key.
+    # Note the override alone still never turns on real calls outside prod --
+    # get_speech_synthesizer()'s ENVIRONMENT == "prod" gate (§0) is
+    # unconditional and checked first.
+    google_tts_secret_name=app.node.try_get_context("google_tts_secret_name") or "",
     git_sha=git_sha,
     env=env,
 )
