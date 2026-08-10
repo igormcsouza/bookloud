@@ -103,6 +103,9 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - Wire the Playwright e2e suite (from phases 6-7) into both the per-PR ephemeral pipeline and the main-branch CD pipeline — the pipeline itself already existed since Phase 0, this phase just adds the real e2e gate now that there's a full flow to test
 - CD: on merge to main, unit tests → e2e against a staging/prod-like ephemeral stack → CDK deploy to prod
 - Rollback plan documented (CDK stack rollback / previous Lambda version alias)
+- Observability items deliberately deferred here by earlier phases:
+  - CloudWatch alarm on extract/synthesize DLQ depth, plus a DLQ-consuming Lambda that marks stranded books `FAILED` instead of leaving them stuck (deferred from phase 3, `PLANS/phase-3.md` OQ-4)
+  - Metric filter + alarm on the synthesizer fallback warning, so Google TTS silently becoming the primary engine (and burning the free tier) is noticed rather than discovered on a bill (deferred from phase 4, `PLANS/phase-4.md` OQ-E)
 
 ## Phase checklist
 
@@ -110,7 +113,7 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - [x] Phase 1 — Auth (Cognito)
 - [x] Phase 2 — Storage & data model
 - [x] Phase 3 — Upload & extraction pipeline
-- [ ] Phase 4 — TTS synthesis pipeline
+- [x] Phase 4 — TTS synthesis pipeline
 - [ ] Phase 5 — Stitching & status polling
 - [ ] Phase 6 — Reader UI
 - [ ] Phase 7 — Chat sidebar

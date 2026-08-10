@@ -1,9 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _restore_asyncio_event_loop() -> Iterator[None]:
+    """``asyncio.run()`` (used synchronously by ``EdgeTtsSynthesizer`` --
+    PLANS/phase-4.md §7.2) calls ``set_event_loop(None)`` on exit, which
+    breaks Mangum's still-deprecated ``asyncio.get_event_loop()`` call for
+    every *later* test in the same process (it stops auto-creating a loop
+    once one has ever been explicitly unset). Restore a fresh event loop
+    after every test so this doesn't leak across test order -- this is the
+    generalized fix for the one-off comment already in pyproject.toml's
+    filterwarnings about Mangum's event-loop usage."""
+    yield
+    try:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    except RuntimeError:
+        pass
 
 
 @pytest.fixture
@@ -66,6 +84,11 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AUDIO_BUCKET",
         "MARKS_BUCKET",
         "EXTRACT_QUEUE_URL",
+        "SYNTHESIZE_QUEUE_URL",
+        "EDGE_TTS_VOICE",
+        "GOOGLE_TTS_VOICE",
+        "GOOGLE_TTS_SECRET_NAME",
+        "SYNTHESIZE_MAX_RECEIVE_COUNT",
         "LOG_LEVEL",
         "AWS_ENDPOINT_URL",
     ):

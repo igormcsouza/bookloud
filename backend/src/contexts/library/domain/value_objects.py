@@ -36,6 +36,7 @@ class BookStatus(StrEnum):
 
 class ChunkStatus(StrEnum):
     PENDING = "PENDING"  # set by Chunk.create() -- phase 3
+    SYNTHESIZING = "SYNTHESIZING"  # first SET in phase 4 (synthesize Lambda claim)
     DONE = "DONE"  # first SET in phase 4
     FAILED = "FAILED"  # first SET in phase 4
 
@@ -45,6 +46,18 @@ class ChunkStatus(StrEnum):
             return cls(value)  # type: ignore[arg-type]
         except ValueError as exc:
             raise ValidationError("Invalid chunk status") from exc
+
+
+# The exact complement of DONE, so "not yet finished" (i.e. the set of
+# statuses from which the synthesize Lambda's claim -> SYNTHESIZING is
+# legal) stays a single named concept instead of a negation operator smeared
+# across the adapter (PLANS/phase-4.md §5.3). Deliberately includes
+# SYNTHESIZING itself: a previous invocation that died hard (OOM, hard
+# timeout, Lambda evicted) leaves the chunk in SYNTHESIZING with nothing to
+# release it, and there is no claim timestamp to expire -- allowing the
+# re-claim costs at worst one duplicated synthesis, and §8.4's exactly-once
+# counter still holds.
+NON_TERMINAL_CHUNK_STATUSES = (ChunkStatus.PENDING, ChunkStatus.SYNTHESIZING, ChunkStatus.FAILED)
 
 
 class ExtractionFailure(StrEnum):
@@ -57,3 +70,28 @@ class ExtractionFailure(StrEnum):
     NO_TEXT_LAYER = "NO_TEXT_LAYER"
     TOO_LARGE = "TOO_LARGE"
     UNKNOWN = "UNKNOWN"
+
+
+class SynthesisFailure(StrEnum):
+    """Permanent chunk-synthesis failure reasons (PLANS/phase-4.md §5.2/
+    §8.3/§0) -- stored as ``Chunk.failure_reason`` when ``status ==
+    FAILED``."""
+
+    EMPTY_TEXT = "EMPTY_TEXT"
+    TEXT_TOO_LONG = "TEXT_TOO_LONG"
+    ALL_ENGINES_FAILED = "ALL_ENGINES_FAILED"
+    # Raised by StubSynthesizer whenever ENVIRONMENT != "prod" (PLANS/
+    # phase-4.md §0) -- every non-prod environment's deterministic terminal
+    # state, never a real engine failure.
+    EXTERNAL_TTS_DISABLED = "EXTERNAL_TTS_DISABLED"
+    UNKNOWN = "UNKNOWN"
+
+
+class SynthesisSource(StrEnum):
+    EDGE_TTS = "edge-tts"
+    GOOGLE_TTS = "google-tts"
+
+
+class MarksTiming(StrEnum):
+    MEASURED = "measured"  # per-word events from the engine (edge-tts)
+    ESTIMATED = "estimated"  # interpolated between sentence anchors (google)

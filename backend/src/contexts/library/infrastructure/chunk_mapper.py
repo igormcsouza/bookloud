@@ -17,7 +17,7 @@ from src.contexts.library.infrastructure.keys import (
 
 
 def chunk_to_item(chunk: Chunk) -> dict:
-    return {
+    item = {
         PK: pk_book(chunk.book_id),
         SK: sk_chunk(chunk.index),
         "entityType": "CHUNK",
@@ -33,7 +33,16 @@ def chunk_to_item(chunk: Chunk) -> dict:
         "status": chunk.status.value,
         "pageStart": chunk.page_start,
         "pageEnd": chunk.page_end,
+        "durationMs": chunk.duration_ms,
     }
+    # failureReason/synthesisSource follow book_mapper.py's failureReason
+    # convention: absent (not NULL) when unset, so a status-only update
+    # never has to REMOVE something it never SET.
+    if chunk.failure_reason is not None:
+        item["failureReason"] = chunk.failure_reason
+    if chunk.synthesis_source is not None:
+        item["synthesisSource"] = chunk.synthesis_source
+    return item
 
 
 def item_to_chunk(item: dict) -> Chunk:
@@ -59,4 +68,7 @@ def item_to_chunk(item: dict) -> Chunk:
         status=ChunkStatus.parse(item.get("status", ChunkStatus.PENDING.value)),
         page_start=int(item.get("pageStart", 0)),
         page_end=int(item.get("pageEnd", 0)),
+        duration_ms=int(item.get("durationMs", 0)),
+        failure_reason=item.get("failureReason"),
+        synthesis_source=item.get("synthesisSource"),
     )

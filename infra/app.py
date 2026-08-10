@@ -23,10 +23,11 @@ environment: str = app.node.try_get_context("environment") or Config.DEFAULT_ENV
 git_sha: str = app.node.try_get_context("git_sha") or "local"
 
 # Storage and Auth are independent of each other; Pipeline now imports
-# Storage (it re-imports pdf_bucket by name and takes the table directly --
-# see pipeline_stack.py's module docstring for why that avoids a circular
-# CloudFormation dependency with the S3 -> SQS notification). Dependency
-# chain: Storage -> Pipeline -> Api, with Auth -> Api alongside it.
+# Storage (it re-imports pdf_bucket by name and takes the table/audio/marks
+# buckets directly -- see pipeline_stack.py's module docstring for why that
+# avoids a circular CloudFormation dependency with the S3 -> SQS
+# notification). Dependency chain: Storage -> Pipeline -> Api, with
+# Auth -> Api alongside it.
 storage = StorageStack(app, stack_name("Storage", environment), environment=environment, env=env)
 auth = AuthStack(app, stack_name("Auth", environment), environment=environment, env=env)
 pipeline = PipelineStack(
@@ -34,7 +35,25 @@ pipeline = PipelineStack(
     stack_name("Pipeline", environment),
     environment=environment,
     pdf_bucket_name=storage.pdf_bucket.bucket_name,
+    audio_bucket=storage.audio_bucket,
+    marks_bucket=storage.marks_bucket,
     table=storage.table,
+    # "" (unset) EVERYWHERE by default, prod included -- this is what OQ-A's
+    # "ship the Google fallback dormant" actually requires. Defaulting prod to
+    # Config.GOOGLE_TTS_SECRET_NAME is not dormant: get_speech_synthesizer()
+    # calls get_secret() eagerly while *building* the synthesizer, before
+    # edge-tts is ever attempted, so a prod stack pointing at a secret that
+    # does not exist yet fails every chunk with ResourceNotFoundException --
+    # including the chunks edge-tts (which needs no credentials at all) would
+    # have synthesized fine.
+    # Turning the fallback on is therefore a deliberate two-step, in this
+    # order: create the secret out of band (PLANS/phase-4.md §6.4 --
+    # `aws secretsmanager create-secret --name bookloud/google-tts-api-key`),
+    # then deploy with -c google_tts_secret_name=bookloud/google-tts-api-key.
+    # Note the override alone still never turns on real calls outside prod --
+    # get_speech_synthesizer()'s ENVIRONMENT == "prod" gate (§0) is
+    # unconditional and checked first.
+    google_tts_secret_name=app.node.try_get_context("google_tts_secret_name") or "",
     git_sha=git_sha,
     env=env,
 )

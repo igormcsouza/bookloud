@@ -19,10 +19,36 @@ from __future__ import annotations
 
 import re
 
+from src.contexts.library.infrastructure.keys import CHUNK_INDEX_WIDTH
+
 SOURCE_PREFIX = "books/"
 SOURCE_FILENAME = "source.pdf"
 
+# PLANS/phase-4.md §5.1. Both buckets are dedicated (audio_bucket/
+# marks_bucket), but the keys are still prefixed: phase 5 needs somewhere to
+# put the stitched artifacts (audio/<u>/<b>/full.mp3, marks/<u>/<b>/full.json)
+# without colliding with a chunk index, and a later "one bucket for
+# everything" consolidation stays possible. Unlike SOURCE_PREFIX, these are
+# NOT duplicated in infra/stacks/config.py -- nothing in CDK filters on them
+# (no S3 notification on these buckets), so no lockstep comment is needed.
+AUDIO_PREFIX = "audio/"
+MARKS_PREFIX = "marks/"
+AUDIO_EXTENSION = ".mp3"
+MARKS_EXTENSION = ".json"
+AUDIO_CONTENT_TYPE = "audio/mpeg"
+MARKS_CONTENT_TYPE = "application/json"
+
 _KEY_RE = re.compile(r"^books/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/source\.pdf$")
+
+# CHUNK_INDEX_WIDTH comes from infrastructure/keys.py -- not re-declared as a
+# hard-coded "06d" -- so the DynamoDB SK and the S3 key can never drift apart
+# (keys.py documents the width as immutable once any data exists).
+_AUDIO_KEY_RE = re.compile(
+    rf"^audio/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/(?P<index>\d{{{CHUNK_INDEX_WIDTH}}})\.mp3$"
+)
+_MARKS_KEY_RE = re.compile(
+    rf"^marks/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/(?P<index>\d{{{CHUNK_INDEX_WIDTH}}})\.json$"
+)
 
 
 def source_pdf_key(user_id: str, book_id: str) -> str:
@@ -38,3 +64,28 @@ def parse_source_pdf_key(key: str) -> tuple[str, str] | None:
     if match is None:
         return None
     return (match.group("user_id"), match.group("book_id"))
+
+
+def chunk_audio_key(user_id: str, book_id: str, index: int) -> str:
+    return f"{AUDIO_PREFIX}{user_id}/{book_id}/{index:0{CHUNK_INDEX_WIDTH}d}{AUDIO_EXTENSION}"
+
+
+def chunk_marks_key(user_id: str, book_id: str, index: int) -> str:
+    return f"{MARKS_PREFIX}{user_id}/{book_id}/{index:0{CHUNK_INDEX_WIDTH}d}{MARKS_EXTENSION}"
+
+
+def parse_chunk_audio_key(key: str) -> tuple[str, str, int] | None:
+    """Returns ``(user_id, book_id, index)`` or ``None`` for a malformed/
+    foreign key -- same ``[^/]+``-can't-match-``/`` traversal defence as
+    ``parse_source_pdf_key``."""
+    match = _AUDIO_KEY_RE.match(key)
+    if match is None:
+        return None
+    return (match.group("user_id"), match.group("book_id"), int(match.group("index")))
+
+
+def parse_chunk_marks_key(key: str) -> tuple[str, str, int] | None:
+    match = _MARKS_KEY_RE.match(key)
+    if match is None:
+        return None
+    return (match.group("user_id"), match.group("book_id"), int(match.group("index")))

@@ -146,7 +146,7 @@ def test_auth_stack_client_explicit_auth_flows(environment: str) -> None:
 # Lambda's re-imported pdf_bucket + table come from it).
 
 
-def _synth_pipeline_stack(environment: str) -> Template:
+def _synth_pipeline_stack(environment: str, *, google_tts_secret_name: str = "") -> Template:
     app = cdk.App()
     storage = StorageStack(app, f"TestStorageForPipeline-{environment}", environment=environment)
     pipeline = PipelineStack(
@@ -154,7 +154,10 @@ def _synth_pipeline_stack(environment: str) -> Template:
         f"TestPipeline-{environment}",
         environment=environment,
         pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        audio_bucket=storage.audio_bucket,
+        marks_bucket=storage.marks_bucket,
         table=storage.table,
+        google_tts_secret_name=google_tts_secret_name,
         git_sha="test-sha",
     )
     return Template.from_stack(pipeline)
@@ -165,10 +168,10 @@ def _synth_pipeline_stack(environment: str) -> Template:
 def test_pipeline_stack_synthesizes(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
     template.resource_count_is("AWS::SQS::Queue", 4)
-    # The extract Lambda + the (auto-created, inline-Python, no-Docker)
-    # BucketNotificationsHandler singleton that an *imported* bucket's
-    # add_event_notification synthesizes.
-    template.resource_count_is("AWS::Lambda::Function", 2)
+    # The extract Lambda + the synthesize Lambda + the (auto-created,
+    # inline-Python, no-Docker) BucketNotificationsHandler singleton that an
+    # *imported* bucket's add_event_notification synthesizes.
+    template.resource_count_is("AWS::Lambda::Function", 3)
 
 
 @pytest.mark.docker
@@ -198,6 +201,33 @@ def test_pipeline_stack_extract_queue_visibility_timeout(environment: str) -> No
 
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_synthesize_queue_shape(environment: str) -> None:
+    """PLANS/phase-4.md §6.2: 30 min visibility (6x the synthesize Lambda's
+    300s timeout) and max_receive_count 5 (not 3) -- throttle-induced
+    redeliveries would otherwise burn the retry budget."""
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::SQS::Queue",
+        {"QueueName": Match.string_like_regexp("^bookloud-.*-synthesize$"), "VisibilityTimeout": 1800},
+    )
+    queues = template.find_resources(
+        "AWS::SQS::Queue", {"Properties": {"QueueName": Match.string_like_regexp("^bookloud-.*-synthesize$")}}
+    )
+    (props,) = [r["Properties"] for r in queues.values()]
+    dlq_ref = props["RedrivePolicy"]["deadLetterTargetArn"]
+    assert props["RedrivePolicy"]["maxReceiveCount"] == 5
+    assert dlq_ref is not None
+
+    # extract queue is unchanged: 12 min / 3.
+    extract_queues = template.find_resources(
+        "AWS::SQS::Queue", {"Properties": {"QueueName": Match.string_like_regexp("^bookloud-.*-extract$")}}
+    )
+    (extract_props,) = [r["Properties"] for r in extract_queues.values()]
+    assert extract_props["RedrivePolicy"]["maxReceiveCount"] == 3
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_has_s3_bucket_notification(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
     template.resource_count_is("Custom::S3BucketNotifications", 1)
@@ -222,8 +252,41 @@ def test_pipeline_stack_queue_policy_allows_s3_to_send(environment: str) -> None
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_extract_lambda_event_source_mapping(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
-    template.resource_count_is("AWS::Lambda::EventSourceMapping", 1)
+    template.resource_count_is("AWS::Lambda::EventSourceMapping", 2)
     template.has_resource_properties("AWS::Lambda::EventSourceMapping", {"BatchSize": 1})
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_synthesize_lambda_event_source_mapping(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::Lambda::EventSourceMapping",
+        {"BatchSize": 1, "ScalingConfig": {"MaximumConcurrency": 5}},
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_synthesize_function_shape(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "ImageConfig": {
+                "Command": ["src.contexts.library.interface.synthesize_handler.handler"]
+            },
+            # Absent, not 10. This account's total Lambda concurrency limit
+            # is 10 and AWS rejects any reservation that drops unreserved
+            # concurrency below its floor of 10, so setting this at all fails
+            # the deploy (see the comment in pipeline_stack.py). Asserting
+            # absence turns a re-added reservation into a failing unit test
+            # rather than a CREATE_FAILED six minutes into deploy-pr.
+            "ReservedConcurrentExecutions": Match.absent(),
+            "Timeout": 300,
+            "MemorySize": 1024,
+        },
+    )
 
 
 @pytest.mark.docker
@@ -247,6 +310,75 @@ def test_pipeline_stack_extract_lambda_role_grants(environment: str) -> None:
 
     assert "s3:GetObject*" in actions or "s3:GetObject" in actions
     assert "dynamodb:UpdateItem" in actions
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_synthesize_lambda_and_fan_out_grants(environment: str) -> None:
+    """Regression guard on the synthesize Lambda's audio/marks `grant_put`
+    calls, and on the fan-out producer grant
+    (`synthesize_queue.grant_send_messages(extract_fn)`) -- the one
+    easy-to-forget grant in the phase."""
+    template = _synth_pipeline_stack(environment)
+
+    policies = template.find_resources("AWS::IAM::Policy")
+    actions: list[str] = []
+    for policy in policies.values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+
+    assert "s3:PutObject" in actions
+    assert "sqs:SendMessage" in actions
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_google_secret_configured_grants_secretsmanager_read(environment: str) -> None:
+    template = _synth_pipeline_stack(environment, google_tts_secret_name="test-secret")
+
+    policies = template.find_resources("AWS::IAM::Policy")
+    actions: list[str] = []
+    for policy in policies.values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+
+    assert "secretsmanager:GetSecretValue" in actions
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "Environment": {
+                "Variables": Match.object_like({"GOOGLE_TTS_SECRET_NAME": "test-secret"})
+            }
+        },
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_no_google_secret_no_secretsmanager_actions_anywhere(environment: str) -> None:
+    """Negative test: with google_tts_secret_name="" (the default), no
+    secretsmanager:* action appears anywhere in the stack."""
+    template = _synth_pipeline_stack(environment, google_tts_secret_name="")
+
+    policies = template.find_resources("AWS::IAM::Policy")
+    actions: list[str] = []
+    for policy in policies.values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+
+    assert not any(a.startswith("secretsmanager:") for a in actions)
 
 
 # --- FrontendStack -------------------------------------------------------
@@ -307,6 +439,8 @@ def test_pipeline_stack_naming_convention(environment: str) -> None:
         construct_id,
         environment=environment,
         pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        audio_bucket=storage.audio_bucket,
+        marks_bucket=storage.marks_bucket,
         table=storage.table,
     )
     assert stack.stack_name == construct_id
@@ -340,6 +474,8 @@ def _synth_api_stack(environment: str):
         f"TestPipeline-{environment}",
         environment=environment,
         pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        audio_bucket=storage.audio_bucket,
+        marks_bucket=storage.marks_bucket,
         table=storage.table,
     )
     auth = AuthStack(app, f"TestAuth-{environment}", environment=environment)

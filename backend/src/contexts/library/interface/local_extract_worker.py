@@ -24,6 +24,7 @@ from src.contexts.library.interface.dependencies import (
     get_clock,
     get_pdf_extractor,
     get_pdf_storage,
+    get_synthesis_queue,
 )
 from src.contexts.library.interface.extract_handler import handle_records
 from src.infrastructure.aws import client
@@ -45,6 +46,7 @@ def _build_use_case() -> ExtractBook:
         pdf_storage=get_pdf_storage(),
         extractor=get_pdf_extractor(),
         clock=get_clock(),
+        synthesis_queue=get_synthesis_queue(),
     )
 
 

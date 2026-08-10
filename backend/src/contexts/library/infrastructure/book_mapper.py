@@ -29,6 +29,7 @@ def book_to_item(book: Book) -> dict:
         "status": book.status.value,
         "chunksTotal": book.chunks_total,
         "chunksDone": book.chunks_done,
+        "chunksFailed": book.chunks_failed,
         "pageCount": book.page_count,
         "createdAt": book.created_at,
         "updatedAt": book.updated_at,
@@ -51,6 +52,7 @@ def item_to_book(item: dict) -> Book:
         # Decimal -- coerce to int.
         chunks_total=int(item.get("chunksTotal", 0)),
         chunks_done=int(item.get("chunksDone", 0)),
+        chunks_failed=int(item.get("chunksFailed", 0)),
         page_count=int(item.get("pageCount", 0)),
         created_at=item.get("createdAt", ""),
         updated_at=item.get("updatedAt", ""),
