@@ -132,9 +132,25 @@ jobs:
           # without digging through AWS -- reviewer login only, not used by
           # the smoke test. Fine to be predictable: pool is throwaway and
           # dies with the PR.
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "admin" \
-            --message-action SUPPRESS >/dev/null
+          #
+          # Unlike the two smoke users above, this username is FIXED, so it
+          # survives into every later push to the same PR (the pool outlives
+          # individual runs; only teardown deletes it). Creation must
+          # therefore tolerate "already exists" -- but only that. Any other
+          # AdminCreateUser error still fails the job loudly, same principle
+          # as the teardown fix in phase 1: never blanket-ignore an AWS error.
+          # admin-set-user-password below runs unconditionally either way, so
+          # a pre-existing admin still ends up with the advertised password.
+          if ! create_err=$(aws cognito-idp admin-create-user \
+                --user-pool-id "$USER_POOL_ID" --username "admin" \
+                --message-action SUPPRESS 2>&1 >/dev/null); then
+            case "$create_err" in
+              *UsernameExistsException*)
+                echo "admin user already exists in this PR's pool -- resetting its password" ;;
+              *)
+                echo "$create_err" >&2; exit 1 ;;
+            esac
+          fi
           aws cognito-idp admin-set-user-password \
             --user-pool-id "$USER_POOL_ID" --username "admin" \
             --password "password" --permanent >/dev/null
