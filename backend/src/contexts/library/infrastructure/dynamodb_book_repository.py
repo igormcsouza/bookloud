@@ -77,6 +77,10 @@ class DynamoDbBookRepository:
         chunks_done: int | None = None,
         chunks_failed: int | None = None,
         page_count: int | None = None,
+        audio_key: str | None = None,
+        manifest_key: str | None = None,
+        audio_duration_ms: int | None = None,
+        clear_stitch_outputs: bool = False,
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
         updated_at: str | None = None,
@@ -85,6 +89,10 @@ class DynamoDbBookRepository:
             # Programming error, not a domain error -- the caller asked to
             # both set and clear the same attribute in one call.
             raise ValueError("failure_reason and clear_failure_reason are mutually exclusive")
+        if audio_key is not None and clear_stitch_outputs:
+            raise ValueError("audio_key and clear_stitch_outputs are mutually exclusive")
+        if manifest_key is not None and clear_stitch_outputs:
+            raise ValueError("manifest_key and clear_stitch_outputs are mutually exclusive")
 
         # `status` is a DynamoDB reserved word -- must be aliased in any
         # UpdateExpression/ProjectionExpression/ConditionExpression.
@@ -107,6 +115,18 @@ class DynamoDbBookRepository:
         if page_count is not None:
             set_clauses.append("pageCount = :pageCount")
             values[":pageCount"] = page_count
+        if audio_key is not None:
+            set_clauses.append("audioKey = :audioKey")
+            values[":audioKey"] = audio_key
+        if manifest_key is not None:
+            set_clauses.append("manifestKey = :manifestKey")
+            values[":manifestKey"] = manifest_key
+        if audio_duration_ms is not None:
+            set_clauses.append("audioDurationMs = :audioDurationMs")
+            values[":audioDurationMs"] = audio_duration_ms
+        if clear_stitch_outputs:
+            set_clauses.append("audioDurationMs = :zeroDuration")
+            values[":zeroDuration"] = 0
         if failure_reason is not None:
             set_clauses.append("failureReason = :failureReason")
             values[":failureReason"] = failure_reason
@@ -114,13 +134,22 @@ class DynamoDbBookRepository:
             set_clauses.append("updatedAt = :updatedAt")
             values[":updatedAt"] = updated_at
 
-        update_expression = "SET " + ", ".join(set_clauses)
+        # A single UpdateExpression may combine SET and REMOVE, but the
+        # REMOVE keyword may appear only ONCE -- emitting it twice is a
+        # runtime ValidationException, which is exactly why the removals are
+        # collected into one list rather than string-appended per flag
+        # (PLANS/phase-5.md §5.3). These attributes are absent (not NULL)
+        # when unset -- see book_mapper.py -- so clearing them must REMOVE,
+        # not SET to None.
+        remove_names: list[str] = []
         if clear_failure_reason:
-            # A single UpdateExpression may combine SET and REMOVE.
-            # failureReason is absent (not NULL) when unset -- see
-            # book_mapper.py -- so retrying a previously FAILED book must
-            # REMOVE it, not SET it to None.
-            update_expression += " REMOVE failureReason"
+            remove_names.append("failureReason")
+        if clear_stitch_outputs:
+            remove_names.extend(["audioKey", "manifestKey"])
+
+        update_expression = "SET " + ", ".join(set_clauses)
+        if remove_names:
+            update_expression += " REMOVE " + ", ".join(remove_names)
 
         condition_expression = "attribute_exists(PK)"
         if expected_statuses:

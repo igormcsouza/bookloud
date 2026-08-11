@@ -1,8 +1,9 @@
 """``POST /books`` (create + presigned upload, PLANS/phase-3.md §4.1),
 ``POST /books/{id}/upload-url`` (re-issue, §4.2), ``GET /books``,
-``GET /books/{id}``, ``GET /books/{id}/chunks`` (§4.3). All routes sit under
-the existing ``/{proxy+}`` JWT authorizer -- no ``api_stack.py`` change, no
-new public path.
+``GET /books/{id}``, ``GET /books/{id}/chunks`` (§4.3), and
+``GET /books/{id}/status`` (PLANS/phase-5.md §8). All routes sit under the
+existing ``/{proxy+}`` JWT authorizer -- no ``api_stack.py`` change, no new
+public path.
 """
 
 from __future__ import annotations
@@ -28,7 +29,12 @@ from src.contexts.library.interface.dependencies import (
     get_id_generator,
     get_pdf_storage,
 )
-from src.contexts.library.interface.schemas import book_to_dict, chunk_to_dict, upload_to_dict
+from src.contexts.library.interface.schemas import (
+    book_status_to_dict,
+    book_to_dict,
+    chunk_to_dict,
+    upload_to_dict,
+)
 from src.shared_kernel.application.ports import Clock, IdGenerator
 
 router = APIRouter(tags=["library"])
@@ -84,6 +90,19 @@ def get_book(
 ) -> dict:
     book = GetBook(book_repository).execute(user.sub, book_id)
     return book_to_dict(book)
+
+
+@router.get("/books/{book_id}/status")
+def get_book_status(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+) -> dict:
+    """The phase-6 poll endpoint (PLANS/phase-5.md §8). Performs **no extra
+    I/O** -- one ``GetItem`` via the same ``GetBook`` use case as
+    ``GET /books/{id}``, so another user's book is a 404, never a 403."""
+    book = GetBook(book_repository).execute(user.sub, book_id)
+    return book_status_to_dict(book)
 
 
 @router.get("/books/{book_id}/chunks")

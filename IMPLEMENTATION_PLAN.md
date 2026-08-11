@@ -83,9 +83,15 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - Tests: synthesize Lambda unit tests (mocked TTS calls), fallback behavior test
 
 ### Phase 5 — Stitching & status polling
-- Stitcher Lambda triggered when `chunksDone == chunksTotal` (DynamoDB Stream or final-chunk check): concatenates audio, merges timestamp offsets, sets book status `READY`
-- `GET /books/{id}/status` polling endpoint
+- Stitcher Lambda triggered when `chunksDone == chunksTotal` (final-chunk check → a dedicated `stitch_queue`; DynamoDB Streams rejected in `PLANS/phase-5.md` §4.1 because an ESM filter structurally cannot compare two attributes): concatenates audio, merges timestamp offsets, sets book status `READY`
+  - "Merges timestamp offsets" was **refined** into a *segment manifest*, not a merged word array (`PLANS/phase-5.md` §7.2/Q7): `marks/<u>/<b>/book.json` maps each chunk to its book-global start/duration, char range and byte range, and phase 6 rebases a word with one addition. A merged array for a 330-chunk book would be ~4 MB to download before the first note plays.
+  - Terminal status is `READY` only when `chunksFailed == 0`; otherwise the new **`PARTIAL`** (+ `failureReason` `NO_AUDIO`/`STITCH_FAILED`). The stitcher never writes book-level `FAILED`, which stays reserved for extraction — it is re-claimable, so reusing it would let a redelivered S3 event wipe good text (§3).
+- `GET /books/{id}/status` polling endpoint, with a server-computed `terminal` flag and `progress.percent`
 - Tests: stitcher correctness (offset math), status endpoint states
+
+### Phase 6 additions carried over from phase 5's open questions
+- **Audio delivery** (`PLANS/phase-5.md` OQ-3, deferred from phase 5): phase 5 exposes `audioKey`/`manifestKey` as S3 keys but no way to fetch the bytes. Decide presigned GET vs CloudFront origin, Range-request support (the manifest's `b0`/`b1` exist for exactly this) and expiry vs a long `<audio>` session, then ship it. Deferred because nothing in the repo could validate the guess and no environment CI reaches has audio to fetch.
+- **Retry synthesis for a `PARTIAL` book** (`PLANS/phase-5.md` OQ-6): `POST /books/{id}/resynthesize` — reset `FAILED` chunks to `PENDING`, re-publish the fan-out for those indexes only, reset the book to `EXTRACTED`. Phase 5 deliberately left `PARTIAL` out of `_CLAIMABLE_STATUSES`/`_REISSUABLE_STATUSES` (adding it would reintroduce the exact hazard `PARTIAL` was created to prevent), so today a prod book whose engines all failed is a dead end until this exists. Lands in phase 6 because that is where a UI can trigger it.
 
 ### Phase 6 — Reader UI
 - Book list sidebar (polls list + status)
@@ -104,7 +110,7 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - CD: on merge to main, unit tests → e2e against a staging/prod-like ephemeral stack → CDK deploy to prod
 - Rollback plan documented (CDK stack rollback / previous Lambda version alias)
 - Observability items deliberately deferred here by earlier phases:
-  - CloudWatch alarm on extract/synthesize DLQ depth, plus a DLQ-consuming Lambda that marks stranded books `FAILED` instead of leaving them stuck (deferred from phase 3, `PLANS/phase-3.md` OQ-4)
+  - CloudWatch alarm on extract/synthesize/stitch DLQ depth, plus a DLQ-consuming Lambda that marks stranded books `FAILED` instead of leaving them stuck (deferred from phase 3, `PLANS/phase-3.md` OQ-4). **Extended by phase 5 (`PLANS/phase-5.md` §4.3/OQ-4):** the same Lambda must also **re-publish a stitch message for any book whose counters are complete but which is still `EXTRACTED`**. That is phase 5's one residual hole — if `enqueue_book` fails on every attempt of the completing chunk's message, the chunk message DLQs and the book sits at 100% forever with nothing to notice. Phase 5's `STITCH_REQUEUED` re-entrancy branch covers every case except the exhausted-retry-budget one, and consolidating recovery here beats inventing a second sweeper.
   - Metric filter + alarm on the synthesizer fallback warning, so Google TTS silently becoming the primary engine (and burning the free tier) is noticed rather than discovered on a bill (deferred from phase 4, `PLANS/phase-4.md` OQ-E)
 
 ## Phase checklist
@@ -114,7 +120,7 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - [x] Phase 2 — Storage & data model
 - [x] Phase 3 — Upload & extraction pipeline
 - [x] Phase 4 — TTS synthesis pipeline
-- [ ] Phase 5 — Stitching & status polling
+- [x] Phase 5 — Stitching & status polling
 - [ ] Phase 6 — Reader UI
 - [ ] Phase 7 — Chat sidebar
 - [ ] Phase 8 — CD hardening

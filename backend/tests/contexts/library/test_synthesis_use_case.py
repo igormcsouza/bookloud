@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
 from src.contexts.library.application.synthesis import SynthesizeChunk, SynthesizeChunkCommand
+from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
 from src.contexts.library.domain.repository import ChunkCounters
 from src.contexts.library.domain.synthesis import SynthesisUnavailable, SynthesizedAudio, UnsynthesizableText
 from src.contexts.library.domain.value_objects import (
     NON_TERMINAL_CHUNK_STATUSES,
+    BookStatus,
     ChunkStatus,
     MarksTiming,
     SynthesisFailure,
@@ -17,11 +20,12 @@ from src.contexts.library.domain.value_objects import (
 )
 from src.contexts.library.infrastructure.s3_keys import chunk_audio_key, chunk_marks_key
 from src.shared_kernel.domain.errors import ConflictError, NotFoundError
-from tests.contexts.library.fakes import FakeSynthesizer, RecordingObjectStorage
+from tests.contexts.library.fakes import FakeStitchQueue, FakeSynthesizer, RecordingObjectStorage
 
 USER_ID = "user-1"
 BOOK_ID = "book-1"
 CHUNK_INDEX = 7
+FIXED_NOW = datetime(2026, 8, 4, 12, 0, 0, tzinfo=UTC)
 
 
 class FakeChunkRepository:
@@ -95,15 +99,27 @@ class FakeBookRepository:
     """In-memory fake for BookRepository.increment_chunks_done -- the
     counter-correctness behaviour the use case depends on."""
 
-    def __init__(self, *, chunks_total: int = 1, events: list[str] | None = None, missing: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        chunks_total: int = 1,
+        events: list[str] | None = None,
+        missing: bool = False,
+        book: Book | None = None,
+    ) -> None:
         self._events = events if events is not None else []
         self.chunks_done = 0
         self.chunks_total = chunks_total
         self.chunks_failed = 0
         self._missing = missing
+        # Only the STITCH_REQUEUED branch calls `get`; every other test
+        # leaves this None so the branch is a no-op.
+        self.book = book
 
     def save(self, book) -> None: ...
-    def get(self, user_id, book_id): ...
+    def get(self, user_id, book_id):
+        return self.book
+
     def list_for_user(self, user_id): ...
     def delete(self, user_id, book_id): ...
     def update_status(self, *args, **kwargs) -> None: ...
@@ -166,8 +182,37 @@ def marks_storage() -> RecordingObjectStorage:
     return RecordingObjectStorage()
 
 
-def _use_case(book_repo, chunk_repo, synthesizer, audio_storage, marks_storage, max_attempts=5) -> SynthesizeChunk:
-    return SynthesizeChunk(book_repo, chunk_repo, synthesizer, audio_storage, marks_storage, max_attempts=max_attempts)
+@pytest.fixture
+def stitch_queue() -> FakeStitchQueue:
+    return FakeStitchQueue()
+
+
+def _use_case(
+    book_repo,
+    chunk_repo,
+    synthesizer,
+    audio_storage,
+    marks_storage,
+    max_attempts=5,
+    stitch_queue=None,
+) -> SynthesizeChunk:
+    return SynthesizeChunk(
+        book_repo,
+        chunk_repo,
+        synthesizer,
+        audio_storage,
+        marks_storage,
+        stitch_queue if stitch_queue is not None else FakeStitchQueue(),
+        max_attempts=max_attempts,
+    )
+
+
+def _book(*, status: BookStatus = BookStatus.EXTRACTED, chunks_total: int = 1, chunks_done: int = 1) -> Book:
+    book = Book.create(id=BOOK_ID, user_id=USER_ID, title_raw="A Book", now=FIXED_NOW)
+    book.status = status
+    book.chunks_total = chunks_total
+    book.chunks_done = chunks_done
+    return book
 
 
 # --- happy path ------------------------------------------------------------
@@ -519,3 +564,179 @@ def test_book_not_found_during_increment_is_handled_gracefully(chunk_repo, audio
 
     assert result.outcome == "DONE"  # the chunk itself did complete
     assert result.chunks_done == 0  # counters unavailable, defaulted
+
+
+# --- the fan-in edge: publishing the stitch (PLANS/phase-5.md §4.2) ---------
+
+
+def test_completing_done_increment_publishes_exactly_one_stitch_message(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk())
+    book_repo = FakeBookRepository(chunks_total=1)
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert stitch_queue.calls == [{"user_id": USER_ID, "book_id": BOOK_ID}]
+
+
+def test_completing_failed_increment_also_publishes(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    """THE local/PR path (PLANS/phase-5.md §4.2): with a StubSynthesizer every
+    chunk fails, so the completing increment is always a *failed* one.
+    Publishing only from the success path would mean the stitcher never fires
+    anywhere CI can see it."""
+    chunk_repo.seed(_chunk(text="   "))  # EMPTY_TEXT -> _finish_failed
+    book_repo = FakeBookRepository(chunks_total=1)
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    result = use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert result.outcome == "FAILED"
+    assert stitch_queue.calls == [{"user_id": USER_ID, "book_id": BOOK_ID}]
+
+
+def test_non_final_increment_publishes_nothing(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk())
+    book_repo = FakeBookRepository(chunks_total=3)
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert stitch_queue.calls == []
+
+
+def test_missing_book_during_increment_publishes_nothing(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk())
+    book_repo = FakeBookRepository(missing=True)
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert stitch_queue.calls == []
+
+
+def test_stitch_publish_failure_propagates_so_sqs_redelivers(
+    chunk_repo, audio_storage, marks_storage
+) -> None:
+    """Deliberately NOT swallowed: the SQS message stays undeleted and the
+    redelivery hits the STITCH_REQUEUED branch."""
+    chunk_repo.seed(_chunk())
+    book_repo = FakeBookRepository(chunks_total=1)
+    queue = FakeStitchQueue(error=RuntimeError("SQS is down"))
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=queue,
+    )
+
+    with pytest.raises(RuntimeError):
+        use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    # The chunk itself is DONE and counted -- only the publish failed.
+    assert chunk_repo.get(BOOK_ID, CHUNK_INDEX).status == ChunkStatus.DONE
+    assert book_repo.chunks_done == 1
+
+
+# --- STITCH_REQUEUED re-entrancy (PLANS/phase-5.md §4.3) ---------------------
+
+
+def test_redelivered_done_chunk_republishes_stitch_for_complete_extracted_book(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk(status=ChunkStatus.DONE))
+    book_repo = FakeBookRepository(book=_book(status=BookStatus.EXTRACTED, chunks_total=1, chunks_done=1))
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    result = use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert result.outcome == "SKIPPED"
+    assert result.reason == "STITCH_REQUEUED"
+    assert stitch_queue.calls == [{"user_id": USER_ID, "book_id": BOOK_ID}]
+
+
+@pytest.mark.parametrize(
+    "status", [BookStatus.STITCHING, BookStatus.READY, BookStatus.PARTIAL, BookStatus.UPLOADED]
+)
+def test_redelivered_done_chunk_does_not_republish_for_non_extracted_book(
+    chunk_repo, audio_storage, marks_storage, stitch_queue, status: BookStatus
+) -> None:
+    chunk_repo.seed(_chunk(status=ChunkStatus.DONE))
+    book_repo = FakeBookRepository(book=_book(status=status, chunks_total=1, chunks_done=1))
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    result = use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert result.reason == "ALREADY_DONE"
+    assert stitch_queue.calls == []
+
+
+def test_redelivered_done_chunk_does_not_republish_for_incomplete_book(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk(status=ChunkStatus.DONE))
+    book_repo = FakeBookRepository(book=_book(chunks_total=5, chunks_done=2))
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    result = use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert result.reason == "ALREADY_DONE"
+    assert stitch_queue.calls == []
+
+
+def test_redelivered_done_chunk_with_zero_chunks_total_does_not_republish(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk(status=ChunkStatus.DONE))
+    book_repo = FakeBookRepository(book=_book(chunks_total=0, chunks_done=0))
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    assert use_case.execute(
+        SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX)
+    ).reason == "ALREADY_DONE"
+    assert stitch_queue.calls == []
+
+
+def test_redelivered_done_chunk_with_deleted_book_does_not_republish(
+    chunk_repo, audio_storage, marks_storage, stitch_queue
+) -> None:
+    chunk_repo.seed(_chunk(status=ChunkStatus.DONE))
+    book_repo = FakeBookRepository(book=None)
+    use_case = _use_case(
+        book_repo, chunk_repo, FakeSynthesizer(result=_audio()), audio_storage, marks_storage,
+        stitch_queue=stitch_queue,
+    )
+
+    assert use_case.execute(
+        SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX)
+    ).reason == "ALREADY_DONE"
+    assert stitch_queue.calls == []

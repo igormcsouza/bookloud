@@ -6,8 +6,12 @@ from src.contexts.library.infrastructure.keys import CHUNK_INDEX_WIDTH
 from src.contexts.library.infrastructure.s3_keys import (
     SOURCE_FILENAME,
     SOURCE_PREFIX,
+    book_audio_key,
+    book_manifest_key,
     chunk_audio_key,
     chunk_marks_key,
+    parse_book_audio_key,
+    parse_book_manifest_key,
     parse_chunk_audio_key,
     parse_chunk_marks_key,
     parse_source_pdf_key,
@@ -129,3 +133,50 @@ def test_parse_chunk_audio_key_rejects_malformed_keys(bad_key: str) -> None:
 )
 def test_parse_chunk_marks_key_rejects_malformed_keys(bad_key: str) -> None:
     assert parse_chunk_marks_key(bad_key) is None
+
+
+# --- book-level (stitched) keys, PLANS/phase-5.md §5.1 ----------------------
+
+
+def test_book_audio_key_shape() -> None:
+    assert book_audio_key("user-1", "book-1") == "audio/user-1/book-1/book.mp3"
+
+
+def test_book_manifest_key_shape() -> None:
+    assert book_manifest_key("user-1", "book-1") == "marks/user-1/book-1/book.json"
+
+
+def test_book_audio_key_round_trips() -> None:
+    key = book_audio_key("user-1", "book-1")
+    assert parse_book_audio_key(key) == ("user-1", "book-1")
+
+
+def test_book_manifest_key_round_trips() -> None:
+    key = book_manifest_key("user-1", "book-1")
+    assert parse_book_manifest_key(key) == ("user-1", "book-1")
+
+
+def test_book_parsers_reject_a_chunk_key() -> None:
+    """The chunk regexes require exactly CHUNK_INDEX_WIDTH digits before the
+    extension, so a book-level filename can never be mis-parsed as a chunk
+    index -- and vice versa."""
+    assert parse_book_audio_key(chunk_audio_key("user-1", "book-1", 7)) is None
+    assert parse_book_manifest_key(chunk_marks_key("user-1", "book-1", 7)) is None
+
+
+def test_chunk_parsers_reject_a_book_key() -> None:
+    assert parse_chunk_audio_key(book_audio_key("user-1", "book-1")) is None
+    assert parse_chunk_marks_key(book_manifest_key("user-1", "book-1")) is None
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "audio/user-1/book-1/other.mp3",
+        "audio/user-1/book-1/sub/book.mp3",
+        "audio/user-1/book.mp3",
+        "marks/user-1/book-1/book.mp3",
+    ],
+)
+def test_parse_book_audio_key_rejects_malformed_keys(key: str) -> None:
+    assert parse_book_audio_key(key) is None

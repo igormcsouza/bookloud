@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from src.contexts.library.domain.book import Book
@@ -8,6 +9,8 @@ from src.contexts.library.domain.value_objects import BookStatus, ChunkStatus
 from src.contexts.library.infrastructure.book_mapper import book_to_item, item_to_book
 from src.contexts.library.infrastructure.chunk_mapper import chunk_to_item, item_to_chunk
 from src.contexts.library.infrastructure.keys import PK, SK, sk_chunk
+
+FIXED_NOW = datetime(2026, 8, 4, 12, 0, 0, tzinfo=UTC)
 
 # --- Book --------------------------------------------------------------------
 
@@ -277,3 +280,64 @@ def test_item_to_chunk_duration_failure_reason_synthesis_source_default_when_mis
 def test_chunk_round_trip_with_synthesis_fields() -> None:
     chunk = _chunk(duration_ms=5000, failure_reason="EMPTY_TEXT", synthesis_source="google-tts")
     assert item_to_chunk(chunk_to_item(chunk)) == chunk
+
+
+# --- phase 5: stitch outputs round trip -------------------------------------
+
+
+def test_book_to_item_writes_the_stitch_outputs_when_set() -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="T", now=FIXED_NOW)
+    book.audio_key = "audio/user-1/book-1/book.mp3"
+    book.manifest_key = "marks/user-1/book-1/book.json"
+    book.audio_duration_ms = 1418240
+
+    item = book_to_item(book)
+
+    assert item["audioKey"] == "audio/user-1/book-1/book.mp3"
+    assert item["manifestKey"] == "marks/user-1/book-1/book.json"
+    assert item["audioDurationMs"] == 1418240
+
+
+def test_book_to_item_omits_absent_stitch_keys_rather_than_writing_null() -> None:
+    """Absent (not NULL) when unset -- hence the adapter's REMOVE, matching
+    failureReason's existing treatment."""
+    item = book_to_item(Book.create(id="book-1", user_id="user-1", title_raw="T", now=FIXED_NOW))
+    assert "audioKey" not in item
+    assert "manifestKey" not in item
+    assert item["audioDurationMs"] == 0
+
+
+def test_item_to_book_round_trips_the_stitch_outputs() -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="T", now=FIXED_NOW)
+    book.status = BookStatus.PARTIAL
+    book.audio_key = "audio/user-1/book-1/book.mp3"
+    book.manifest_key = "marks/user-1/book-1/book.json"
+    book.audio_duration_ms = 999
+
+    restored = item_to_book(book_to_item(book))
+
+    assert restored.audio_key == book.audio_key
+    assert restored.manifest_key == book.manifest_key
+    assert restored.audio_duration_ms == 999
+    assert restored.status is BookStatus.PARTIAL
+
+
+def test_item_to_book_defaults_absent_stitch_attributes() -> None:
+    item = book_to_item(Book.create(id="book-1", user_id="user-1", title_raw="T", now=FIXED_NOW))
+    del item["audioDurationMs"]
+
+    restored = item_to_book(item)
+
+    assert restored.audio_key is None
+    assert restored.manifest_key is None
+    assert restored.audio_duration_ms == 0
+
+
+def test_item_to_book_coerces_the_decimal_audio_duration() -> None:
+    item = book_to_item(Book.create(id="book-1", user_id="user-1", title_raw="T", now=FIXED_NOW))
+    item["audioDurationMs"] = Decimal("1418240")
+
+    restored = item_to_book(item)
+
+    assert restored.audio_duration_ms == 1418240
+    assert isinstance(restored.audio_duration_ms, int)

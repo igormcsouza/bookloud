@@ -12,10 +12,14 @@ Usage:
         [--expect-environment ENV]      # optional
         [--timeout SECONDS]             # default 180
         [--extraction-timeout SECONDS]  # default 120; how long to poll GET /books/{id}
-                                         # for EXTRACTED/FAILED in check_upload_and_synthesis
+                                         # for EXTRACTED/FAILED in check_upload_and_stitch
         [--synthesis-timeout SECONDS]   # default 180; how long to poll GET /books/{id}/chunks
                                          # for every chunk to reach a terminal state
-        [--skip-synthesis]              # optional; skips the synthesis-phase assertions --
+        [--stitch-timeout SECONDS]      # default 120; how long to poll
+                                         # GET /books/{id}/status for terminal is true
+        [--expect-synthesis MODE]       # failed (default) | silent. See "Two synthesis
+                                         # modes" below.
+        [--skip-synthesis]              # optional; skips the synthesis/stitch assertions --
                                          # a cheap way to shorten local iteration, not needed
                                          # for flakiness reasons (see PLANS/phase-4.md §0)
         [--cognito-endpoint URL]        # optional; local/cognito-local. Derived from
@@ -39,29 +43,45 @@ checks use), proving the Library context's DynamoDB repository works
 against a real DynamoDB API (LocalStack in local-smoke, real AWS in
 deploy-pr/deploy-prod).
 
-Upload/extraction/synthesis check (PLANS/phase-3.md §9.3, extended by
-PLANS/phase-4.md §0/§9.3): `check_upload_and_synthesis` (renamed from
-`check_upload_and_extraction`) runs whenever --login-username/
---login-password are supplied -- POST /books -> upload the embedded fixture
-PDF via the presigned POST -> poll GET /books/{id} until EXTRACTED/FAILED ->
-GET /books/{id}/chunks -> poll chunks to a terminal state (DONE or FAILED).
-This is the phase's real gate: it proves the S3 event notification, the
-extract Lambda/local-worker, PyMuPDF extraction, the header/footer filter,
-chunking, the synthesis fan-out, the synthesize Lambda/local-worker, and the
-chunksDone/chunksTotal/chunksFailed counters all work end to end against
+Upload/extraction/synthesis/stitch check (PLANS/phase-3.md §9.3, extended by
+PLANS/phase-4.md §0/§9.3 and PLANS/phase-5.md §9.3):
+`check_upload_and_stitch` (renamed from `check_upload_and_synthesis`) runs
+whenever --login-username/--login-password are supplied -- POST /books ->
+upload the embedded fixture PDF via the presigned POST -> poll
+GET /books/{id} until EXTRACTED/FAILED -> GET /books/{id}/chunks -> poll
+chunks to a terminal state (DONE or FAILED) -> poll
+GET /books/{id}/status until `terminal` is true. This is the phase's real
+gate: it proves the S3 event notification, the extract Lambda/local-worker,
+PyMuPDF extraction, the header/footer filter, chunking, the synthesis
+fan-out, the synthesize Lambda/local-worker, the chunksDone/chunksTotal/
+chunksFailed counters, the fan-IN edge, the stitch queue, the stitch
+Lambda/local-worker and its book.json artefact all work end to end against
 real (or LocalStack) infra.
 
 **Real TTS engines are prod-only (PLANS/phase-4.md §0).** In every
 environment this smoke test runs against (`local-smoke`'s LocalStack
 instance and `deploy-pr`'s real-but-ephemeral AWS stack --
 `deploy-prod.yml` never runs this login-gated check at all, unchanged from
-every prior phase), `get_speech_synthesizer()` returns a `StubSynthesizer`.
-So the synthesis assertions are deterministic and engine-agnostic: every
-chunk reaches `FAILED`/`EXTERNAL_TTS_DISABLED` (not `DONE` -- there is no
-real audio to expect here), with `audioKey`/`marksKey`/`durationMs` still
-null/zero, and `chunksDone == chunksTotal == chunksFailed` -- the load-
-bearing fan-in proof that would have caught every ordering bug in the fan-
-out/claim/counter machinery. No live-endpoint dependency anywhere in CI.
+every prior phase), `get_speech_synthesizer()` never returns a real engine.
+
+**Two synthesis modes, selected by --expect-synthesis:**
+
+- `failed` (the default, and what `deploy-pr` uses): the deployed stack runs
+  the raise-only `StubSynthesizer`, so every chunk reaches
+  `FAILED`/`EXTERNAL_TTS_DISABLED` with `audioKey`/`marksKey`/`durationMs`
+  still null/zero, `chunksDone == chunksTotal == chunksFailed`, and the book
+  stitches to `PARTIAL`/`NO_AUDIO` with a real `book.json` and no
+  `book.mp3`. That last assertion is the load-bearing one: `book.json` can
+  only exist if the stitch Lambda ran, held `marks_bucket` PutObject,
+  resolved MARKS_BUCKET, and completed its terminal DynamoDB transition.
+- `silent` (what `make smoke` uses): docker-compose sets
+  `SYNTHESIS_STUB_MODE=silent` on the local synthesize-worker, so chunks
+  synthesize offline into real silent MPEG-2 frames and the stitcher really
+  concatenates them -- the book reaches `READY` with a `book.mp3` and a
+  non-zero `durationMs`. This is the only automated check anywhere that
+  exercises the byte path (PLANS/phase-5.md OQ-1).
+
+Either way there is no live-endpoint dependency anywhere in CI.
 """
 
 from __future__ import annotations
@@ -461,6 +481,14 @@ def _authed_get(url: str, id_token: str, timeout: float) -> tuple[int, str]:
         return exc.code, exc.read().decode("utf-8")
 
 
+# Every status that means "extraction is finished, one way or another".
+# Deliberately includes the phase-5 statuses: with the silent synthesizer a
+# small book can race all the way to READY between two 3-second polls, so
+# waiting for the literal string "EXTRACTED" would time out on a book that
+# actually succeeded (PLANS/phase-5.md OQ-1).
+_EXTRACTION_DONE_STATUSES = ("EXTRACTED", "STITCHING", "READY", "PARTIAL", "FAILED")
+
+
 def _poll_book_status(api_url: str, book_id: str, id_token: str, timeout: float) -> dict:
     url = f"{api_url.rstrip('/')}/books/{book_id}"
     deadline = time.monotonic() + timeout
@@ -469,11 +497,11 @@ def _poll_book_status(api_url: str, book_id: str, id_token: str, timeout: float)
         status, body = _authed_get(url, id_token, 10)
         check(status == 200, f"GET {url} failed while polling: {status} {body}")
         last_body = json.loads(body)
-        if last_body["status"] in ("EXTRACTED", "FAILED"):
+        if last_body["status"] in _EXTRACTION_DONE_STATUSES:
             return last_body
         time.sleep(3)
     raise AssertionError(
-        f"extraction did not reach EXTRACTED/FAILED within {timeout}s; last status: {last_body}"
+        f"extraction did not finish within {timeout}s; last status: {last_body}"
     )
 
 
@@ -496,7 +524,28 @@ def _poll_chunks_to_terminal(api_url: str, book_id: str, id_token: str, timeout:
     )
 
 
-def check_upload_and_synthesis(
+def _poll_book_terminal(api_url: str, book_id: str, id_token: str, timeout: float) -> dict:
+    """Poll GET /books/{id}/status every 3s until the server says the book is
+    terminal (PLANS/phase-5.md §8/§9.3). Polling the new endpoint IS part of
+    the test -- it is the phase's other deliverable, and its server-computed
+    `terminal` flag is what stops this loop from hanging forever on a PARTIAL
+    book (the exact "frozen at 99%" failure mode phase-4 §8.3 eliminated)."""
+    url = f"{api_url.rstrip('/')}/books/{book_id}/status"
+    deadline = time.monotonic() + timeout
+    last_body: dict | None = None
+    while time.monotonic() < deadline:
+        status, body = _authed_get(url, id_token, 15)
+        check(status == 200, f"GET {url} failed while polling: {status} {body}")
+        last_body = json.loads(body)
+        if last_body.get("terminal") is True:
+            return last_body
+        time.sleep(3)
+    raise AssertionError(
+        f"book did not reach a terminal status within {timeout}s; last status: {last_body}"
+    )
+
+
+def check_upload_and_stitch(
     api_url: str,
     cognito_endpoint: str,
     cognito_client_id: str,
@@ -504,21 +553,22 @@ def check_upload_and_synthesis(
     password: str,
     extraction_timeout: float,
     synthesis_timeout: float,
+    stitch_timeout: float,
     *,
     skip_synthesis: bool = False,
+    expect_synthesis: str = "failed",
 ) -> None:
-    """PLANS/phase-3.md §9.3, extended by PLANS/phase-4.md §0/§9.3 -- the
-    phase's real gate. POST /books -> upload the embedded fixture PDF via
-    the presigned POST -> poll GET /books/{id} until EXTRACTED/FAILED ->
-    GET /books/{id}/chunks, asserting the extracted text carries the
-    fixture's marker string. Proves the S3 event notification, the extract
-    Lambda (or local worker), PyMuPDF extraction, the header/footer filter,
-    and chunking all work end to end.
+    """PLANS/phase-3.md §9.3, extended by PLANS/phase-4.md §0/§9.3 and
+    PLANS/phase-5.md §9.3 -- the phase's real gate. POST /books -> upload the
+    embedded fixture PDF via the presigned POST -> poll GET /books/{id} until
+    EXTRACTED/FAILED -> GET /books/{id}/chunks, asserting the extracted text
+    carries the fixture's marker string. Proves the S3 event notification, the
+    extract Lambda (or local worker), PyMuPDF extraction, the header/footer
+    filter, and chunking all work end to end.
 
-    Then (unless skip_synthesis): poll chunks to a terminal state and assert
-    against a stub engine (real edge-tts/Google are prod-only, §0) -- every
-    chunk FAILED/EXTERNAL_TTS_DISABLED, audioKey/marksKey/durationMs still
-    null/zero, and chunksDone == chunksTotal == chunksFailed on the book."""
+    Then (unless skip_synthesis): poll chunks to a terminal state, then poll
+    GET /books/{id}/status until `terminal`, asserting the outcome for
+    `expect_synthesis` (see this module's docstring)."""
     id_token = _login(cognito_endpoint, cognito_client_id, username, password)
 
     create_url = f"{api_url.rstrip('/')}/books"
@@ -556,8 +606,8 @@ def check_upload_and_synthesis(
         f"chunksTotal={final.get('chunksTotal')} pageCount={final.get('pageCount')}"
     )
     check(
-        final["status"] == "EXTRACTED",
-        f"expected EXTRACTED, got {final['status']} (failureReason={final.get('failureReason')})",
+        final["status"] != "FAILED",
+        f"extraction failed: {final['status']} (failureReason={final.get('failureReason')})",
     )
     check(final.get("chunksTotal", 0) >= 1, "expected chunksTotal >= 1")
     check(final.get("pageCount", 0) >= 1, "expected pageCount >= 1")
@@ -579,15 +629,131 @@ def check_upload_and_synthesis(
         return
 
     # --- synthesis phase (PLANS/phase-4.md §0/§9.3) -------------------------
-    # Real edge-tts/Google are prod-only -- every environment this script
-    # runs against gets a StubSynthesizer, so the outcome is fully
-    # deterministic: every chunk reaches FAILED/EXTERNAL_TTS_DISABLED, never
-    # DONE, since there is no real audio to expect here.
+    # Real edge-tts/Google are prod-only -- every environment this script runs
+    # against gets an offline stand-in, so the outcome is fully deterministic
+    # in both modes.
     terminal_chunks = _poll_chunks_to_terminal(api_url, book_id, id_token, synthesis_timeout)
     sources = {c.get("index"): c.get("synthesisSource") for c in terminal_chunks}
     print(f"OK  synthesis reached a terminal state for {len(terminal_chunks)} chunk(s); sources={sources}")
 
-    for chunk in terminal_chunks:
+    if expect_synthesis == "silent":
+        _check_chunks_synthesized_silently(terminal_chunks)
+    else:
+        _check_chunks_failed_with_tts_disabled(terminal_chunks)
+
+    # The real fan-in proof: this is the assertion that would have caught
+    # every ordering bug in the fan-out/claim/counter machinery.
+    counted_book = _poll_book_status(api_url, book_id, id_token, 15)
+    chunks_done = counted_book.get("chunksDone", 0)
+    chunks_total = counted_book.get("chunksTotal", 0)
+    chunks_failed = counted_book.get("chunksFailed", 0)
+    print(f"OK  book counters -> chunksDone={chunks_done} chunksTotal={chunks_total} chunksFailed={chunks_failed}")
+    check(chunks_total >= 1, f"expected chunksTotal >= 1, got {chunks_total}")
+    check(
+        chunks_done == chunks_total,
+        f"expected chunksDone == chunksTotal, got {chunks_done} != {chunks_total}",
+    )
+    expected_failed = 0 if expect_synthesis == "silent" else chunks_total
+    check(
+        chunks_failed == expected_failed,
+        f"expected chunksFailed == {expected_failed} in {expect_synthesis!r} mode, got {chunks_failed}",
+    )
+
+    # --- stitch phase (PLANS/phase-5.md §9.3) --------------------------------
+    status_body = _poll_book_terminal(api_url, book_id, id_token, stitch_timeout)
+    print(
+        f"OK  stitch finished -> status={status_body['status']} "
+        f"terminal={status_body['terminal']} failureReason={status_body.get('failureReason')!r} "
+        f"audio={status_body.get('audio')}"
+    )
+
+    progress = status_body.get("progress", {})
+    check(
+        progress
+        == {
+            "chunksTotal": chunks_total,
+            "chunksDone": chunks_total,
+            "chunksFailed": expected_failed,
+            "percent": 100,
+        },
+        f"unexpected progress block: {progress}",
+    )
+
+    audio = status_body.get("audio", {})
+    manifest_key = audio.get("manifestKey")
+    # THE load-bearing artefact assertion: book.json can only exist if the
+    # stitch Lambda ran, held marks_bucket PutObject, resolved MARKS_BUCKET,
+    # and completed its terminal DynamoDB transition. Without it, "the
+    # stitcher ran" would be inferred only from a status string the API could
+    # in principle have produced some other way.
+    check(
+        isinstance(manifest_key, str) and manifest_key.endswith("/book.json"),
+        f"expected audio.manifestKey to end in '/book.json', got {manifest_key!r}",
+    )
+
+    if expect_synthesis == "silent":
+        check(
+            status_body["status"] == "READY",
+            f"expected READY with silent synthesis, got {status_body['status']} "
+            f"(failureReason={status_body.get('failureReason')!r})",
+        )
+        check(
+            status_body.get("failureReason") is None,
+            f"expected failureReason to be null on a READY book, got {status_body.get('failureReason')!r}",
+        )
+        check(
+            isinstance(audio.get("audioKey"), str) and audio["audioKey"].endswith("/book.mp3"),
+            f"expected audio.audioKey to end in '/book.mp3', got {audio.get('audioKey')!r}",
+        )
+        check(
+            audio.get("durationMs", 0) > 0,
+            f"expected a non-zero stitched durationMs, got {audio.get('durationMs')!r}",
+        )
+    else:
+        # The single assertion that proves §3.2's degraded path end to end:
+        # the fan-in edge fired, a stitch message was published and consumed,
+        # the claim and the terminal transition both ran -- and the book did
+        # NOT become FAILED (which is re-claimable by the extract Lambda and
+        # would wipe perfectly good text).
+        check(
+            status_body["status"] == "PARTIAL",
+            f"expected PARTIAL with a stub-only engine, got {status_body['status']}",
+        )
+        check(
+            status_body.get("failureReason") == "NO_AUDIO",
+            f"expected failureReason == 'NO_AUDIO', got {status_body.get('failureReason')!r}",
+        )
+        check(
+            audio.get("audioKey") is None,
+            f"expected audio.audioKey to be null with no audio, got {audio.get('audioKey')!r}",
+        )
+        check(
+            not audio.get("durationMs"),
+            f"expected audio.durationMs == 0 with no audio, got {audio.get('durationMs')!r}",
+        )
+
+    # Cheap, and catches the two response shapes drifting apart.
+    final_book = _poll_book_status(api_url, book_id, id_token, 15)
+    check(
+        final_book.get("status") == status_body["status"],
+        f"GET /books/{{id}} status {final_book.get('status')!r} disagrees with "
+        f"the status endpoint's {status_body['status']!r}",
+    )
+    check(
+        final_book.get("audioKey") == audio.get("audioKey")
+        and final_book.get("manifestKey") == manifest_key
+        and final_book.get("audioDurationMs") == audio.get("durationMs"),
+        f"GET /books/{{id}} audio fields disagree with the status endpoint: "
+        f"{final_book.get('audioKey')!r}/{final_book.get('manifestKey')!r}/"
+        f"{final_book.get('audioDurationMs')!r} vs {audio}",
+    )
+    print("OK  GET /books/{id} agrees with GET /books/{id}/status")
+
+
+def _check_chunks_failed_with_tts_disabled(chunks: list) -> None:
+    """`--expect-synthesis failed`: the raise-only StubSynthesizer, which is
+    what every deployed non-prod stack runs."""
+    for chunk in chunks:
         check(
             chunk["status"] == "FAILED",
             f"chunk {chunk.get('index')}: expected FAILED (stub-only environment), got {chunk['status']}",
@@ -604,18 +770,32 @@ def check_upload_and_synthesis(
             f"chunk {chunk.get('index')}: expected durationMs to still be 0/null",
         )
 
-    # The real fan-in proof: this is the assertion that would have caught
-    # every ordering bug in the fan-out/claim/counter machinery.
-    final_book = _poll_book_status(api_url, book_id, id_token, 15)
-    chunks_done = final_book.get("chunksDone", 0)
-    chunks_total = final_book.get("chunksTotal", 0)
-    chunks_failed = final_book.get("chunksFailed", 0)
-    print(f"OK  book counters -> chunksDone={chunks_done} chunksTotal={chunks_total} chunksFailed={chunks_failed}")
-    check(
-        chunks_done == chunks_total == chunks_failed and chunks_total >= 1,
-        f"expected chunksDone == chunksTotal == chunksFailed >= 1, got "
-        f"chunksDone={chunks_done} chunksTotal={chunks_total} chunksFailed={chunks_failed}",
-    )
+
+def _check_chunks_synthesized_silently(chunks: list) -> None:
+    """`--expect-synthesis silent`: the offline SilentSynthesizer (PLANS/
+    phase-5.md OQ-1). Still zero network calls -- but real MPEG-2 bytes, so
+    this is the only automated check that gives the stitcher something to
+    concatenate."""
+    for chunk in chunks:
+        check(
+            chunk["status"] == "DONE",
+            f"chunk {chunk.get('index')}: expected DONE with the silent synthesizer, "
+            f"got {chunk['status']} (failureReason={chunk.get('failureReason')!r})",
+        )
+        check(
+            chunk.get("synthesisSource") == "silent",
+            f"chunk {chunk.get('index')}: expected synthesisSource == 'silent', "
+            f"got {chunk.get('synthesisSource')!r}",
+        )
+        for field in ("audioKey", "marksKey"):
+            check(
+                isinstance(chunk.get(field), str),
+                f"chunk {chunk.get('index')}: expected {field} to be set, got {chunk.get(field)!r}",
+            )
+        check(
+            chunk.get("durationMs", 0) > 0,
+            f"chunk {chunk.get('index')}: expected a non-zero durationMs, got {chunk.get('durationMs')!r}",
+        )
 
 
 def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_id: str) -> None:
@@ -646,6 +826,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--extraction-timeout", type=float, default=120)
     parser.add_argument("--synthesis-timeout", type=float, default=180)
+    parser.add_argument("--stitch-timeout", type=float, default=120)
+    parser.add_argument("--expect-synthesis", choices=["failed", "silent"], default="failed")
     parser.add_argument("--skip-synthesis", action="store_true")
     parser.add_argument("--cognito-endpoint", default=None)
     parser.add_argument("--cognito-region", default=None)
@@ -695,7 +877,7 @@ def main() -> int:
                 args.login_username,
                 args.login_password,
             )
-            check_upload_and_synthesis(
+            check_upload_and_stitch(
                 args.api_url,
                 cognito_endpoint,
                 args.cognito_client_id,
@@ -703,7 +885,9 @@ def main() -> int:
                 args.login_password,
                 args.extraction_timeout,
                 args.synthesis_timeout,
+                args.stitch_timeout,
                 skip_synthesis=args.skip_synthesis,
+                expect_synthesis=args.expect_synthesis,
             )
 
         if args.newuser_username and args.newuser_temp_password:

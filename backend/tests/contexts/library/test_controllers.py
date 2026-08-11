@@ -7,6 +7,7 @@ import boto3
 import pytest
 from fastapi.testclient import TestClient
 
+from src.contexts.library.domain.value_objects import BookStatus
 from tests.conftest import CLAIMS, WithGatewayClaims
 from tests.contexts.library.conftest import seed_book, seed_chunks
 
@@ -191,6 +192,9 @@ def test_list_books_returns_camel_case_shape_newest_first(
         "chunksFailed": 0,
         "pageCount": 0,
         "failureReason": None,
+        "audioKey": None,
+        "manifestKey": None,
+        "audioDurationMs": 0,
         "createdAt": newer.isoformat(),
         "updatedAt": newer.isoformat(),
     }
@@ -275,3 +279,141 @@ def test_list_book_chunks_for_another_users_book_returns_404(
 def test_list_book_chunks_for_nonexistent_book_returns_404(authed_app_client) -> None:
     response = authed_app_client.get("/books/no-such-book/chunks")
     assert response.status_code == 404
+
+
+# --- GET /books/{id}/status (PLANS/phase-5.md §8) ----------------------------
+
+
+def test_get_book_status_for_a_non_terminal_book(authed_app_client, dynamodb_table) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"], title="A Book")
+    repo.update_status(
+        CLAIMS["sub"], "book-1", BookStatus.EXTRACTED, chunks_total=4, chunks_done=1, chunks_failed=0
+    )
+
+    response = authed_app_client.get("/books/book-1/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "book-1"
+    assert body["status"] == "EXTRACTED"
+    assert body["terminal"] is False
+    assert body["progress"] == {
+        "chunksTotal": 4,
+        "chunksDone": 1,
+        "chunksFailed": 0,
+        "percent": 25,
+    }
+    assert body["failureReason"] is None
+    assert body["audio"] == {"audioKey": None, "manifestKey": None, "durationMs": 0}
+    assert "updatedAt" in body
+
+
+def test_get_book_status_for_a_ready_book(authed_app_client, dynamodb_table) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    repo.update_status(
+        CLAIMS["sub"], "book-1", BookStatus.READY,
+        chunks_total=2, chunks_done=2, chunks_failed=0,
+        audio_key="audio/u/book-1/book.mp3",
+        manifest_key="marks/u/book-1/book.json",
+        audio_duration_ms=192,
+    )
+
+    body = authed_app_client.get("/books/book-1/status").json()
+
+    assert body["status"] == "READY"
+    assert body["terminal"] is True
+    assert body["progress"]["percent"] == 100
+    assert body["audio"] == {
+        "audioKey": "audio/u/book-1/book.mp3",
+        "manifestKey": "marks/u/book-1/book.json",
+        "durationMs": 192,
+    }
+
+
+def test_get_book_status_for_a_partial_book_is_terminal(authed_app_client, dynamodb_table) -> None:
+    """Without the server-computed `terminal` flag a poller's stop condition
+    is `status == "READY"`, which hangs forever on a PARTIAL book -- i.e. on
+    every book in local dev and every PR environment."""
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    repo.update_status(
+        CLAIMS["sub"], "book-1", BookStatus.PARTIAL,
+        chunks_total=3, chunks_done=3, chunks_failed=3,
+        manifest_key="marks/u/book-1/book.json",
+        failure_reason="NO_AUDIO",
+    )
+
+    body = authed_app_client.get("/books/book-1/status").json()
+
+    assert body["status"] == "PARTIAL"
+    assert body["terminal"] is True
+    assert body["failureReason"] == "NO_AUDIO"
+    assert body["progress"]["percent"] == 100
+    assert body["audio"]["audioKey"] is None
+    assert body["audio"]["manifestKey"].endswith("/book.json")
+
+
+def test_get_book_status_zero_chunks_total_non_terminal_is_zero_percent(
+    authed_app_client, dynamodb_table
+) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+
+    body = authed_app_client.get("/books/book-1/status").json()
+
+    assert body["status"] == "UPLOADED"
+    assert body["progress"]["percent"] == 0
+
+
+def test_get_book_status_zero_chunks_total_terminal_is_one_hundred_percent(
+    authed_app_client, dynamodb_table
+) -> None:
+    """A book that failed extraction has chunksTotal == 0 and must not render
+    as a 0%-forever progress bar."""
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    repo.update_status(CLAIMS["sub"], "book-1", BookStatus.FAILED, failure_reason="NO_TEXT_LAYER")
+
+    body = authed_app_client.get("/books/book-1/status").json()
+
+    assert body["terminal"] is True
+    assert body["progress"]["percent"] == 100
+    assert body["failureReason"] == "NO_TEXT_LAYER"
+
+
+def test_get_book_status_agrees_with_get_book(authed_app_client, dynamodb_table) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    repo.update_status(
+        CLAIMS["sub"], "book-1", BookStatus.READY,
+        chunks_total=1, chunks_done=1,
+        audio_key="audio/u/book-1/book.mp3",
+        manifest_key="marks/u/book-1/book.json",
+        audio_duration_ms=500,
+    )
+
+    status_body = authed_app_client.get("/books/book-1/status").json()
+    book_body = authed_app_client.get("/books/book-1").json()
+
+    assert status_body["status"] == book_body["status"]
+    assert status_body["audio"]["audioKey"] == book_body["audioKey"]
+    assert status_body["audio"]["manifestKey"] == book_body["manifestKey"]
+    assert status_body["audio"]["durationMs"] == book_body["audioDurationMs"]
+
+
+def test_get_book_status_for_another_users_book_returns_404(
+    authed_app_client, dynamodb_table
+) -> None:
+    """404, never 403 -- the repo's standing rule."""
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id="someone-else")
+    assert authed_app_client.get("/books/book-1/status").status_code == 404
+
+
+def test_get_book_status_for_a_nonexistent_book_returns_404(authed_app_client) -> None:
+    assert authed_app_client.get("/books/ghost/status").status_code == 404
+
+
+def test_get_book_status_anonymous_returns_401(app_client) -> None:
+    assert app_client.get("/books/book-1/status").status_code == 401

@@ -4,10 +4,10 @@
 .PHONY: up ui seed smoke token logs down test synth e2e
 
 ## Build & start LocalStack + cognito-local + backend + extract-worker +
-## synthesize-worker, then create the table/buckets/queues and bootstrap the
-## local Cognito pool/client/dev user.
+## synthesize-worker + stitch-worker, then create the table/buckets/queues and
+## bootstrap the local Cognito pool/client/dev user.
 up:
-	docker compose up -d --build localstack cognito-local backend extract-worker synthesize-worker
+	docker compose up -d --build localstack cognito-local backend extract-worker synthesize-worker stitch-worker
 	./local/setup.sh
 
 ## Start the Next.js frontend too (http://localhost:3000). Reads the Cognito
@@ -19,14 +19,20 @@ ui:
 seed:
 	./local/setup.sh
 
-## Run the smoke test against the running local stack.
+## Run the smoke test against the running local stack. `--expect-synthesis
+## silent` matches docker-compose's SYNTHESIS_STUB_MODE=silent on the
+## synthesize-worker (PLANS/phase-5.md OQ-1): locally the chunks really do
+## synthesize (offline) and the stitcher really does concatenate bytes, so the
+## smoke test asserts a READY book with a book.mp3. deploy-pr.yml passes no
+## flag and keeps the default `failed` mode.
 smoke:
 	set -a; . local/.cognito.env; set +a; \
 	python3 local/smoke_test.py --api-url http://localhost:8000 \
 		--cognito-endpoint http://localhost:9229 \
 		--cognito-client-id "$$COGNITO_CLIENT_ID" \
 		--login-username dev --login-password devpassword \
-		--newuser-username newuser --newuser-temp-password 'TempPass123!'
+		--newuser-username newuser --newuser-temp-password 'TempPass123!' \
+		--expect-synthesis silent
 
 ## Print an id token for the seeded `dev` user, e.g.:
 ##   curl -H "Authorization: Bearer $(make -s token)" localhost:8000/me

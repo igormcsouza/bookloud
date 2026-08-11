@@ -26,6 +26,7 @@ from src.contexts.library.interface.dependencies import (
     get_chunk_repository,
     get_marks_storage,
     get_speech_synthesizer,
+    get_stitch_queue,
 )
 
 logger = logging.getLogger("bookloud.synthesize")
@@ -41,6 +42,7 @@ def handler(event: dict, context: object) -> None:
         synthesizer=get_speech_synthesizer(),
         audio_storage=get_audio_storage(),
         marks_storage=get_marks_storage(),
+        stitch_queue=get_stitch_queue(),
         max_attempts=settings.synthesize_max_receive_count,
     )
     handle_records(event.get("Records", []), use_case)

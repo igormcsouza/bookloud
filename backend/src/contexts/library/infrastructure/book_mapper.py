@@ -36,9 +36,17 @@ def book_to_item(book: Book) -> dict:
         # boto3 maps None -> NULL; write it explicitly rather than "" so
         # item_to_book's `.get(...)` round-trips a real None.
         "sourceKey": book.source_key,
+        "audioDurationMs": book.audio_duration_ms,
     }
     if book.failure_reason is not None:
         item["failureReason"] = book.failure_reason
+    # audioKey/manifestKey are ABSENT (not NULL) when unset -- hence the
+    # adapter's REMOVE, matching failureReason's existing treatment
+    # (PLANS/phase-5.md §5.4).
+    if book.audio_key is not None:
+        item["audioKey"] = book.audio_key
+    if book.manifest_key is not None:
+        item["manifestKey"] = book.manifest_key
     return item
 
 
@@ -58,4 +66,7 @@ def item_to_book(item: dict) -> Book:
         updated_at=item.get("updatedAt", ""),
         source_key=item.get("sourceKey"),
         failure_reason=item.get("failureReason"),
+        audio_key=item.get("audioKey"),
+        manifest_key=item.get("manifestKey"),
+        audio_duration_ms=int(item.get("audioDurationMs", 0)),
     )

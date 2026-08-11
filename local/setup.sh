@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Idempotent: wait for LocalStack to be healthy, then create the DynamoDB
-# table, the three S3 buckets, and the two SQS queues (+ DLQs) the backend
+# table, the three S3 buckets, and the three SQS queues (+ DLQs) the backend
 # expects, then wait for the backend to answer /health. Run by `make up`
 # after `docker compose up` for the core services.
 set -euo pipefail
@@ -34,7 +34,7 @@ for bucket in bookloud-local-pdfs bookloud-local-audio bookloud-local-marks; do
 done
 
 echo "Creating the SQS queues + DLQs (idempotent) ..."
-for base in extract synthesize; do
+for base in extract synthesize stitch; do
   awslocal sqs create-queue --queue-name "bookloud-local-${base}-dlq" >/dev/null 2>&1 \
     || echo "  (bookloud-local-${base}-dlq already exists)"
   awslocal sqs create-queue --queue-name "bookloud-local-${base}" >/dev/null 2>&1 \
