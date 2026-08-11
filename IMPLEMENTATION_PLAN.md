@@ -95,9 +95,14 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 
 ### Phase 6 — Reader UI
 - Book list sidebar (polls list + status)
-- Center reading pane: renders extracted text, syncs highlight to `<audio>` `timeupdate` via word-boundary data (binary search into timestamp array)
-- Play/pause/seek controls
-- Tests: Playwright — upload, poll until ready, play, verify highlight follows audio position
+- Center reading pane: renders extracted text, syncs highlight to `<audio>` playback via word-boundary data (binary search into timestamp array)
+  - **Refined** in `PLANS/phase-6.md` §6.3/Q9: the highlight is driven by **`requestAnimationFrame`**, not `timeupdate`. Chrome fires `timeupdate` about every 250 ms; at 150 wpm a word is ~400 ms and function words are 120-200 ms, so a 250 ms sampler skips short words outright and visibly jerks on the rest. `timeupdate` keeps a real but narrower job — driving the scrubber. The binary search is unchanged, and is now **two levels**: `segments[].t` in the manifest, then the rebased `words[].t` in that chunk's marks.
+- Play/pause/seek controls (plus playback-rate control, `PLANS/phase-6.md` OQ-6)
+- **Frontend upload flow** — the presigned POST has existed since phase 3 with no UI to call it
+- **Audio delivery** (`PLANS/phase-5.md` OQ-3): `GET /books/{id}/audio` returns an S3 presigned GET URL. Forced, not chosen — an `<audio>` request cannot carry an `Authorization` header, and proxying ~240 MB through Lambda's 6 MB response cap is arithmetic, not preference.
+- **`POST /books/{id}/resynthesize`** (`PLANS/phase-5.md` OQ-6), `PARTIAL` only, without touching `_CLAIMABLE_STATUSES`/`_REISSUABLE_STATUSES`
+- Tests: Playwright — upload, poll until terminal, play, verify highlight follows audio position. Three specs across two projects, because local compose is the only environment in existence with audio to play (`PLANS/phase-6.md` §13.4).
+- **Also fixed here** (`PLANS/phase-6.md` §16 addendum): the recurring `destroy-pr` teardown failure — API routes collapsed from 25 enumerated per-method routes to 5 `ANY` routes, plus a bounded `DELETE_FAILED` retry in `destroy-pr.yml` that still fails loudly.
 
 ### Phase 7 — Chat sidebar
 - `POST /books/{id}/chat`, Lambda Function URL streaming response
@@ -121,6 +126,6 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - [x] Phase 3 — Upload & extraction pipeline
 - [x] Phase 4 — TTS synthesis pipeline
 - [x] Phase 5 — Stitching & status polling
-- [ ] Phase 6 — Reader UI
+- [x] Phase 6 — Reader UI
 - [ ] Phase 7 — Chat sidebar
 - [ ] Phase 8 — CD hardening

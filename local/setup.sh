@@ -33,6 +33,35 @@ for bucket in bookloud-local-pdfs bookloud-local-audio bookloud-local-marks; do
   awslocal s3 mb "s3://${bucket}" >/dev/null 2>&1 || echo "  (${bucket} already exists)"
 done
 
+# CORS on the pdf bucket, mirroring infra/stacks/storage_stack.py's CorsRule
+# (PUT/POST/GET, any origin, any header) -- keep the two in lockstep, same
+# rule as SOURCE_PREFIX and the notification config below.
+#
+# Load-bearing, and it was missing until phase 6 went looking: the browser
+# uploads straight to S3 from http://localhost:3000, so the presigned POST is
+# a cross-origin request and Chrome preflights it. Without this rule the
+# upload fails as an opaque "Failed to fetch" with nothing in any server log.
+# local/smoke_test.py never caught it because urllib sends no preflight --
+# a real browser is the only thing that can, which is precisely why the
+# Playwright suite exists (PLANS/phase-6.md §13.4).
+#
+# audio_bucket and marks_bucket deliberately get NO CORS rule, exactly as in
+# storage_stack.py: an <audio> element loading a cross-origin src without a
+# `crossorigin` attribute is not a CORS request, and the marks JSON is
+# proxied through the API rather than fetched from S3 (PLANS/phase-6.md §3.4).
+echo "Configuring CORS on the pdf bucket (idempotent) ..."
+awslocal s3api put-bucket-cors \
+  --bucket bookloud-local-pdfs \
+  --cors-configuration '{
+    "CORSRules": [
+      {
+        "AllowedMethods": ["PUT", "POST", "GET"],
+        "AllowedOrigins": ["*"],
+        "AllowedHeaders": ["*"]
+      }
+    ]
+  }' >/dev/null
+
 echo "Creating the SQS queues + DLQs (idempotent) ..."
 for base in extract synthesize stitch; do
   awslocal sqs create-queue --queue-name "bookloud-local-${base}-dlq" >/dev/null 2>&1 \

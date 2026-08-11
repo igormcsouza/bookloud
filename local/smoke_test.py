@@ -82,6 +82,28 @@ every prior phase), `get_speech_synthesizer()` never returns a real engine.
   exercises the byte path (PLANS/phase-5.md OQ-1).
 
 Either way there is no live-endpoint dependency anywhere in CI.
+
+Audio-delivery and resynthesis checks (PLANS/phase-6.md §12.2), both
+branching on the same --expect-synthesis flag:
+
+- `check_audio_delivery` -- in `failed` mode, the three assertions a book
+  with no audio can honestly make: `GET /books/{id}/audio` -> 409 (proving
+  the endpoint exists, is authorized, and correctly refuses), the manifest is
+  fetchable through the API and really is the zero-segment document phase-5
+  §3.2 promises, and a chunk's marks are a 404. In `silent` mode it goes
+  further and does the one thing **no unit test, mock or fake can do**: it
+  fetches the presigned URL with a plain urllib GET carrying **no
+  Authorization header**, then re-fetches it with `Range: bytes=0-1023` and
+  asserts a `206` with exactly 1024 bytes. That is the whole of §3's argument
+  -- a URL signed one way accepting an unsigned Range header -- and only a
+  real S3 API can produce it.
+- `check_resynthesize` -- in `failed` mode the book is PARTIAL/NO_AUDIO, so
+  POST /books/{id}/resynthesize returns 202, the book rewinds to EXTRACTED,
+  and polling it back to terminal returns PARTIAL/NO_AUDIO again. **The loop
+  closes**, which proves the fan-out was really re-published and really
+  consumed -- the only end-to-end proof of /resynthesize any automated check
+  can produce, and a complete one. In `silent` mode the book is READY, so the
+  same POST returns 409, proving the status guard from the other side.
 """
 
 from __future__ import annotations
@@ -748,6 +770,183 @@ def check_upload_and_stitch(
         f"{final_book.get('audioDurationMs')!r} vs {audio}",
     )
     print("OK  GET /books/{id} agrees with GET /books/{id}/status")
+
+    # --- phase 6 (PLANS/phase-6.md §12.2) -----------------------------------
+    # Run last, on the book this function just drove to a terminal state:
+    # check_resynthesize MUTATES it (rewinding a PARTIAL book to EXTRACTED),
+    # so nothing above may depend on its state afterwards.
+    check_audio_delivery(api_url, book_id, id_token, expect_synthesis)
+    check_resynthesize(api_url, book_id, id_token, expect_synthesis, stitch_timeout)
+
+
+# --- phase 6: audio delivery + resynthesis (PLANS/phase-6.md §12.2) ---------
+
+
+def _unauthed_get(url: str, timeout: float, headers: dict | None = None):
+    """A plain browser-shaped GET: **no Authorization header**. Returns
+    ``(status, headers, body_bytes)``. Deliberately separate from
+    ``_authed_get`` -- the entire point of the presigned URL is that it works
+    without one, so a helper that quietly attached a token would make the
+    assertion meaningless."""
+    req = urllib.request.Request(url, method="GET", headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), exc.read()
+
+
+def check_audio_delivery(api_url: str, book_id: str, id_token: str, expect_synthesis: str) -> None:
+    base = f"{api_url.rstrip('/')}/books/{book_id}"
+
+    if expect_synthesis != "silent":
+        # The single assertion that proves the endpoint exists, is
+        # authorized, and correctly refuses a book with no audio. This is the
+        # ONLY audio-delivery path deploy-pr can reach, because every chunk
+        # in a PR environment fails with EXTERNAL_TTS_DISABLED (phase-4 §0).
+        status, body = _authed_get(f"{base}/audio", id_token, 15)
+        check(status == 409, f"expected 409 from GET /books/{{id}}/audio with no audio, got {status} {body}")
+        print(f"OK  GET {base}/audio -> 409 (no audio, as expected)")
+
+        status, body = _authed_get(f"{base}/manifest", id_token, 15)
+        check(status == 200, f"expected 200 from GET /books/{{id}}/manifest, got {status} {body}")
+        manifest = json.loads(body)
+        # The zero-segment document phase-5 §3.2 promises is real, reachable
+        # through the API, and shaped the way phase 6's reader expects.
+        check(manifest.get("segments") == [], f"expected segments == [] with no audio, got {manifest.get('segments')!r}")
+        check(manifest.get("audioKey") is None, f"expected audioKey null with no audio, got {manifest.get('audioKey')!r}")
+        check(not manifest.get("durationMs"), f"expected durationMs 0 with no audio, got {manifest.get('durationMs')!r}")
+        expected_missing = list(range(manifest.get("chunksTotal", 0)))
+        check(
+            manifest.get("missing") == expected_missing,
+            f"expected missing == {expected_missing}, got {manifest.get('missing')!r}",
+        )
+        print(f"OK  GET {base}/manifest -> 200 (zero-segment manifest, missing={manifest.get('missing')})")
+
+        status, body = _authed_get(f"{base}/chunks/0/marks", id_token, 15)
+        check(status == 404, f"expected 404 from GET /books/{{id}}/chunks/0/marks (chunk failed), got {status} {body}")
+        print(f"OK  GET {base}/chunks/0/marks -> 404 (chunk failed, no marks object)")
+        return
+
+    # --- silent mode: local compose, the one place bytes exist -------------
+    status, body = _authed_get(f"{base}/audio", id_token, 15)
+    check(status == 200, f"expected 200 from GET /books/{{id}}/audio, got {status} {body}")
+    audio = json.loads(body)
+    url = audio.get("url")
+    check(isinstance(url, str) and "X-Amz-Signature" in url, f"expected a SigV4 presigned url, got {url!r}")
+    check(audio.get("durationMs", 0) > 0, f"expected a non-zero durationMs, got {audio.get('durationMs')!r}")
+    check(audio.get("contentType") == "audio/mpeg", f"expected contentType audio/mpeg, got {audio.get('contentType')!r}")
+    print(f"OK  GET {base}/audio -> 200 (presigned, expiresIn={audio.get('expiresIn')})")
+
+    # THE assertion that proves section 3: the presign works with no
+    # Authorization header at all -- which is the only reason an <audio>
+    # element can play it, since a media request cannot carry one.
+    status, headers, payload = _unauthed_get(url, 30)
+    check(status == 200, f"expected 200 fetching the presigned URL WITHOUT auth, got {status}")
+    check(
+        headers.get("Content-Type") == "audio/mpeg",
+        f"expected Content-Type audio/mpeg from S3, got {headers.get('Content-Type')!r}",
+    )
+    check(len(payload) > 0, "expected a non-empty body from the presigned URL")
+    print(f"OK  presigned GET (no Authorization header) -> 200, {len(payload)} bytes of audio/mpeg")
+
+    # THE load-bearing seeking assertion, and the one no unit test, mock or
+    # fake can make: SigV4 query-string presigning signs only `host`, so
+    # `Range` is unsigned and S3 honours whatever the browser sends. Chrome
+    # issues `Range: bytes=N-` on every seek and expects a 206.
+    status, headers, ranged = _unauthed_get(url, 30, {"Range": "bytes=0-1023"})
+    check(status == 206, f"expected 206 for a Range request against the presigned URL, got {status}")
+    check(len(ranged) == 1024, f"expected exactly 1024 bytes for bytes=0-1023, got {len(ranged)}")
+    check("Content-Range" in headers, f"expected a Content-Range header on the 206, got {sorted(headers)}")
+    check(ranged == payload[:1024], "the ranged bytes do not match the head of the full object")
+    print(f"OK  presigned GET Range: bytes=0-1023 -> 206 ({headers.get('Content-Range')})")
+
+    status, body = _authed_get(f"{base}/manifest", id_token, 15)
+    check(status == 200, f"expected 200 from GET /books/{{id}}/manifest, got {status} {body}")
+    manifest = json.loads(body)
+    segments = manifest.get("segments", [])
+    check(len(segments) >= 1, f"expected at least one segment with silent synthesis, got {len(segments)}")
+    # Re-asserts phase-5 section 7.3's rounding contract THROUGH the API,
+    # because that contract is exactly what phase 6's two-level binary search
+    # rests on: segments must partition [0, durationMs) with no gap and no
+    # overlap.
+    expected_start = 0
+    for segment in segments:
+        check(
+            segment["t"] == expected_start,
+            f"segment {segment['i']} starts at {segment['t']}, expected {expected_start} (timeline not contiguous)",
+        )
+        expected_start = segment["t"] + segment["d"]
+    check(
+        expected_start == manifest.get("durationMs"),
+        f"sum(segment.d) == {expected_start} but durationMs == {manifest.get('durationMs')}",
+    )
+    print(
+        f"OK  GET {base}/manifest -> 200 ({len(segments)} contiguous segments, "
+        f"durationMs={manifest.get('durationMs')})"
+    )
+
+    status, body = _authed_get(f"{base}/chunks/0/marks", id_token, 15)
+    check(status == 200, f"expected 200 from GET /books/{{id}}/chunks/0/marks, got {status} {body}")
+    marks = json.loads(body)
+    words = marks.get("words", [])
+    check(len(words) >= 1, f"expected a non-empty words array, got {len(words)}")
+    previous = -1
+    for word in words:
+        check(word["t"] >= previous, f"marks are not sorted by non-decreasing t ({word['t']} < {previous})")
+        previous = word["t"]
+    check(
+        marks.get("charStart") == segments[0]["s"],
+        f"chunk 0 marks charStart {marks.get('charStart')!r} disagrees with the "
+        f"manifest's segments[0].s {segments[0]['s']!r}",
+    )
+    print(f"OK  GET {base}/chunks/0/marks -> 200 ({len(words)} words, t non-decreasing)")
+
+
+def check_resynthesize(
+    api_url: str, book_id: str, id_token: str, expect_synthesis: str, stitch_timeout: float
+) -> None:
+    url = f"{api_url.rstrip('/')}/books/{book_id}/resynthesize"
+    req = urllib.request.Request(url, method="POST", headers={"Authorization": f"Bearer {id_token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            status, body = resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        status, body = exc.code, exc.read().decode("utf-8")
+
+    if expect_synthesis == "silent":
+        # The book is READY, so the PARTIAL-only guard must refuse it. Proves
+        # the same guard from the other side that `failed` mode proves by
+        # succeeding.
+        check(status == 409, f"expected 409 from POST /resynthesize on a READY book, got {status} {body}")
+        print(f"OK  POST {url} -> 409 (READY book, nothing to retry)")
+        return
+
+    check(status == 202, f"expected 202 from POST /resynthesize on a PARTIAL book, got {status} {body}")
+    payload = json.loads(body)
+    book = payload.get("book", {})
+    chunks_total = book.get("progress", {}).get("chunksTotal", 0)
+    check(
+        payload.get("retriedChunks") == chunks_total,
+        f"expected retriedChunks == chunksTotal == {chunks_total}, got {payload.get('retriedChunks')!r}",
+    )
+    check(book.get("status") == "EXTRACTED", f"expected the book to rewind to EXTRACTED, got {book.get('status')!r}")
+    check(book.get("terminal") is False, f"expected terminal False after a rewind, got {book.get('terminal')!r}")
+    print(
+        f"OK  POST {url} -> 202 (retriedChunks={payload.get('retriedChunks')}, "
+        f"book rewound to EXTRACTED)"
+    )
+
+    # The loop closes. This is what proves the fan-out was really
+    # re-published and really consumed -- not merely that a DynamoDB row was
+    # rewritten. Nothing else in this repo can prove /resynthesize end to end.
+    final = _poll_book_terminal(api_url, book_id, id_token, stitch_timeout)
+    check(
+        final["status"] == "PARTIAL" and final.get("failureReason") == "NO_AUDIO",
+        f"expected the retried book back at PARTIAL/NO_AUDIO, got "
+        f"{final['status']}/{final.get('failureReason')!r}",
+    )
+    print(f"OK  retried book cycled back to terminal -> {final['status']}/{final.get('failureReason')}")
 
 
 def _check_chunks_failed_with_tts_disabled(chunks: list) -> None:

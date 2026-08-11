@@ -18,7 +18,7 @@ from src.config import settings
 from src.contexts.library.domain.extraction import PdfTextExtractor
 from src.contexts.library.domain.repository import BookRepository, ChunkRepository
 from src.contexts.library.domain.stitching import StitchQueue
-from src.contexts.library.domain.storage import ObjectStorage, PdfStorage
+from src.contexts.library.domain.storage import AudioDelivery, ObjectStorage, PdfStorage
 from src.contexts.library.domain.synthesis import SpeechSynthesizer, SynthesisQueue
 from src.contexts.library.infrastructure.dynamodb_book_repository import (
     DynamoDbBookRepository,
@@ -30,6 +30,7 @@ from src.contexts.library.infrastructure.edge_tts_synthesizer import EdgeTtsSynt
 from src.contexts.library.infrastructure.fallback_synthesizer import FallbackSynthesizer
 from src.contexts.library.infrastructure.google_tts_synthesizer import GoogleTtsSynthesizer
 from src.contexts.library.infrastructure.pymupdf_extractor import PyMuPdfTextExtractor
+from src.contexts.library.infrastructure.s3_audio_delivery import S3AudioDelivery
 from src.contexts.library.infrastructure.s3_object_storage import S3ObjectStorage
 from src.contexts.library.infrastructure.s3_pdf_storage import S3PdfStorage
 from src.contexts.library.infrastructure.secrets import get_secret
@@ -72,6 +73,17 @@ def get_audio_storage() -> ObjectStorage:
 
 def get_marks_storage() -> ObjectStorage:
     return S3ObjectStorage(bucket=settings.marks_bucket)
+
+
+def get_audio_delivery() -> AudioDelivery:
+    """PLANS/phase-6.md §4.2. Note it builds ``public_s3_client()``, NOT
+    ``src/infrastructure/aws.py``'s ``client("s3")``: boto3 signs presigned
+    URLs against the client's own endpoint, so the latter would mint
+    ``http://localstack:4566/...`` inside compose -- a well-formed, correctly
+    signed URL that no browser can reach. Constructing it touches no network
+    and needs no region (S3 has a global endpoint), so unlike the SQS
+    adapters this needs no laziness."""
+    return S3AudioDelivery(bucket=settings.audio_bucket)
 
 
 def get_synthesis_queue() -> SynthesisQueue:

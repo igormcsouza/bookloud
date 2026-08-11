@@ -6,6 +6,8 @@ needs for the one presigned request that follows book creation."""
 
 from __future__ import annotations
 
+from src.contexts.library.application.delivery import AudioUrl
+from src.contexts.library.application.resynthesis import ResynthesizeBookResult
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
 from src.contexts.library.domain.storage import PresignedUpload
@@ -96,6 +98,33 @@ def chunk_to_dict(chunk: Chunk) -> dict:
         "durationMs": chunk.duration_ms,
         "failureReason": chunk.failure_reason,
         "synthesisSource": chunk.synthesis_source,
+    }
+
+
+def audio_url_to_dict(audio: AudioUrl) -> dict:
+    """``GET /books/{id}/audio`` and ``GET /books/{id}/chunks/{n}/audio``
+    (PLANS/phase-6.md §4.3). ``durationMs`` comes from the DynamoDB row, not
+    from the file: for a mixed-engine book the browser's ``audio.duration``
+    is an *estimate* (no Xing header -- PLANS/phase-5.md §7.1), and the
+    manifest, not the media element, is the timeline."""
+    return {
+        "url": audio.download.url,
+        "expiresIn": audio.download.expires_in,
+        "durationMs": audio.duration_ms,
+        "contentType": audio.content_type,
+    }
+
+
+def resynthesis_to_dict(result: ResynthesizeBookResult, book: Book) -> dict:
+    """``POST /books/{id}/resynthesize`` (PLANS/phase-6.md §5.3). Mirrors
+    ``POST /books``'s ``{"book": ..., "upload": ...}`` envelope: the reloaded
+    book goes back in ``book_status_to_dict``'s exact shape so the client can
+    drop it straight into its poll state and resume, with no extra round trip
+    just to learn the book is back at ``EXTRACTED``."""
+    return {
+        "retriedChunks": result.retried_chunks,
+        "republishedStitch": result.republished_stitch,
+        "book": book_status_to_dict(book),
     }
 
 

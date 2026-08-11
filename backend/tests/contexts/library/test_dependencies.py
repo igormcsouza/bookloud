@@ -12,6 +12,7 @@ from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
 from src.contexts.library.infrastructure.edge_tts_synthesizer import EdgeTtsSynthesizer
 from src.contexts.library.infrastructure.fallback_synthesizer import FallbackSynthesizer
 from src.contexts.library.infrastructure.pymupdf_extractor import PyMuPdfTextExtractor
+from src.contexts.library.infrastructure.s3_audio_delivery import S3AudioDelivery
 from src.contexts.library.infrastructure.s3_object_storage import S3ObjectStorage
 from src.contexts.library.infrastructure.s3_pdf_storage import S3PdfStorage
 from src.contexts.library.infrastructure.silent_synthesizer import SilentSynthesizer
@@ -19,6 +20,7 @@ from src.contexts.library.infrastructure.sqs_stitch_queue import SqsStitchQueue
 from src.contexts.library.infrastructure.sqs_synthesis_queue import SqsSynthesisQueue
 from src.contexts.library.infrastructure.stub_synthesizer import StubSynthesizer
 from src.contexts.library.interface.dependencies import (
+    get_audio_delivery,
     get_audio_storage,
     get_book_repository,
     get_chunk_repository,
@@ -167,3 +169,33 @@ def test_synthesis_stub_mode_is_ignored_in_prod(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(config.settings, "synthesis_stub_mode", "silent")
     monkeypatch.setattr(config.settings, "google_tts_secret_name", "")
     assert isinstance(get_speech_synthesizer(), EdgeTtsSynthesizer)
+
+
+# --- phase 6 (PLANS/phase-6.md §4.2, §13.2) -----------------------------------
+
+
+def test_get_audio_delivery_returns_an_s3_audio_delivery_on_the_audio_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config.settings, "audio_bucket", "bookloud-pr-42-audio")
+
+    delivery = get_audio_delivery()
+
+    assert isinstance(delivery, S3AudioDelivery)
+    assert delivery._bucket == "bookloud-pr-42-audio"
+
+
+def test_get_audio_delivery_touches_no_network_and_needs_no_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Construction is pure DI wiring. S3 has a global endpoint, so unlike
+    the SQS providers this one may build its client eagerly -- but the
+    backend test job runs with no credentials and no region at all, so that
+    gets asserted rather than assumed (the phase-4/5 NoRegionError shape)."""
+    for var in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(config.settings, "audio_bucket", "bookloud-prod-audio")
+    monkeypatch.setattr(config.settings, "aws_endpoint_url", "")
+    monkeypatch.setattr(config.settings, "s3_public_endpoint_url", "")
+
+    assert isinstance(get_audio_delivery(), S3AudioDelivery)

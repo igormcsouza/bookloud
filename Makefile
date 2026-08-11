@@ -1,7 +1,7 @@
 # Local dev / CI helper targets. `make up` mirrors what deploy-pr.yml and
 # deploy-prod.yml prove against real AWS: push code -> synth/deploy -> smoke
 # test -> teardown.
-.PHONY: up ui seed smoke token logs down test synth e2e
+.PHONY: up ui seed smoke token logs down test synth e2e e2e-local
 
 ## Build & start LocalStack + cognito-local + backend + extract-worker +
 ## synthesize-worker + stitch-worker, then create the table/buckets/queues and
@@ -67,8 +67,27 @@ synth:
 	cd infra && cdk synth -c environment=dev
 
 ## One-shot: bring the stack up (+ui), smoke test both, tear down.
+## Folded into e2e-local below, which is the real gate; kept because it is a
+## cheap "is the stack alive" check with no browser download.
 e2e:
 	$(MAKE) up
 	$(MAKE) ui
 	python3 local/smoke_test.py --api-url http://localhost:8000 --frontend-url http://localhost:3000
+	$(MAKE) down
+
+## The phase-6 gate (PLANS/phase-6.md §12.1/§13.4): the full compose stack plus
+## the Playwright suite, INCLUDING the playback project.
+##
+## E2E_AUDIO=1 is what creates that project at all. Local compose is the only
+## environment in existence where a browser test can hear anything, because
+## SYNTHESIS_STUB_MODE=silent (set only on the compose synthesize-worker) makes
+## SilentSynthesizer produce real MPEG-2 frames and real word marks. `chrome`
+## as well as `chromium`: Playwright's bundled Chromium omits proprietary
+## media codecs, and the one test that exercises audio must not be the place a
+## codec gap silently turns a real assertion into a skip (OQ-7).
+e2e-local:
+	$(MAKE) up
+	$(MAKE) ui
+	cd frontend && npx playwright install --with-deps chromium chrome
+	cd frontend && npm run test:e2e:local
 	$(MAKE) down

@@ -67,6 +67,11 @@ api = ApiStack(
     audio_bucket=storage.audio_bucket,
     marks_bucket=storage.marks_bucket,
     extract_queue=pipeline.extract_queue,
+    # PLANS/phase-6.md §11: POST /books/{id}/resynthesize publishes to both.
+    # The Api -> Pipeline edge already exists (extract_queue), so this adds no
+    # new dependency direction and no cycle.
+    synthesize_queue=pipeline.synthesize_queue,
+    stitch_queue=pipeline.stitch_queue,
     user_pool=auth.user_pool,
     user_pool_client=auth.user_pool_client,
     environment=environment,

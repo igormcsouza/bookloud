@@ -114,3 +114,68 @@ jobs:
       - name: Tear down
         if: always()
         run: make down
+
+  # Parallel to `local-smoke`, deliberately NOT merged into it: a Playwright
+  # failure and a smoke failure mean very different things, and collapsing them
+  # into one job would hide which one broke.
+  #
+  # This is phase 6's real gate (PLANS/phase-6.md §13.4). Local compose is the
+  # ONLY environment in existence where a browser test can hear anything --
+  # `get_speech_synthesizer()` gates on `ENVIRONMENT != "prod"` first and
+  # unconditionally, so in every deployed environment every chunk fails with
+  # EXTERNAL_TTS_DISABLED and `audioKey` is null. `SYNTHESIS_STUB_MODE=silent`
+  # (compose's synthesize-worker, and nowhere else) is what makes
+  # playback.spec.ts possible at all. Since deploy-pr.yml's `ci` job calls this
+  # workflow, every PR runs it.
+  e2e-local:
+    name: Local compose Playwright e2e
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Bring up the local stack (+ frontend)
+        run: |
+          make up
+          make ui
+
+      # `chrome` as well as `chromium`: Playwright's bundled Chromium omits
+      # proprietary media codecs, and MP3 sits in the grey zone across
+      # versions. The playback project must not be the place a codec gap
+      # silently turns a real assertion into a skip (OQ-7) -- playback.spec.ts
+      # hard-fails on an empty canPlayType("audio/mpeg").
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium chrome
+
+      - name: Run the Playwright suite (with the playback project)
+        working-directory: frontend
+        run: npm run test:e2e:local
+
+      - name: Upload the trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          retention-days: 7
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: make down

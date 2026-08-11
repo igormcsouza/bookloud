@@ -106,78 +106,16 @@ def test_get_bytes_reraises_other_client_errors(monkeypatch: pytest.MonkeyPatch,
 
 
 # --- client construction / endpoint override -----------------------------------
-
-
-def test_build_client_uses_s3_public_endpoint_url_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.config as config
-    from src.contexts.library.infrastructure.s3_pdf_storage import _build_client
-
-    captured: dict = {}
-
-    class FakeBoto3:
-        @staticmethod
-        def client(service, **kwargs):
-            captured["service"] = service
-            captured["kwargs"] = kwargs
-            return "fake-client"
-
-    monkeypatch.setattr(config.settings, "s3_public_endpoint_url", "http://localhost:4566")
-    monkeypatch.setattr(config.settings, "aws_endpoint_url", "http://localstack:4566")
-    monkeypatch.setattr(
-        "src.contexts.library.infrastructure.s3_pdf_storage.boto3", FakeBoto3
-    )
-
-    result = _build_client()
-    assert result == "fake-client"
-    assert captured["kwargs"]["endpoint_url"] == "http://localhost:4566"
-
-
-def test_build_client_falls_back_to_aws_endpoint_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.config as config
-    from src.contexts.library.infrastructure.s3_pdf_storage import _build_client
-
-    captured: dict = {}
-
-    class FakeBoto3:
-        @staticmethod
-        def client(service, **kwargs):
-            captured["kwargs"] = kwargs
-            return "fake-client"
-
-    monkeypatch.setattr(config.settings, "s3_public_endpoint_url", "")
-    monkeypatch.setattr(config.settings, "aws_endpoint_url", "http://localstack:4566")
-    monkeypatch.setattr(
-        "src.contexts.library.infrastructure.s3_pdf_storage.boto3", FakeBoto3
-    )
-
-    _build_client()
-    assert captured["kwargs"]["endpoint_url"] == "http://localstack:4566"
-
-
-def test_build_client_no_endpoint_in_real_aws(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.config as config
-    from src.contexts.library.infrastructure.s3_pdf_storage import _build_client
-
-    captured: dict = {}
-
-    class FakeBoto3:
-        @staticmethod
-        def client(service, **kwargs):
-            captured["kwargs"] = kwargs
-            return "fake-client"
-
-    monkeypatch.setattr(config.settings, "s3_public_endpoint_url", "")
-    monkeypatch.setattr(config.settings, "aws_endpoint_url", "")
-    monkeypatch.setattr(
-        "src.contexts.library.infrastructure.s3_pdf_storage.boto3", FakeBoto3
-    )
-
-    _build_client()
-    assert "endpoint_url" not in captured["kwargs"]
+# The three endpoint-selection tests that lived here moved to
+# test_s3_audio_delivery.py when `_build_client` was promoted to
+# infrastructure/s3_client.py's `public_s3_client` (PLANS/phase-6.md §4.2):
+# the presigned *download* has exactly the same failure mode, so the rule
+# gets one home rather than two. This file keeps the default-path test below,
+# which is what proves S3PdfStorage actually uses it.
 
 
 def test_default_constructor_builds_a_real_client(s3_bucket) -> None:
-    # No `client=` kwarg -- exercises the `_build_client()` default path
+    # No `client=` kwarg -- exercises the `public_s3_client()` default path
     # (moto intercepts the resulting boto3 client transparently).
     storage = S3PdfStorage(bucket=BUCKET)
     upload = storage.presigned_upload(key="books/user-1/book-1/source.pdf")
