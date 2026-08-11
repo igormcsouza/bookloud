@@ -193,6 +193,11 @@ class ExtractBook:
             # and the fan-in arithmetic is wrong forever.
             chunks_done=0,
             chunks_failed=0,
+            # Same reasoning, one phase later (PLANS/phase-5.md §5.3):
+            # re-extracting a previously-stitched book must not leave it
+            # advertising a stale audioKey/manifestKey pointing at audio for
+            # text that no longer exists.
+            clear_stitch_outputs=True,
             page_count=document.page_count,
             clear_failure_reason=True,
             updated_at=self._clock.now().isoformat(),

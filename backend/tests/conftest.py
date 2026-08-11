@@ -85,10 +85,13 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "MARKS_BUCKET",
         "EXTRACT_QUEUE_URL",
         "SYNTHESIZE_QUEUE_URL",
+        "STITCH_QUEUE_URL",
         "EDGE_TTS_VOICE",
         "GOOGLE_TTS_VOICE",
         "GOOGLE_TTS_SECRET_NAME",
         "SYNTHESIZE_MAX_RECEIVE_COUNT",
+        "STITCH_MAX_RECEIVE_COUNT",
+        "SYNTHESIS_STUB_MODE",
         "LOG_LEVEL",
         "AWS_ENDPOINT_URL",
     ):

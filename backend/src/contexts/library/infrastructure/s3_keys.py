@@ -25,11 +25,11 @@ SOURCE_PREFIX = "books/"
 SOURCE_FILENAME = "source.pdf"
 
 # PLANS/phase-4.md §5.1. Both buckets are dedicated (audio_bucket/
-# marks_bucket), but the keys are still prefixed: phase 5 needs somewhere to
-# put the stitched artifacts (audio/<u>/<b>/full.mp3, marks/<u>/<b>/full.json)
-# without colliding with a chunk index, and a later "one bucket for
-# everything" consolidation stays possible. Unlike SOURCE_PREFIX, these are
-# NOT duplicated in infra/stacks/config.py -- nothing in CDK filters on them
+# marks_bucket), but the keys are still prefixed: phase 5 puts the stitched
+# artifacts (audio/<u>/<b>/book.mp3, marks/<u>/<b>/book.json) here without
+# colliding with a chunk index, and a later "one bucket for everything"
+# consolidation stays possible. Unlike SOURCE_PREFIX, these are NOT
+# duplicated in infra/stacks/config.py -- nothing in CDK filters on them
 # (no S3 notification on these buckets), so no lockstep comment is needed.
 AUDIO_PREFIX = "audio/"
 MARKS_PREFIX = "marks/"
@@ -37,6 +37,14 @@ AUDIO_EXTENSION = ".mp3"
 MARKS_EXTENSION = ".json"
 AUDIO_CONTENT_TYPE = "audio/mpeg"
 MARKS_CONTENT_TYPE = "application/json"
+
+# PLANS/phase-5.md §5.1 -- a deliberate, flagged rename of the `full.*` names
+# phase-4 §5.1 had reserved: "full" is actively misleading for the PARTIAL
+# case, which §3 makes a first-class, everyday outcome rather than an
+# exception. Nothing was ever written under full.*, so this is a rename on
+# paper only.
+BOOK_AUDIO_FILENAME = "book.mp3"
+BOOK_MANIFEST_FILENAME = "book.json"
 
 _KEY_RE = re.compile(r"^books/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/source\.pdf$")
 
@@ -48,6 +56,16 @@ _AUDIO_KEY_RE = re.compile(
 )
 _MARKS_KEY_RE = re.compile(
     rf"^marks/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/(?P<index>\d{{{CHUNK_INDEX_WIDTH}}})\.json$"
+)
+
+# No collision risk with the chunk regexes above: those require exactly
+# CHUNK_INDEX_WIDTH *digits* before the extension, so parse_chunk_audio_key
+# ("audio/u/b/book.mp3") is None and vice versa. Cross-rejection is tested.
+_BOOK_AUDIO_KEY_RE = re.compile(
+    rf"^audio/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/{re.escape(BOOK_AUDIO_FILENAME)}$"
+)
+_BOOK_MANIFEST_KEY_RE = re.compile(
+    rf"^marks/(?P<user_id>[^/]+)/(?P<book_id>[^/]+)/{re.escape(BOOK_MANIFEST_FILENAME)}$"
 )
 
 
@@ -89,3 +107,29 @@ def parse_chunk_marks_key(key: str) -> tuple[str, str, int] | None:
     if match is None:
         return None
     return (match.group("user_id"), match.group("book_id"), int(match.group("index")))
+
+
+def book_audio_key(user_id: str, book_id: str) -> str:
+    """The stitched book-level MP3 (PLANS/phase-5.md §5.1). A pure function
+    of ``(user_id, book_id)`` -- which is what makes the stitcher's S3 writes
+    idempotent under duplicate delivery: every retry overwrites, never
+    appends."""
+    return f"{AUDIO_PREFIX}{user_id}/{book_id}/{BOOK_AUDIO_FILENAME}"
+
+
+def book_manifest_key(user_id: str, book_id: str) -> str:
+    return f"{MARKS_PREFIX}{user_id}/{book_id}/{BOOK_MANIFEST_FILENAME}"
+
+
+def parse_book_audio_key(key: str) -> tuple[str, str] | None:
+    match = _BOOK_AUDIO_KEY_RE.match(key)
+    if match is None:
+        return None
+    return (match.group("user_id"), match.group("book_id"))
+
+
+def parse_book_manifest_key(key: str) -> tuple[str, str] | None:
+    match = _BOOK_MANIFEST_KEY_RE.match(key)
+    if match is None:
+        return None
+    return (match.group("user_id"), match.group("book_id"))

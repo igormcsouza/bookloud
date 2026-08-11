@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     marks_bucket: str = ""
     extract_queue_url: str = ""
     synthesize_queue_url: str = ""
+    stitch_queue_url: str = ""
 
     # PLANS/phase-4.md §0/§6.4/§6.6: real edge-tts/Google calls only happen
     # when environment == "prod" (get_speech_synthesizer()); local/pr-N
@@ -41,6 +42,20 @@ class Settings(BaseSettings):
     # cannot share an import) -- the synthesize handler's last-attempt rule
     # (PLANS/phase-4.md §8.3) reads this as SynthesizeChunk's max_attempts.
     synthesize_max_receive_count: int = 5
+    # Kept in lockstep with infra/stacks/config.py's
+    # Config.STITCH_MAX_RECEIVE_COUNT -- the stitch handler's last-attempt
+    # rule (PLANS/phase-5.md §3.2) reads this as StitchBook's max_attempts.
+    stitch_max_receive_count: int = 3
+
+    # PLANS/phase-5.md OQ-1. "disabled" (the default, and what every
+    # deployed environment gets) -> get_speech_synthesizer() returns the
+    # phase-4 StubSynthesizer outside prod. "silent" -> a local, network-free
+    # generator of valid silent MPEG-2 frames, so `make up` + `make smoke`
+    # actually exercise concatenation, byte offsets, the multipart upload and
+    # the book manifest against LocalStack's real S3. Set ONLY on the
+    # compose synthesize-worker; never on a PR stack, and it cannot reach
+    # prod because the environment gate is checked first regardless.
+    synthesis_stub_mode: str = "disabled"
 
     log_level: str = "INFO"
 

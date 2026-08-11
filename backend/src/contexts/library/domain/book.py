@@ -47,8 +47,17 @@ class Book:
     created_at: str
     updated_at: str
     source_key: str | None = None  # S3 key in pdf_bucket; set at creation (phase 3)
-    failure_reason: str | None = None  # ExtractionFailure value; None unless FAILED
+    # Why this book is not fully usable (semantics WIDENED in phase 5): an
+    # ``ExtractionFailure`` value when ``status == FAILED``, a
+    # ``StitchFailure`` value when ``status == PARTIAL``, ``None`` otherwise.
+    # One field with a documented discriminator beats a second near-identical
+    # field (PLANS/phase-5.md §5.2).
+    failure_reason: str | None = None
     chunks_failed: int = 0  # count of chunks permanently FAILED synthesis (phase 4)
+    # --- phase 5 stitch outputs (PLANS/phase-5.md §5.2) ---
+    audio_key: str | None = None  # the stitched book.mp3; None when nothing was concatenated
+    manifest_key: str | None = None  # book.json; set on every successful stitch, incl. the zero-segment one
+    audio_duration_ms: int = 0  # total stitched duration; exactly sum(segment.d)
 
     @classmethod
     def create(

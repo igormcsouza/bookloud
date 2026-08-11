@@ -124,9 +124,15 @@ def synthesis_infra(dynamodb_table, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config.settings, "audio_bucket", AUDIO_BUCKET)
     monkeypatch.setattr(config.settings, "marks_bucket", MARKS_BUCKET)
     monkeypatch.setattr(config.settings, "environment", "local")  # -> StubSynthesizer (§0)
+    monkeypatch.setattr(config.settings, "synthesis_stub_mode", "disabled")
     client = boto3.client("s3", region_name="us-east-1")
     client.create_bucket(Bucket=AUDIO_BUCKET)
     client.create_bucket(Bucket=MARKS_BUCKET)
+    # Phase 5: the completing increment publishes a stitch message, so the
+    # composition root needs a real (moto) queue behind get_stitch_queue().
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    queue_url = sqs.create_queue(QueueName="bookloud-test-stitch")["QueueUrl"]
+    monkeypatch.setattr(config.settings, "stitch_queue_url", queue_url)
     return client
 
 
@@ -177,3 +183,48 @@ def test_handler_end_to_end_stub_environment_fails_chunk_deterministically(synth
     updated_book = book_repo.get(USER_ID, BOOK_ID)
     assert updated_book.chunks_done == 1
     assert updated_book.chunks_failed == 1
+
+
+def test_handler_publishes_the_stitch_message_on_the_completing_increment(
+    synthesis_infra, dynamodb_table
+) -> None:
+    """The phase-5 fan-in edge, proven through the real composition root:
+    even though the chunk FAILED (stub environment), the increment that
+    completes the book publishes exactly one stitch message."""
+    import src.config as config
+    from src.contexts.library.domain.book import Book
+    from src.contexts.library.infrastructure.dynamodb_book_repository import (
+        DynamoDbBookRepository,
+    )
+    from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
+        DynamoDbChunkRepository,
+    )
+    from src.infrastructure.clock import SystemClock
+
+    book_repo = DynamoDbBookRepository(table=dynamodb_table)
+    chunk_repo = DynamoDbChunkRepository(table=dynamodb_table)
+    book = Book.create(id=BOOK_ID, user_id=USER_ID, title_raw="Real Book", now=SystemClock().now())
+    book.chunks_total = 1
+    book_repo.save(book)
+    chunk_repo.save(
+        Chunk(
+            book_id=BOOK_ID,
+            index=0,
+            user_id=USER_ID,
+            text="Some real chunk text to synthesize.",
+            char_start=0,
+            char_end=36,
+            audio_key=None,
+            marks_key=None,
+            status=ChunkStatus.PENDING,
+        )
+    )
+
+    handler({"Records": [_record(_body(chunk_index=0), receive_count="1")]}, None)
+
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    messages = sqs.receive_message(
+        QueueUrl=config.settings.stitch_queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0
+    ).get("Messages", [])
+    assert len(messages) == 1
+    assert json.loads(messages[0]["Body"]) == {"v": 1, "userId": USER_ID, "bookId": BOOK_ID}

@@ -167,11 +167,13 @@ def _synth_pipeline_stack(environment: str, *, google_tts_secret_name: str = "")
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_synthesizes(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
-    template.resource_count_is("AWS::SQS::Queue", 4)
-    # The extract Lambda + the synthesize Lambda + the (auto-created,
-    # inline-Python, no-Docker) BucketNotificationsHandler singleton that an
-    # *imported* bucket's add_event_notification synthesizes.
-    template.resource_count_is("AWS::Lambda::Function", 3)
+    # extract + synthesize + stitch, each with a DLQ.
+    template.resource_count_is("AWS::SQS::Queue", 6)
+    # The extract Lambda + the synthesize Lambda + the stitch Lambda + the
+    # (auto-created, inline-Python, no-Docker) BucketNotificationsHandler
+    # singleton that an *imported* bucket's add_event_notification
+    # synthesizes.
+    template.resource_count_is("AWS::Lambda::Function", 4)
 
 
 @pytest.mark.docker
@@ -181,9 +183,9 @@ def test_pipeline_stack_has_redrive_policies(environment: str) -> None:
     queues_with_redrive = template.find_resources(
         "AWS::SQS::Queue", {"Properties": {"RedrivePolicy": Match.any_value()}}
     )
-    # extract + synthesize each have a redrive policy pointing at their DLQ;
-    # the two DLQs themselves do not.
-    assert len(queues_with_redrive) == 2
+    # extract + synthesize + stitch each have a redrive policy pointing at
+    # their DLQ; the three DLQs themselves do not.
+    assert len(queues_with_redrive) == 3
 
 
 @pytest.mark.docker
@@ -252,7 +254,7 @@ def test_pipeline_stack_queue_policy_allows_s3_to_send(environment: str) -> None
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_extract_lambda_event_source_mapping(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
-    template.resource_count_is("AWS::Lambda::EventSourceMapping", 2)
+    template.resource_count_is("AWS::Lambda::EventSourceMapping", 3)
     template.has_resource_properties("AWS::Lambda::EventSourceMapping", {"BatchSize": 1})
 
 
@@ -262,7 +264,11 @@ def test_pipeline_stack_synthesize_lambda_event_source_mapping(environment: str)
     template = _synth_pipeline_stack(environment)
     template.has_resource_properties(
         "AWS::Lambda::EventSourceMapping",
-        {"BatchSize": 1, "ScalingConfig": {"MaximumConcurrency": 5}},
+        # 3, lowered from 5 in phase 5 (PLANS/phase-5.md OQ-2): the account's
+        # total Lambda concurrency is 10 and the stitch function now competes
+        # for it, so 5 here could starve the user-facing API during
+        # processing.
+        {"BatchSize": 1, "ScalingConfig": {"MaximumConcurrency": 2}},
     )
 
 
@@ -287,6 +293,114 @@ def test_pipeline_stack_synthesize_function_shape(environment: str) -> None:
             "MemorySize": 1024,
         },
     )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_stitch_queue_shape(environment: str) -> None:
+    """PLANS/phase-5.md §6.2: 90 min visibility (6x the stitch Lambda's 900s
+    timeout, the repo's standing rule) and max_receive_count 3 -- unlike the
+    synthesize queue there is no ESM-throttle backpressure to burn attempts,
+    and each attempt costs up to 15 minutes."""
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::SQS::Queue",
+        {"QueueName": Match.string_like_regexp("^bookloud-.*-stitch$"), "VisibilityTimeout": 5400},
+    )
+    queues = template.find_resources(
+        "AWS::SQS::Queue",
+        {"Properties": {"QueueName": Match.string_like_regexp("^bookloud-.*-stitch$")}},
+    )
+    (props,) = [r["Properties"] for r in queues.values()]
+    assert props["RedrivePolicy"]["maxReceiveCount"] == 3
+    assert props["RedrivePolicy"]["deadLetterTargetArn"] is not None
+
+    # The other two queues are unchanged: synthesize 30 min / 5, extract
+    # 12 min / 3.
+    for name, timeout, receives in (("synthesize", 1800, 5), ("extract", 720, 3)):
+        found = template.find_resources(
+            "AWS::SQS::Queue",
+            {"Properties": {"QueueName": Match.string_like_regexp(f"^bookloud-.*-{name}$")}},
+        )
+        (found_props,) = [r["Properties"] for r in found.values()]
+        assert found_props["VisibilityTimeout"] == timeout
+        assert found_props["RedrivePolicy"]["maxReceiveCount"] == receives
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_stitch_function_shape(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "ImageConfig": {"Command": ["src.contexts.library.interface.stitch_handler.handler"]},
+            # Absent, not a number. Same account-quota wall as
+            # SynthesizeFunction: this account's total Lambda concurrency
+            # limit is 10 and AWS rejects any reservation that drops
+            # unreserved concurrency below its floor of 10, so setting this
+            # at all fails the deploy. Asserting absence turns a re-added
+            # reservation into a failing unit test rather than a
+            # CREATE_FAILED six minutes into deploy-pr.
+            "ReservedConcurrentExecutions": Match.absent(),
+            "Timeout": 900,
+            "MemorySize": 1536,
+        },
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_stitch_lambda_event_source_mapping(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::Lambda::EventSourceMapping",
+        {"BatchSize": 1, "ScalingConfig": {"MaximumConcurrency": 2}},
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_stitch_function_has_the_queue_url_and_buckets(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    functions = template.find_resources(
+        "AWS::Lambda::Function",
+        {
+            "Properties": {
+                "ImageConfig": {
+                    "Command": ["src.contexts.library.interface.stitch_handler.handler"]
+                }
+            }
+        },
+    )
+    (props,) = [r["Properties"] for r in functions.values()]
+    variables = props["Environment"]["Variables"]
+    assert "STITCH_QUEUE_URL" in variables
+    assert variables["STITCH_MAX_RECEIVE_COUNT"] == "3"
+    assert "AUDIO_BUCKET" in variables
+    assert "MARKS_BUCKET" in variables
+    # The stitch Lambda never calls a TTS engine, so it carries none of the
+    # synthesis config -- in particular no GOOGLE_TTS_SECRET_NAME.
+    assert "GOOGLE_TTS_SECRET_NAME" not in variables
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_synthesize_function_carries_the_stitch_queue_url(environment: str) -> None:
+    """The fan-in producer's env var, the twin of the grant asserted below."""
+    template = _synth_pipeline_stack(environment)
+    functions = template.find_resources(
+        "AWS::Lambda::Function",
+        {
+            "Properties": {
+                "ImageConfig": {
+                    "Command": ["src.contexts.library.interface.synthesize_handler.handler"]
+                }
+            }
+        },
+    )
+    (props,) = [r["Properties"] for r in functions.values()]
+    assert "STITCH_QUEUE_URL" in props["Environment"]["Variables"]
 
 
 @pytest.mark.docker
@@ -316,13 +430,15 @@ def test_pipeline_stack_extract_lambda_role_grants(environment: str) -> None:
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_synthesize_lambda_and_fan_out_grants(environment: str) -> None:
     """Regression guard on the synthesize Lambda's audio/marks `grant_put`
-    calls, and on the fan-out producer grant
-    (`synthesize_queue.grant_send_messages(extract_fn)`) -- the one
-    easy-to-forget grant in the phase."""
+    calls, on the fan-out producer grant
+    (`synthesize_queue.grant_send_messages(extract_fn)`), and on phase 5's
+    fan-in twin (`stitch_queue.grant_send_messages(synthesize_fn)`) -- the
+    two easy-to-forget grants, since both point the "wrong" direction."""
     template = _synth_pipeline_stack(environment)
 
     policies = template.find_resources("AWS::IAM::Policy")
     actions: list[str] = []
+    send_message_statements = 0
     for policy in policies.values():
         for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
             action = statement.get("Action")
@@ -330,9 +446,19 @@ def test_pipeline_stack_synthesize_lambda_and_fan_out_grants(environment: str) -
                 actions.extend(action)
             elif isinstance(action, str):
                 actions.append(action)
+            if "sqs:SendMessage" in (action if isinstance(action, list) else [action]):
+                send_message_statements += 1
 
     assert "s3:PutObject" in actions
     assert "sqs:SendMessage" in actions
+    # TWO producer grants, asserted by count so losing either one fails:
+    # extract -> synthesize_queue, and synthesize -> stitch_queue.
+    assert send_message_statements == 2
+    # The stitch Lambda is the first function that READS audio_bucket -- the
+    # synthesize Lambda deliberately only has grant_put.
+    assert "s3:GetObject*" in actions or "s3:GetObject" in actions
+    # grant_put covers the multipart upload's Abort permission.
+    assert any(a.startswith("s3:Abort") for a in actions)
 
 
 @pytest.mark.docker
@@ -444,6 +570,13 @@ def test_pipeline_stack_naming_convention(environment: str) -> None:
         table=storage.table,
     )
     assert stack.stack_name == construct_id
+
+    queue_names = {
+        r["Properties"]["QueueName"]
+        for r in Template.from_stack(stack).find_resources("AWS::SQS::Queue").values()
+    }
+    assert f"bookloud-{environment}-stitch" in queue_names
+    assert f"bookloud-{environment}-stitch-dlq" in queue_names
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS)

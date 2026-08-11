@@ -22,6 +22,7 @@ from typing import Literal
 
 from src.contexts.library.domain.marks import build_marks_document
 from src.contexts.library.domain.repository import BookRepository, ChunkCounters, ChunkRepository
+from src.contexts.library.domain.stitching import StitchQueue
 from src.contexts.library.domain.storage import ObjectStorage
 from src.contexts.library.domain.synthesis import (
     MAX_SYNTHESIS_CHARS,
@@ -33,6 +34,7 @@ from src.contexts.library.domain.synthesis import (
 )
 from src.contexts.library.domain.value_objects import (
     NON_TERMINAL_CHUNK_STATUSES,
+    BookStatus,
     ChunkStatus,
     SynthesisFailure,
 )
@@ -81,6 +83,7 @@ class SynthesizeChunk:
         synthesizer: SpeechSynthesizer,
         audio_storage: ObjectStorage,
         marks_storage: ObjectStorage,
+        stitch_queue: StitchQueue,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     ) -> None:
         self._book_repository = book_repository
@@ -88,6 +91,7 @@ class SynthesizeChunk:
         self._synthesizer = synthesizer
         self._audio_storage = audio_storage
         self._marks_storage = marks_storage
+        self._stitch_queue = stitch_queue
         self._max_attempts = max_attempts
 
     def execute(self, command: SynthesizeChunkCommand) -> SynthesizeChunkResult:
@@ -96,7 +100,15 @@ class SynthesizeChunk:
             return SynthesizeChunkResult("SKIPPED", reason="CHUNK_NOT_FOUND")
         if chunk.status is ChunkStatus.DONE:
             # Cheap duplicate-delivery short-circuit: no engine call, no S3
-            # write.
+            # write. But a redelivery of an already-DONE chunk also means the
+            # previous invocation's stitch publish is not known to have
+            # completed -- it is the only step after the counter increment
+            # that can fail. Re-publish; never re-synthesize. Exactly
+            # PLANS/phase-4.md §4.3's REQUEUED shape, and duplicate stitch
+            # messages are safe by construction (PLANS/phase-5.md §6.4's
+            # conditional claim).
+            if self._republish_stitch_if_complete(command):
+                return SynthesizeChunkResult("SKIPPED", reason="STITCH_REQUEUED")
             return SynthesizeChunkResult("SKIPPED", reason="ALREADY_DONE")
         if chunk.user_id != command.user_id:
             # Defence in depth, mirrors ExtractBook's KEY_MISMATCH check.
@@ -288,7 +300,43 @@ class SynthesizeChunk:
             counters.chunks_total,
             counters.chunks_failed,
         )
+        self._maybe_publish_stitch(command, counters)
         return counters
+
+    def _maybe_publish_stitch(
+        self, command: SynthesizeChunkCommand, counters: ChunkCounters | None
+    ) -> None:
+        """The fan-in edge (PLANS/phase-5.md §4.2). ``increment_chunks_done``
+        is an atomic ADD returning ALL_NEW, and phase-4 §8.4 guarantees each
+        chunk increments at most once -- so exactly one invocation ever
+        observes ``chunks_done == chunks_total``. That single observation is
+        the trigger; no extra read and no lock are needed.
+
+        Called from ``_increment``, whose single call site is reached from
+        **both** ``_finish_done`` and ``_finish_failed``. Publishing only
+        from the success path would mean the stitcher never fires anywhere CI
+        can see it: in local dev and every PR stack every chunk fails
+        (phase-4 §0), so the completing increment is always a *failed* one.
+
+        A raise here is deliberately NOT swallowed: the SQS message stays
+        undeleted, and the redelivery hits ``execute``'s ``STITCH_REQUEUED``
+        branch (§4.3).
+        """
+        if counters is None or not counters.is_complete:
+            return
+        self._stitch_queue.enqueue_book(user_id=command.user_id, book_id=command.book_id)
+
+    def _republish_stitch_if_complete(self, command: SynthesizeChunkCommand) -> bool:
+        book = self._book_repository.get(command.user_id, command.book_id)
+        # BookStatus.EXTRACTED only: a book already STITCHING/READY/PARTIAL
+        # has either been picked up or finished, and re-publishing would
+        # queue pointless work behind the stitcher's conditional claim.
+        if book is None or book.status is not BookStatus.EXTRACTED:
+            return False
+        if book.chunks_total == 0 or book.chunks_done < book.chunks_total:
+            return False
+        self._stitch_queue.enqueue_book(user_id=command.user_id, book_id=command.book_id)
+        return True
 
 
 def _validate_text(text: str) -> UnsynthesizableText | None:

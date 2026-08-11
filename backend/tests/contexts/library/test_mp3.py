@@ -1,6 +1,20 @@
 from __future__ import annotations
 
-from src.contexts.library.infrastructure.mp3 import mp3_duration_ms
+import pytest
+
+from src.contexts.library.infrastructure.mp3 import (
+    mp3_duration_ms,
+    mp3_duration_seconds,
+    strip_container_headers,
+)
+from tests.contexts.library.fakes import (
+    STEREO,
+    id3v2_header,
+    mpeg2_frames,
+    mpeg_frame,
+    vbri_frame,
+    xing_frame,
+)
 
 # --- Frame construction helpers (duplicate the ISO 11172-3/13818-3 formula
 # independently from mp3.py's private tables, so these tests aren't merely
@@ -172,3 +186,119 @@ def test_reserved_version_bits_are_skipped_as_false_positive_sync() -> None:
     # skipped (advance one byte) rather than raising.
     data = bytes([0xFF, 0xE0 | (0b01 << 3) | (0b01 << 1), 0x00, 0x00]) + b"\x00" * 10
     assert mp3_duration_ms(data) == 0
+
+
+# --- mp3_duration_seconds: the unrounded float (PLANS/phase-5.md §7.3) ------
+
+
+def test_mp3_duration_seconds_returns_unrounded_float() -> None:
+    """One MPEG-2 24 kHz frame is exactly 576/24000 == 0.024 s. The whole
+    point of exposing seconds is that this value is NOT pre-rounded."""
+    frame = mpeg_frame()
+    assert mp3_duration_seconds(frame) == pytest.approx(576 / 24000, abs=1e-12)
+
+
+def test_mp3_duration_seconds_is_not_a_whole_number_of_milliseconds() -> None:
+    """44.1 kHz MPEG-1 frames are 1152/44100 s == 26.1224...ms -- the exact
+    case where rounding per segment before summing accumulates drift."""
+    frame = _frame_bytes(version_bits=0b11, layer_bits=0b01, bitrate_idx=9, sample_rate_idx=0, padding=0)
+    seconds = mp3_duration_seconds(frame)
+    assert seconds * 1000 != round(seconds * 1000)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"",
+        b"not an mp3 file at all, just random bytes",
+        _frame_bytes(version_bits=0b11, layer_bits=0b01, bitrate_idx=9, sample_rate_idx=0, padding=0),
+        _frame_bytes(version_bits=0b10, layer_bits=0b01, bitrate_idx=6, sample_rate_idx=1, padding=0) * 10,
+    ],
+)
+def test_mp3_duration_ms_is_exactly_the_rounded_seconds(data: bytes) -> None:
+    """Regression guard on the refactor: mp3_duration_ms's behaviour is
+    frozen -- every phase-4 caller keeps its exact previous values."""
+    assert mp3_duration_ms(data) == round(mp3_duration_seconds(data) * 1000)
+
+
+def test_mp3_duration_seconds_returns_zero_for_garbage() -> None:
+    assert mp3_duration_seconds(b"garbage bytes here") == 0.0
+
+
+# --- strip_container_headers (PLANS/phase-5.md §7.1) ------------------------
+
+
+def test_strip_leaves_a_clean_stream_untouched() -> None:
+    data = mpeg2_frames(3)
+    stripped, sample_rate = strip_container_headers(data)
+    assert stripped == data
+    assert sample_rate == 24000
+
+
+def test_strip_removes_an_id3v2_block() -> None:
+    frames = mpeg2_frames(2)
+    stripped, sample_rate = strip_container_headers(id3v2_header(20) + frames)
+    assert stripped == frames
+    assert sample_rate == 24000
+
+
+@pytest.mark.parametrize("tag", [b"Xing", b"Info"])
+def test_strip_removes_a_leading_xing_or_info_frame(tag: bytes) -> None:
+    frames = mpeg2_frames(2)
+    stripped, _ = strip_container_headers(xing_frame(tag=tag) + frames)
+    assert stripped == frames
+
+
+def test_strip_removes_a_leading_vbri_frame() -> None:
+    frames = mpeg2_frames(2)
+    stripped, _ = strip_container_headers(vbri_frame() + frames)
+    assert stripped == frames
+
+
+def test_strip_removes_id3_and_xing_and_vbri_together() -> None:
+    frames = mpeg2_frames(4)
+    data = id3v2_header(32) + xing_frame() + vbri_frame() + frames
+    stripped, sample_rate = strip_container_headers(data)
+    assert stripped == frames
+    assert sample_rate == 24000
+
+
+def test_strip_finds_the_xing_tag_at_the_mpeg1_stereo_offset() -> None:
+    """The side-info block (and therefore the tag's offset) is 32 bytes for
+    MPEG-1 stereo vs 9 for MPEG-2 mono -- getting the table wrong would leave
+    a bogus metadata frame in the concatenated stream."""
+    header = mpeg_frame(
+        version_bits=0b11, bitrate_idx=9, sample_rate_idx=0, channel_mode=STEREO,
+        payload=b"\x00" * 32 + b"Xing" + b"\x00" * 200,
+    )
+    frames = mpeg_frame(version_bits=0b11, bitrate_idx=9, sample_rate_idx=0, channel_mode=STEREO) * 2
+    stripped, sample_rate = strip_container_headers(header + frames)
+    assert stripped == frames
+    assert sample_rate == 44100
+
+
+def test_strip_returns_empty_and_none_for_garbage() -> None:
+    assert strip_container_headers(b"nothing resembling an mp3 here") == (b"", None)
+
+
+def test_strip_returns_empty_and_none_for_a_truncated_only_frame() -> None:
+    assert strip_container_headers(mpeg_frame()[:20]) == (b"", None)
+
+
+def test_strip_reports_the_first_real_frames_sample_rate() -> None:
+    _, sample_rate = strip_container_headers(mpeg2_frames(1, sample_rate_idx=0))
+    assert sample_rate == 22050
+
+
+# --- concatenation round trip: the property the stitcher rests on ----------
+
+
+def test_concatenating_stripped_segments_sums_durations_exactly() -> None:
+    parts = [mpeg2_frames(n) for n in (3, 7, 11)]
+    stripped = [strip_container_headers(id3v2_header(16) + xing_frame() + part)[0] for part in parts]
+    concatenated = b"".join(stripped)
+
+    assert concatenated == b"".join(parts)
+    assert mp3_duration_seconds(concatenated) == pytest.approx(
+        sum(mp3_duration_seconds(part) for part in stripped), abs=1e-6
+    )

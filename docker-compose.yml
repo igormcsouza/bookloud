@@ -51,9 +51,11 @@ services:
       - AUDIO_BUCKET=bookloud-local-audio
       - MARKS_BUCKET=bookloud-local-marks
       - EXTRACT_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-extract
-      # Unused by the API today -- kept for symmetry so the three env blocks
-      # (backend/extract-worker/synthesize-worker) stay readable side by side.
+      # Unused by the API today -- kept for symmetry so the four env blocks
+      # (backend/extract-worker/synthesize-worker/stitch-worker) stay readable
+      # side by side.
       - SYNTHESIZE_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-synthesize
+      - STITCH_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-stitch
       # generate_presigned_post signs URLs against the client's own endpoint
       # (AWS_ENDPOINT_URL, i.e. http://localstack:4566 inside compose) --
       # unreachable from the browser on the host. This override makes
@@ -105,13 +107,16 @@ services:
   # Runs the same handle_records the synthesize Lambda's `handler` calls, in
   # a poll loop against LocalStack's SQS (PLANS/phase-4.md §9.2). ENVIRONMENT
   # is deliberately "local" here (not "prod"): get_speech_synthesizer() (§0)
-  # returns a StubSynthesizer, so every chunk this worker processes reaches
-  # FAILED/EXTERNAL_TTS_DISABLED deterministically. This is a *feature* for
-  # local dev, not a limitation -- `make up` + a manual upload proves the
-  # whole fan-out/claim/counter machinery in seconds, with no dependency on
-  # Microsoft's endpoint being reachable from a developer's network. No
-  # GOOGLE_TTS_SECRET_NAME here for the same reason: local dev runs the stub
-  # only, by design.
+  # never returns a real engine, so no external service is ever contacted.
+  # No GOOGLE_TTS_SECRET_NAME here for the same reason.
+  #
+  # SYNTHESIS_STUB_MODE=silent (PLANS/phase-5.md OQ-1) picks the *local,
+  # network-free* SilentSynthesizer over the raise-only StubSynthesizer, so
+  # `make up` produces real (silent) MPEG-2 frames and the phase-5 stitcher
+  # actually concatenates bytes, computes byte offsets and runs a real
+  # multipart upload against LocalStack's S3. This is the ONLY place this
+  # variable is set -- never on a PR stack, and it is ignored in prod because
+  # the environment gate is checked first regardless.
   synthesize-worker:
     build:
       context: ./backend
@@ -130,9 +135,49 @@ services:
       - MARKS_BUCKET=bookloud-local-marks
       - SYNTHESIZE_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-synthesize
       - SYNTHESIZE_MAX_RECEIVE_COUNT=5
+      # This worker is now also a StitchQueue producer: it publishes the
+      # fan-in message when its increment is the one that completes the book.
+      - STITCH_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-stitch
+      - SYNTHESIS_STUB_MODE=silent
     volumes:
       - ./backend:/app
     command: ["uv", "run", "python", "-m", "src.contexts.library.interface.local_synthesize_worker"]
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  # Runs the same handle_records the stitch Lambda's `handler` calls, in a
+  # poll loop against LocalStack's SQS (PLANS/phase-5.md §9.2). With
+  # SYNTHESIS_STUB_MODE=silent on the synthesize-worker above, this worker's
+  # steady state is a REAL stitch: it concatenates silent MPEG-2 frames into
+  # audio/<u>/<b>/book.mp3 via a real multipart upload and writes a
+  # marks/<u>/<b>/book.json with real byte offsets, ending at READY.
+  #
+  # Drop SYNTHESIS_STUB_MODE and the steady state becomes the zero-segment
+  # stitch instead -- book -> PARTIAL/NO_AUDIO with a real book.json and no
+  # book.mp3. That is the deterministic contract every PR stack gets, not a
+  # bug (PLANS/phase-5.md §3.2).
+  stitch-worker:
+    build:
+      context: ./backend
+      target: dev
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=local
+      - GIT_SHA=local
+      - LOG_LEVEL=DEBUG
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=local
+      - AWS_SECRET_ACCESS_KEY=local
+      - TABLE_NAME=bookloud-local
+      - AUDIO_BUCKET=bookloud-local-audio
+      - MARKS_BUCKET=bookloud-local-marks
+      - STITCH_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-stitch
+      - STITCH_MAX_RECEIVE_COUNT=3
+    volumes:
+      - ./backend:/app
+    command: ["uv", "run", "python", "-m", "src.contexts.library.interface.local_stitch_worker"]
     depends_on:
       localstack:
         condition: service_healthy

@@ -78,6 +78,10 @@ class BookRepository(Protocol):
         chunks_done: int | None = None,
         chunks_failed: int | None = None,
         page_count: int | None = None,
+        audio_key: str | None = None,
+        manifest_key: str | None = None,
+        audio_duration_ms: int | None = None,
+        clear_stitch_outputs: bool = False,
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
         updated_at: str | None = None,
@@ -107,6 +111,16 @@ class BookRepository(Protocol):
           re-extracting a previously-``FAILED`` book (``FAILED`` is in
           ``_CLAIMABLE_STATUSES``) leaves a stale ``chunksDone`` and the
           fan-in arithmetic is wrong forever.
+        - ``audio_key``/``manifest_key``/``audio_duration_ms`` (PLANS/
+          phase-5.md §5.3) are what the stitch Lambda's terminal transition
+          writes alongside ``READY``/``PARTIAL``.
+        - ``clear_stitch_outputs`` REMOVEs ``audioKey``/``manifestKey`` and
+          zeroes ``audioDurationMs``. Used by ``ExtractBook``'s ``EXTRACTED``
+          flip, for the same reason it resets the counters: re-extracting a
+          previously-stitched book must not leave it advertising audio for
+          text that no longer exists. ``audio_key`` together with
+          ``clear_stitch_outputs=True`` is a programming error ->
+          ``ValueError``, mirroring the ``failure_reason`` guard.
         """
         ...  # pragma: no cover
 

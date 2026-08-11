@@ -9,6 +9,7 @@ from __future__ import annotations
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
 from src.contexts.library.domain.storage import PresignedUpload
+from src.contexts.library.domain.value_objects import TERMINAL_BOOK_STATUSES
 
 
 def book_to_dict(book: Book) -> dict:
@@ -21,9 +22,64 @@ def book_to_dict(book: Book) -> dict:
         "chunksFailed": book.chunks_failed,
         "pageCount": book.page_count,
         "failureReason": book.failure_reason,
+        # Phase 5's stitch outputs, mirrored here so the book payload and the
+        # status payload can never disagree about the artefacts. These are S3
+        # keys, not URLs, deliberately: turning one into something an
+        # <audio> element can play (presigned GET vs CloudFront origin, Range
+        # support, expiry) is a phase-6 decision with phase-6 constraints
+        # (PLANS/phase-5.md OQ-3).
+        "audioKey": book.audio_key,
+        "manifestKey": book.manifest_key,
+        "audioDurationMs": book.audio_duration_ms,
         "createdAt": book.created_at,
         "updatedAt": book.updated_at,
     }
+
+
+def book_status_to_dict(book: Book) -> dict:
+    """``GET /books/{id}/status`` (PLANS/phase-5.md §8) -- deliberately a
+    separate function, not a filter over ``book_to_dict``, so the poll
+    contract can stay small and stable while the book payload grows in
+    phases 6-7.
+
+    It earns its place on exactly two server-computed fields:
+
+    - ``terminal``, over ``TERMINAL_BOOK_STATUSES``. Without it a client's
+      stop condition is ``status == "READY"``, which never fires for a
+      ``PARTIAL`` book -- i.e. for *every* book in local dev and every PR
+      environment (§3.1). Putting the closed set on the server means the
+      phase-6 poll loop, the smoke test and any future client agree by
+      construction rather than by three independent copies of a status list.
+    - ``progress.percent``, so one place decides what a zero-``chunksTotal``
+      book is rather than three clients each dividing by zero differently.
+    """
+    terminal = book.status in TERMINAL_BOOK_STATUSES
+    return {
+        "id": book.id,
+        "status": book.status.value,
+        "terminal": terminal,
+        "progress": {
+            "chunksTotal": book.chunks_total,
+            "chunksDone": book.chunks_done,
+            "chunksFailed": book.chunks_failed,
+            "percent": _percent(book.chunks_done, book.chunks_total, terminal=terminal),
+        },
+        "failureReason": book.failure_reason,
+        "audio": {
+            "audioKey": book.audio_key,
+            "manifestKey": book.manifest_key,
+            "durationMs": book.audio_duration_ms,
+        },
+        "updatedAt": book.updated_at,
+    }
+
+
+def _percent(done: int, total: int, *, terminal: bool) -> int:
+    if total == 0:
+        # A book that failed extraction has chunksTotal == 0 and must not
+        # render as a 0%-forever progress bar.
+        return 100 if terminal else 0
+    return round(100 * done / total)
 
 
 def chunk_to_dict(chunk: Chunk) -> dict:

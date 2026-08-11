@@ -14,11 +14,13 @@ from .config import Config, queue_name
 
 
 class PipelineStack(cdk.Stack):
-    """Extract/synthesize SQS queues + DLQs, the extract Lambda and its
-    S3 -> SQS trigger (phase 3), and (phase 4) the synthesize Lambda
-    attached to ``synthesize_queue`` -- fed by the extract Lambda, which is
-    also a ``SynthesisQueue`` producer (``synthesize_queue.grant_send_
-    messages(extract_fn)``).
+    """Extract/synthesize/stitch SQS queues + DLQs, the extract Lambda and
+    its S3 -> SQS trigger (phase 3), the synthesize Lambda attached to
+    ``synthesize_queue`` -- fed by the extract Lambda, which is also a
+    ``SynthesisQueue`` producer (``synthesize_queue.grant_send_messages(
+    extract_fn)``) -- and (phase 5) the stitch Lambda attached to
+    ``stitch_queue``, fed by the synthesize Lambda's fan-in edge
+    (``stitch_queue.grant_send_messages(synthesize_fn)``).
 
     ``pdf_bucket_name``/``table`` are threaded in (rather than the actual
     ``StorageStack`` constructs) so this stack can **re-import** the pdf
@@ -71,19 +73,39 @@ class PipelineStack(cdk.Stack):
             max_receive_count=Config.SYNTHESIZE_MAX_RECEIVE_COUNT,
         )
 
+        self.stitch_queue = self._queue_with_dlq(
+            "Stitch",
+            queue_name("stitch", environment),
+            # 6x the stitch Lambda's 900s timeout, the same rule extract_queue
+            # and synthesize_queue already follow -- a shorter visibility
+            # timeout would hand the same book to a second invocation
+            # mid-concatenation. The §6.4 conditional claim would catch that,
+            # but the queue should be right on its own.
+            visibility_timeout=cdk.Duration.minutes(90),
+            max_receive_count=Config.STITCH_MAX_RECEIVE_COUNT,
+        )
+
         cdk.CfnOutput(self, "ExtractQueueUrl", value=self.extract_queue.queue_url)
         cdk.CfnOutput(self, "SynthesizeQueueUrl", value=self.synthesize_queue.queue_url)
+        cdk.CfnOutput(self, "StitchQueueUrl", value=self.stitch_queue.queue_url)
 
         extract_fn = self._add_extract_lambda(
             pdf_bucket_name=pdf_bucket_name, table=table, git_sha=git_sha, environment=environment
         )
-        self._add_synthesize_lambda(
+        synthesize_fn = self._add_synthesize_lambda(
             audio_bucket=audio_bucket,
             marks_bucket=marks_bucket,
             table=table,
             git_sha=git_sha,
             environment=environment,
             google_tts_secret_name=google_tts_secret_name,
+        )
+        self._add_stitch_lambda(
+            audio_bucket=audio_bucket,
+            marks_bucket=marks_bucket,
+            table=table,
+            git_sha=git_sha,
+            environment=environment,
         )
 
         # The fan-out producer grant -- the extract Lambda publishes to
@@ -93,6 +115,13 @@ class PipelineStack(cdk.Stack):
         # synthesize -> its own queue via the ESM).
         self.synthesize_queue.grant_send_messages(extract_fn)
         extract_fn.add_environment(Config.ENV_SYNTHESIZE_QUEUE_URL, self.synthesize_queue.queue_url)
+
+        # Phase 5's equivalent, and this phase's easy-to-forget grant: the
+        # fan-IN producer. The synthesize Lambda publishes one stitch message
+        # when its increment_chunks_done is the one that observes
+        # chunksDone == chunksTotal (PLANS/phase-5.md §4.2).
+        self.stitch_queue.grant_send_messages(synthesize_fn)
+        synthesize_fn.add_environment(Config.ENV_STITCH_QUEUE_URL, self.stitch_queue.queue_url)
 
     def _add_extract_lambda(
         self, *, pdf_bucket_name: str, table: dynamodb.Table, git_sha: str, environment: str
@@ -168,7 +197,7 @@ class PipelineStack(cdk.Stack):
         git_sha: str,
         environment: str,
         google_tts_secret_name: str,
-    ) -> None:
+    ) -> lambda_.DockerImageFunction:
         backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend"))
 
         # Third function, same image -- exactly the extract Lambda's
@@ -250,6 +279,85 @@ class PipelineStack(cdk.Stack):
 
         self.synthesize_function = synthesize_fn
         cdk.CfnOutput(self, "SynthesizeFunctionName", value=synthesize_fn.function_name)
+        return synthesize_fn
+
+    def _add_stitch_lambda(
+        self,
+        *,
+        audio_bucket: s3.IBucket,
+        marks_bucket: s3.IBucket,
+        table: dynamodb.Table,
+        git_sha: str,
+        environment: str,
+    ) -> lambda_.DockerImageFunction:
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend"))
+
+        # Fourth function, same image -- DockerImageAsset's hash comes from
+        # the source dir + build args + platform, NOT from `cmd`. One ECR
+        # image, four Lambdas, four ImageConfig.Commands.
+        stitch_fn = lambda_.DockerImageFunction(
+            self,
+            "StitchFunction",
+            code=lambda_.DockerImageCode.from_image_asset(
+                backend_dir,
+                cmd=["src.contexts.library.interface.stitch_handler.handler"],
+            ),
+            # 1536 MB is NOT sized for the whole book: the multipart writer
+            # (PLANS/phase-5.md §7.4) keeps resident bytes at O(one 5 MiB
+            # part + one ~720 KB segment). The memory buys CPU for the frame
+            # scan (~1.3M frames on a 300-page book) and network bandwidth
+            # for ~330 GetObjects.
+            memory_size=1536,
+            # 900s is the Lambda maximum. Budget for a 330-chunk book: ~330
+            # GETs at ~100ms plus ~48 UploadParts plus the frame scan --
+            # comfortably inside, but there is no larger value available if
+            # it ever isn't, which is why StitchBook logs a WARNING past
+            # 300s of wall clock (OQ-5).
+            timeout=cdk.Duration.seconds(900),
+            # NO reserved_concurrent_executions here, deliberately -- do not
+            # "restore" it. Identical account-quota wall as SynthesizeFunction
+            # above: this account's total Lambda concurrency limit is 10 and
+            # AWS refuses any reservation that drops unreserved concurrency
+            # below its floor of 10, so every possible value is rejected, in
+            # prod exactly as in pr-N. The ESM's max_concurrency below is the
+            # only throttle.
+            environment={
+                Config.ENV_ENVIRONMENT: environment,
+                Config.ENV_GIT_SHA: git_sha,
+                Config.ENV_TABLE_NAME: table.table_name,
+                Config.ENV_AUDIO_BUCKET: audio_bucket.bucket_name,
+                Config.ENV_MARKS_BUCKET: marks_bucket.bucket_name,
+                Config.ENV_STITCH_QUEUE_URL: self.stitch_queue.queue_url,
+                Config.ENV_STITCH_MAX_RECEIVE_COUNT: str(Config.STITCH_MAX_RECEIVE_COUNT),
+                Config.ENV_LOG_LEVEL: "INFO",
+            },
+        )
+
+        # This is the first function that READS audio_bucket -- the
+        # synthesize Lambda deliberately only has grant_put. grant_put maps to
+        # s3:PutObject* plus s3:Abort*, which together cover
+        # CreateMultipartUpload/UploadPart/CompleteMultipartUpload/
+        # AbortMultipartUpload, so no hand-written policy document is needed.
+        audio_bucket.grant_read(stitch_fn)
+        audio_bucket.grant_put(stitch_fn)
+        marks_bucket.grant_put(stitch_fn)
+        # GetItem/Query (chunks) + UpdateItem (the claim and the terminal
+        # transition).
+        table.grant_read_write_data(stitch_fn)
+
+        stitch_fn.add_event_source(
+            lambda_event_sources.SqsEventSource(
+                self.stitch_queue,
+                # One book per invocation: a 15-minute concatenation must
+                # never share a batch with another book's.
+                batch_size=1,
+                max_concurrency=Config.STITCH_MAX_CONCURRENCY,
+            )
+        )
+
+        self.stitch_function = stitch_fn
+        cdk.CfnOutput(self, "StitchFunctionName", value=stitch_fn.function_name)
+        return stitch_fn
 
     def _queue_with_dlq(
         self, logical_id: str, name: str, *, visibility_timeout: cdk.Duration, max_receive_count: int = 3

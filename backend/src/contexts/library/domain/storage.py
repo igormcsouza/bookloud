@@ -33,6 +33,32 @@ class PdfStorage(Protocol):
     def get_bytes(self, *, key: str) -> bytes: ...  # pragma: no cover
 
 
+class MultipartWriter(Protocol):
+    """Streaming write port (PLANS/phase-5.md §7.4). Buffers until it has at
+    least the backend's minimum part size, then flushes -- so peak resident
+    bytes are ``O(one part + one segment)``, not ``O(book)``.
+
+    Why this exists rather than a ``bytearray`` + ``put_bytes``: a 300-page
+    book is ~330 chunks x ~720 KB ~= 240 MB, and materializing ``bytes(...)``
+    for a single ``put_object`` peaks near 480 MB. The failure mode would be
+    an OOM **in prod only**, on a big book, in an environment that never runs
+    an automated test -- precisely the class of bug this codebase cannot
+    catch after the fact, so it is designed out.
+
+    Used as a context manager: normal exit completes the upload, an exception
+    aborts it (no orphaned multipart parts silently accruing storage cost).
+    """
+
+    def write(self, data: bytes) -> None: ...  # pragma: no cover
+
+    def __enter__(self) -> MultipartWriter: ...  # pragma: no cover
+
+    def __exit__(self, exc_type, exc, tb) -> None: ...  # pragma: no cover
+
+    @property
+    def bytes_written(self) -> int: ...  # pragma: no cover
+
+
 class ObjectStorage(Protocol):
     """Write-side port for ``audio_bucket``/``marks_bucket`` (PLANS/
     phase-4.md §3). One adapter instance per bucket -- ``infrastructure/
@@ -43,3 +69,7 @@ class ObjectStorage(Protocol):
     def put_bytes(self, *, key: str, data: bytes, content_type: str) -> None: ...  # pragma: no cover
 
     def get_bytes(self, *, key: str) -> bytes: ...  # pragma: no cover
+
+    def open_multipart(
+        self, *, key: str, content_type: str
+    ) -> MultipartWriter: ...  # pragma: no cover

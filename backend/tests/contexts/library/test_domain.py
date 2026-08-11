@@ -6,7 +6,14 @@ import pytest
 
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
-from src.contexts.library.domain.value_objects import BookStatus, ChunkStatus
+from src.contexts.library.domain.value_objects import (
+    STITCHABLE_BOOK_STATUSES,
+    TERMINAL_BOOK_STATUSES,
+    BookStatus,
+    ChunkStatus,
+    StitchFailure,
+    SynthesisSource,
+)
 from src.shared_kernel.domain.errors import ValidationError
 
 FIXED_NOW = datetime(2026, 8, 4, 12, 0, 0, tzinfo=UTC)
@@ -157,3 +164,55 @@ def test_chunk_status_parse_accepts_every_member(member: ChunkStatus) -> None:
 def test_chunk_status_parse_rejects_unknown(bad_value: object) -> None:
     with pytest.raises(ValidationError):
         ChunkStatus.parse(bad_value)
+
+
+# --- phase 5 statuses & sets (PLANS/phase-5.md §5.2) ------------------------
+
+
+@pytest.mark.parametrize("value", ["STITCHING", "PARTIAL"])
+def test_book_status_parse_accepts_the_phase_5_values(value: str) -> None:
+    assert BookStatus.parse(value).value == value
+
+
+def test_stitchable_book_statuses_contents() -> None:
+    """Deliberately includes STITCHING itself: a stitcher that died hard
+    leaves the book there with no lease to expire, and excluding it would
+    wedge the book permanently."""
+    assert STITCHABLE_BOOK_STATUSES == (BookStatus.EXTRACTED, BookStatus.STITCHING)
+
+
+def test_terminal_book_statuses_contents() -> None:
+    assert TERMINAL_BOOK_STATUSES == (BookStatus.READY, BookStatus.PARTIAL, BookStatus.FAILED)
+
+
+def test_stitching_is_not_terminal() -> None:
+    assert BookStatus.STITCHING not in TERMINAL_BOOK_STATUSES
+
+
+def test_stitch_failure_values() -> None:
+    assert StitchFailure.NO_AUDIO.value == "NO_AUDIO"
+    assert StitchFailure.STITCH_FAILED.value == "STITCH_FAILED"
+
+
+def test_book_create_defaults_the_stitch_outputs() -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+    assert book.audio_key is None
+    assert book.manifest_key is None
+    assert book.audio_duration_ms == 0
+
+
+def test_partial_is_not_claimable_or_reissuable() -> None:
+    """PLANS/phase-5.md OQ-6 (DECIDED: leave both tuples unchanged). PARTIAL
+    must stay out of both, or a stray redelivered S3 event could wipe and
+    re-extract a book whose only problem was missing audio."""
+    from src.contexts.library.application.extraction import _CLAIMABLE_STATUSES
+    from src.contexts.library.application.use_cases import _REISSUABLE_STATUSES
+
+    assert BookStatus.PARTIAL not in _CLAIMABLE_STATUSES
+    assert BookStatus.PARTIAL not in _REISSUABLE_STATUSES
+    assert BookStatus.STITCHING not in _CLAIMABLE_STATUSES
+    assert BookStatus.STITCHING not in _REISSUABLE_STATUSES
+
+
+def test_silent_is_a_recognized_synthesis_source() -> None:
+    assert SynthesisSource.SILENT.value == "silent"

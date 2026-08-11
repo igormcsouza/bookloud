@@ -60,13 +60,25 @@ class RecordingBookRepository:
         chunks_done=None,
         chunks_failed=None,
         page_count=None,
+        audio_key=None,
+        manifest_key=None,
+        audio_duration_ms=None,
+        clear_stitch_outputs: bool = False,
         failure_reason=None,
         clear_failure_reason: bool = False,
         updated_at=None,
     ) -> None:
         self._events.append(f"update_status:{status.value}")
+        self.last_update_kwargs = {
+            "clear_stitch_outputs": clear_stitch_outputs,
+            "audio_key": audio_key,
+            "manifest_key": manifest_key,
+            "audio_duration_ms": audio_duration_ms,
+        }
         if failure_reason is not None and clear_failure_reason:
             raise ValueError("failure_reason and clear_failure_reason are mutually exclusive")
+        if audio_key is not None and clear_stitch_outputs:
+            raise ValueError("audio_key and clear_stitch_outputs are mutually exclusive")
         book = self._store.get((user_id, book_id))
         if book is None:
             raise NotFoundError("Book not found")
@@ -85,6 +97,16 @@ class RecordingBookRepository:
             book.failure_reason = failure_reason
         if clear_failure_reason:
             book.failure_reason = None
+        if audio_key is not None:
+            book.audio_key = audio_key
+        if manifest_key is not None:
+            book.manifest_key = manifest_key
+        if audio_duration_ms is not None:
+            book.audio_duration_ms = audio_duration_ms
+        if clear_stitch_outputs:
+            book.audio_key = None
+            book.manifest_key = None
+            book.audio_duration_ms = 0
         if updated_at is not None:
             book.updated_at = updated_at
 
@@ -508,3 +530,31 @@ def test_requeued_branch_does_not_fire_when_chunks_total_is_zero(book_repo, chun
     assert result.outcome == "SKIPPED"
     assert result.reason == "ALREADY_CLAIMED"
     assert synthesis_queue.calls == []
+
+
+def test_extracted_flip_clears_stale_stitch_outputs() -> None:
+    """PLANS/phase-5.md §5.3: re-extracting a previously-stitched book must
+    not leave it advertising an audioKey/manifestKey pointing at audio for
+    text that no longer exists."""
+    events: list[str] = []
+    book_repo = RecordingBookRepository(events)
+    chunk_repo = RecordingChunkRepository(events)
+    book = _seed_book(book_repo)
+    book.audio_key = "audio/user-1/book-1/book.mp3"
+    book.manifest_key = "marks/user-1/book-1/book.json"
+    book.audio_duration_ms = 1418240
+
+    use_case = ExtractBook(
+        book_repo,
+        chunk_repo,
+        FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"}),
+        FakeExtractor(document=_document("A" * 300)),
+        FixedClock(),
+        FakeSynthesisQueue(),
+    )
+    use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    assert book_repo.last_update_kwargs["clear_stitch_outputs"] is True
+    assert book.audio_key is None
+    assert book.manifest_key is None
+    assert book.audio_duration_ms == 0

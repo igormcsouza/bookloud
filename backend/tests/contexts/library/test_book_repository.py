@@ -6,7 +6,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from src.contexts.library.domain.book import Book
-from src.contexts.library.domain.value_objects import BookStatus
+from src.contexts.library.domain.value_objects import STITCHABLE_BOOK_STATUSES, BookStatus
 from src.contexts.library.infrastructure.dynamodb_book_repository import (
     DynamoDbBookRepository,
 )
@@ -366,3 +366,123 @@ def test_update_status_resets_chunks_done_and_chunks_failed(book_repo) -> None:
     assert fetched.chunks_done == 0
     assert fetched.chunks_failed == 0
     assert fetched.chunks_total == 3
+
+
+# --- phase 5: stitch outputs (PLANS/phase-5.md §5.3) ------------------------
+
+
+def test_update_status_writes_all_three_stitch_outputs(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+
+    book_repo.update_status(
+        "user-1",
+        "book-1",
+        BookStatus.READY,
+        audio_key="audio/user-1/book-1/book.mp3",
+        manifest_key="marks/user-1/book-1/book.json",
+        audio_duration_ms=1418240,
+    )
+
+    book = book_repo.get("user-1", "book-1")
+    assert book.status is BookStatus.READY
+    assert book.audio_key == "audio/user-1/book-1/book.mp3"
+    assert book.manifest_key == "marks/user-1/book-1/book.json"
+    assert book.audio_duration_ms == 1418240
+
+
+def test_clear_stitch_outputs_removes_both_keys_and_zeroes_the_duration(
+    book_repo, dynamodb_table
+) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status(
+        "user-1", "book-1", BookStatus.READY,
+        audio_key="audio/user-1/book-1/book.mp3",
+        manifest_key="marks/user-1/book-1/book.json",
+        audio_duration_ms=999,
+    )
+
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, clear_stitch_outputs=True)
+
+    book = book_repo.get("user-1", "book-1")
+    assert book.audio_key is None
+    assert book.manifest_key is None
+    assert book.audio_duration_ms == 0
+    # Absent, not NULL -- matching failureReason's existing treatment.
+    item = dynamodb_table.get_item(Key={"PK": "USER#user-1", "SK": "BOOK#book-1"})["Item"]
+    assert "audioKey" not in item
+    assert "manifestKey" not in item
+
+
+def test_clear_stitch_outputs_and_clear_failure_reason_together_emit_one_valid_expression(
+    book_repo, dynamodb_table
+) -> None:
+    """THE merged-REMOVE trap (PLANS/phase-5.md §5.3): a single
+    UpdateExpression may combine SET and REMOVE, but the REMOVE keyword may
+    appear only once. Emitting it twice is a runtime ValidationException that
+    no other test would catch -- this is exactly the re-extraction call."""
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status(
+        "user-1", "book-1", BookStatus.PARTIAL,
+        audio_key="audio/user-1/book-1/book.mp3",
+        manifest_key="marks/user-1/book-1/book.json",
+        failure_reason="NO_AUDIO",
+    )
+
+    book_repo.update_status(
+        "user-1",
+        "book-1",
+        BookStatus.EXTRACTED,
+        chunks_total=3,
+        chunks_done=0,
+        chunks_failed=0,
+        clear_stitch_outputs=True,
+        clear_failure_reason=True,
+    )
+
+    item = dynamodb_table.get_item(Key={"PK": "USER#user-1", "SK": "BOOK#book-1"})["Item"]
+    assert "audioKey" not in item
+    assert "manifestKey" not in item
+    assert "failureReason" not in item
+    assert int(item["audioDurationMs"]) == 0
+    assert int(item["chunksTotal"]) == 3
+
+
+@pytest.mark.parametrize("kwargs", [{"audio_key": "a"}, {"manifest_key": "m"}])
+def test_setting_a_stitch_key_together_with_clear_stitch_outputs_raises_value_error(
+    book_repo, kwargs: dict
+) -> None:
+    with pytest.raises(ValueError):
+        book_repo.update_status(
+            "user-1", "book-1", BookStatus.READY, clear_stitch_outputs=True, **kwargs
+        )
+
+
+@pytest.mark.parametrize("current", [BookStatus.EXTRACTED, BookStatus.STITCHING])
+def test_stitchable_statuses_claim_succeeds_from_extracted_and_stitching(
+    book_repo, current: BookStatus
+) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", current)
+
+    book_repo.update_status(
+        "user-1", "book-1", BookStatus.STITCHING, expected_statuses=STITCHABLE_BOOK_STATUSES
+    )
+
+    assert book_repo.get("user-1", "book-1").status is BookStatus.STITCHING
+
+
+def test_stitchable_statuses_claim_conflicts_from_ready(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    book_repo.update_status("user-1", "book-1", BookStatus.READY)
+
+    with pytest.raises(ConflictError):
+        book_repo.update_status(
+            "user-1", "book-1", BookStatus.STITCHING, expected_statuses=STITCHABLE_BOOK_STATUSES
+        )
+
+
+def test_stitchable_statuses_claim_not_found_when_book_absent(book_repo) -> None:
+    with pytest.raises(NotFoundError):
+        book_repo.update_status(
+            "user-1", "ghost", BookStatus.STITCHING, expected_statuses=STITCHABLE_BOOK_STATUSES
+        )
