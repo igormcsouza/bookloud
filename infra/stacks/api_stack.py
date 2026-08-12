@@ -141,17 +141,45 @@ class ApiStack(cdk.Stack):
         # `.github/workflows/destroy-pr.yml`'s bounded DELETE_FAILED retry is
         # the other half of the mitigation.
         #
-        # `ANY` matches every method INCLUDING OPTIONS, which the enumerated
-        # list deliberately excluded so CORS preflights would fall through to
-        # API Gateway's built-in auto-response and bypass the authorizer.
-        # That exclusion is preserved a different way and MUST stay preserved:
-        # HttpApi's cors_preflight (configured above) makes API Gateway answer
-        # OPTIONS itself *before* route matching, so a preflight never reaches
-        # these routes and never reaches the JWT authorizer. Were that ever
-        # removed, `ANY /{proxy+}` would send preflights to the authorizer,
-        # which 401s them for lack of an Authorization header -- and every
-        # cross-origin request from the browser would break.
+        # `ANY` matches every method INCLUDING OPTIONS -- and that is why the
+        # authorized catch-all below does NOT use it.
+        #
+        # An earlier revision of this phase collapsed `/{proxy+}` to `ANY`
+        # too, on the assumption that HttpApi's cors_preflight (configured
+        # above) makes API Gateway answer OPTIONS *before* route matching.
+        # THAT ASSUMPTION IS FALSE. A matched route takes precedence over the
+        # automatic CORS response, so every preflight went to the JWT
+        # authorizer and came back 401, and the browser then refused every
+        # cross-origin request. Measured against the deployed pr-7 API:
+        #
+        #   $ curl -i -X OPTIONS .../books -H 'Origin: https://…cloudfront.net' \
+        #       -H 'Access-Control-Request-Method: GET'
+        #   HTTP/2 401
+        #   www-authenticate: Bearer
+        #   {"message":"Unauthorized"}
+        #
+        # Nothing caught it before `deploy-pr`: local compose talks to FastAPI
+        # directly (its CORSMiddleware answers preflights), so API Gateway is
+        # never in the loop, and no unit test exercises a real browser.
+        #
+        # So the authorized path keeps its enumerated methods, deliberately
+        # WITHOUT OPTIONS, which is what lets a preflight fall through to the
+        # built-in auto-response and bypass the authorizer. Do not "simplify"
+        # this to ANY.
+        #
+        # The public paths still use ANY: they carry no authorizer, so an
+        # OPTIONS that matches them reaches the Lambda and FastAPI's
+        # CORSMiddleware answers it correctly. Route count is 4 + 5 = 9 rather
+        # than the original 25, so most of the teardown mitigation survives
+        # (see the note above and destroy-pr.yml's retry for the other half).
         any_method = [apigwv2.HttpMethod.ANY]
+        authorized_methods = [
+            apigwv2.HttpMethod.GET,
+            apigwv2.HttpMethod.HEAD,
+            apigwv2.HttpMethod.POST,
+            apigwv2.HttpMethod.PUT,
+            apigwv2.HttpMethod.DELETE,
+        ]
 
         authorizer = apigwv2_authorizers.HttpUserPoolAuthorizer(
             "CognitoAuthorizer",
@@ -177,7 +205,7 @@ class ApiStack(cdk.Stack):
 
         http_api.add_routes(
             path="/{proxy+}",
-            methods=any_method,
+            methods=authorized_methods,
             integration=integration,
             authorizer=authorizer,
         )

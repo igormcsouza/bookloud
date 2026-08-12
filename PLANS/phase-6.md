@@ -943,6 +943,32 @@ projects: [
 >    teardown provokes the failure. Verify the authorizer/no-authorizer split still holds per route —
 >    the four public paths must keep `HttpNoneAuthorizer` and `/{proxy+}` must keep the Cognito
 >    authorizer. Update `infra/tests/test_synth.py`'s route assertions accordingly.
+> **CORRECTION (PR #7, after the first `deploy-pr` run): item 1 above over-reached and broke CORS.**
+> Collapsing `/{proxy+}` to `ANY` was wrong, because `ANY` matches `OPTIONS` and **a matched route takes
+> precedence over HttpApi's automatic `cors_preflight` response** -- the opposite of what the
+> implementation's comment assumed. Every browser preflight went to the JWT authorizer and returned 401,
+> so the browser refused every cross-origin request and all three `chromium` specs failed with two
+> "Failed to fetch" alerts on screen. Measured against the deployed pr-7 API:
+>
+> ```
+> $ curl -i -X OPTIONS .../books -H 'Origin: https://…cloudfront.net' \
+>       -H 'Access-Control-Request-Method: GET'
+> HTTP/2 401
+> www-authenticate: Bearer
+> {"message":"Unauthorized"}
+> ```
+>
+> Nothing short of a real browser against a real deploy could have caught it: local compose talks to
+> FastAPI directly, whose `CORSMiddleware` answers preflights, so API Gateway is never in the loop.
+> This is precisely the value OQ-2 was approved for.
+>
+> **Fixed shape: 9 routes.** `ANY` on the four public paths (no authorizer, so a preflight that reaches
+> FastAPI is answered correctly), and enumerated `GET/HEAD/POST/PUT/DELETE` -- deliberately **without**
+> `OPTIONS` -- on `/{proxy+}`, which is what lets preflights fall through to the built-in auto-response
+> and bypass the authorizer. Still down from 25, so most of the teardown mitigation survives.
+> `test_api_stack_no_authorized_route_matches_options` now asserts the property that actually matters:
+> no route carrying an authorizer may match OPTIONS.
+
 > 2. **`.github/workflows/destroy-pr.yml`: a bounded retry on `DELETE_FAILED`.** Re-issue
 >    `delete-stack` up to 3 times with a **meaningful** back-off (~60s, 180s, 300s), and **only** for a
 >    stack in `DELETE_FAILED`. The back-off length is deliberate: pr-6's stack deleted cleanly on a plain

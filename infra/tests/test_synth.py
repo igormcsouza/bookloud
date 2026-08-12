@@ -652,16 +652,17 @@ def test_api_stack_synthesizes(environment: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_api_stack_uses_one_any_route_per_path(environment: str) -> None:
-    """PLANS/phase-6.md §16's addendum. Five paths, five routes -- not
-    5 x 5 = 25 enumerated per-method routes.
+def test_api_stack_route_shape(environment: str) -> None:
+    """PLANS/phase-6.md §16's addendum, as corrected after PR #7.
 
-    This is a teardown fix, not a runtime one: two of the last three
-    `destroy-pr` runs failed with HttpApiCognitoAuthorizer returning
-    `InternalFailure` on delete, stranding four pr-N stacks each time. The
-    failure is transient (both pr-4 and pr-6 deleted cleanly on retry with no
-    code change) and has no observable service-side cause, so the mitigation
-    is to provoke it 5x less hard and to retry it in destroy-pr.yml."""
+    9 routes, not the original 25: `ANY` on the four public paths, and
+    enumerated methods on the authorized catch-all. The route reduction is a
+    teardown mitigation -- two of the last three `destroy-pr` runs failed
+    with HttpApiCognitoAuthorizer returning `InternalFailure` on delete,
+    stranding four pr-N stacks each time; the failure is transient (both pr-4
+    and pr-6 deleted cleanly on retry, no code change) with no observable
+    service-side cause, so we provoke it less hard and retry it in
+    destroy-pr.yml."""
     template = _synth_api_stack(environment)
 
     routes = template.find_resources("AWS::ApiGatewayV2::Route")
@@ -672,9 +673,46 @@ def test_api_stack_uses_one_any_route_per_path(environment: str) -> None:
         "ANY /health",
         "ANY /openapi.json",
         "ANY /redoc",
-        "ANY /{proxy+}",
+        "DELETE /{proxy+}",
+        "GET /{proxy+}",
+        "HEAD /{proxy+}",
+        "POST /{proxy+}",
+        "PUT /{proxy+}",
     ]
-    template.resource_count_is("AWS::ApiGatewayV2::Route", 5)
+    template.resource_count_is("AWS::ApiGatewayV2::Route", 9)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_no_authorized_route_matches_options(environment: str) -> None:
+    """The regression test for the CORS outage on PR #7.
+
+    `ANY /{proxy+}` matched OPTIONS, and a matched route takes precedence
+    over HttpApi's automatic cors_preflight response -- so every browser
+    preflight hit the JWT authorizer and came back 401, and the browser then
+    refused every cross-origin request. Measured against the deployed pr-7
+    API before the fix:
+
+        HTTP/2 401
+        www-authenticate: Bearer
+        {"message":"Unauthorized"}
+
+    Nothing else catches this. Local compose talks to FastAPI directly, whose
+    CORSMiddleware answers preflights, so API Gateway is never in the loop;
+    only a real browser against a real deploy sees it. Hence an explicit
+    assertion on the property that actually matters: no route carrying an
+    authorizer may match an OPTIONS request."""
+    template = _synth_api_stack(environment)
+
+    for route in template.find_resources("AWS::ApiGatewayV2::Route").values():
+        props = route["Properties"]
+        if props["AuthorizationType"] == "NONE":
+            continue  # public: a preflight reaching FastAPI is answered fine
+        method = props["RouteKey"].split(" ", 1)[0]
+        assert method not in ("ANY", "OPTIONS"), (
+            f"{props['RouteKey']} is authorized and matches OPTIONS -- CORS "
+            f"preflights will 401 and every cross-origin request will fail"
+        )
 
 
 @pytest.mark.docker
@@ -692,7 +730,7 @@ def test_api_stack_jwt_authorizer(environment: str) -> None:
     routes = template.find_resources("AWS::ApiGatewayV2::Route")
     by_key = {r["Properties"]["RouteKey"]: r["Properties"] for r in routes.values()}
 
-    proxy_route = by_key["ANY /{proxy+}"]
+    proxy_route = by_key["GET /{proxy+}"]
     assert proxy_route["AuthorizationType"] == "JWT"
     assert "AuthorizerId" in proxy_route
 
