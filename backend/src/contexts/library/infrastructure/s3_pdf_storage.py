@@ -6,28 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import boto3
 from botocore.exceptions import ClientError
 
-from src.config import settings
 from src.contexts.library.domain.storage import DEFAULT_EXPIRES_IN, MAX_UPLOAD_BYTES, PresignedUpload
+from src.contexts.library.infrastructure.s3_client import public_s3_client
 from src.shared_kernel.domain.errors import NotFoundError
 
 _CONTENT_TYPE = "application/pdf"
-
-
-def _build_client() -> Any:
-    # PLANS/phase-3.md §9.4: generate_presigned_post signs URLs against the
-    # client's own endpoint, so inside docker-compose that would produce
-    # http://localstack:4566/... -- unreachable from the browser/host.
-    # s3_public_endpoint_url is the host-reachable override for local dev;
-    # falls back to aws_endpoint_url (also unset in real AWS, where boto3
-    # resolves the real regional endpoint).
-    endpoint = settings.s3_public_endpoint_url or settings.aws_endpoint_url or None
-    kwargs: dict[str, Any] = {}
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    return boto3.client("s3", **kwargs)
 
 
 class S3PdfStorage:
@@ -42,7 +27,11 @@ class S3PdfStorage:
         self._bucket = bucket
         self._expires_in = expires_in
         self._max_bytes = max_bytes
-        self._client = client if client is not None else _build_client()
+        # PLANS/phase-6.md §4.2: promoted to infrastructure/s3_client.py so
+        # the presigned *download* (S3AudioDelivery) cannot drift from the
+        # presigned *upload* on the one setting that makes either reachable
+        # from a browser.
+        self._client = client if client is not None else public_s3_client()
 
     def presigned_upload(self, *, key: str) -> PresignedUpload:
         # The key is pinned exactly (no `${filename}`, no `starts-with`

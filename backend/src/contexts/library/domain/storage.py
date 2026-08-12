@@ -17,6 +17,14 @@ from typing import Protocol
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_EXPIRES_IN = 15 * 60
 
+# PLANS/phase-6.md §3.3/OQ-3. One hour, and the client must never treat it as
+# a guarantee: a URL presigned with the Lambda role's *temporary* credentials
+# is void the moment those credentials expire, whatever ``ExpiresIn`` says.
+# The real mechanism is the frontend's reactive refresh on the ``<audio>``
+# ``error`` event; this constant only decides how often that path runs, which
+# is why a longer window is not a substitute for it.
+AUDIO_URL_EXPIRES_IN = 3600
+
 
 @dataclass(frozen=True)
 class PresignedUpload:
@@ -25,6 +33,35 @@ class PresignedUpload:
     key: str
     expires_in: int
     max_bytes: int
+
+
+@dataclass(frozen=True)
+class PresignedDownload:
+    """A browser-fetchable, self-authenticating GET (PLANS/phase-6.md §3).
+
+    ``<audio src=...>`` issues a plain browser GET that cannot carry an
+    ``Authorization`` header, and ``ApiStack`` guards ``/{proxy+}`` with a
+    Cognito authorizer reading exactly that header -- so the media request
+    has to authenticate by URL or not at all. Proxying the bytes through the
+    API is not an alternative but an impossibility: Lambda's response payload
+    cap is 6 MB and a 300-page book is ~240 MB (§3.2).
+    """
+
+    url: str
+    expires_in: int
+
+
+class AudioDelivery(Protocol):
+    """Read-side delivery port (PLANS/phase-6.md §3/§4.2).
+
+    Deliberately **not** a method on ``ObjectStorage``: that port is the
+    *workers'* write side, and its only two consumers (synthesize, stitch)
+    must never learn how to mint a browser-fetchable URL.
+    """
+
+    def presigned_download(
+        self, *, key: str, expires_in: int = AUDIO_URL_EXPIRES_IN
+    ) -> PresignedDownload: ...  # pragma: no cover
 
 
 class PdfStorage(Protocol):

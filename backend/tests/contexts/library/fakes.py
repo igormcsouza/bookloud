@@ -8,8 +8,28 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from src.contexts.library.domain.storage import AUDIO_URL_EXPIRES_IN, PresignedDownload
 from src.contexts.library.domain.synthesis import SynthesizedAudio
 from src.shared_kernel.domain.errors import NotFoundError
+
+
+class FakeAudioDelivery:
+    """Satisfies ``AudioDelivery`` (PLANS/phase-6.md §4.2). Records every
+    ``(key, expires_in)`` so a test can assert *which* key was presigned --
+    the book's stitched ``book.mp3`` versus a chunk's own file -- without
+    parsing a signature."""
+
+    def __init__(self, *, base_url: str = "https://s3.example/signed") -> None:
+        self._base_url = base_url
+        self.calls: list[dict] = []
+
+    def presigned_download(
+        self, *, key: str, expires_in: int = AUDIO_URL_EXPIRES_IN
+    ) -> PresignedDownload:
+        self.calls.append({"key": key, "expires_in": expires_in})
+        return PresignedDownload(
+            url=f"{self._base_url}/{key}?X-Amz-Signature=fake", expires_in=expires_in
+        )
 
 
 class FakeSynthesizer:

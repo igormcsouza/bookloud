@@ -6,12 +6,16 @@ import pytest
 
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.chunk import Chunk
-from src.contexts.library.domain.storage import PresignedUpload
+from src.contexts.library.application.delivery import AudioUrl
+from src.contexts.library.application.resynthesis import ResynthesizeBookResult
+from src.contexts.library.domain.storage import PresignedDownload, PresignedUpload
 from src.contexts.library.domain.value_objects import BookStatus
 from src.contexts.library.interface.schemas import (
+    audio_url_to_dict,
     book_status_to_dict,
     book_to_dict,
     chunk_to_dict,
+    resynthesis_to_dict,
     upload_to_dict,
 )
 
@@ -201,3 +205,65 @@ def test_progress_percent(done: int, total: int, status: BookStatus, expected: i
     book.chunks_total = total
     book.chunks_done = done
     assert book_status_to_dict(book)["progress"]["percent"] == expected
+
+
+# --- phase 6 (PLANS/phase-6.md §4.3/§5.3, §13.2) ------------------------------
+
+
+def test_audio_url_to_dict_keys() -> None:
+    audio = AudioUrl(
+        download=PresignedDownload(url="https://s3.example/k?X-Amz-Signature=abc", expires_in=3600),
+        duration_ms=1418240,
+    )
+
+    assert audio_url_to_dict(audio) == {
+        "url": "https://s3.example/k?X-Amz-Signature=abc",
+        "expiresIn": 3600,
+        "durationMs": 1418240,
+        "contentType": "audio/mpeg",
+    }
+
+
+def test_resynthesis_to_dict_nests_the_exact_status_payload() -> None:
+    """`book` must be book_status_to_dict's output verbatim -- the client
+    drops it straight into its poll state, so any divergence would make the
+    reader briefly disagree with the endpoint it is about to poll."""
+    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+    book.status = BookStatus.EXTRACTED
+    book.chunks_total = 5
+    book.chunks_done = 3
+    result = ResynthesizeBookResult(retried_chunks=2, republished_stitch=False)
+
+    payload = resynthesis_to_dict(result, book)
+
+    assert payload["retriedChunks"] == 2
+    assert payload["republishedStitch"] is False
+    assert payload["book"] == book_status_to_dict(book)
+    assert payload["book"]["terminal"] is False
+
+
+def test_resynthesis_to_dict_reports_the_republished_stitch_branch() -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+    result = ResynthesizeBookResult(retried_chunks=0, republished_stitch=True)
+
+    payload = resynthesis_to_dict(result, book)
+
+    assert payload["retriedChunks"] == 0
+    assert payload["republishedStitch"] is True
+
+
+def test_audio_url_expiry_constant_is_one_hour() -> None:
+    """PLANS/phase-6.md OQ-3. A longer window is not a substitute for the
+    client's reactive refresh: a URL signed with the Lambda role's
+    *temporary* credentials dies when those do, whatever ExpiresIn says."""
+    from src.contexts.library.domain.storage import AUDIO_URL_EXPIRES_IN
+
+    assert AUDIO_URL_EXPIRES_IN == 3600
+
+
+def test_presigned_download_shape() -> None:
+    download = PresignedDownload(url="https://s3.example/k", expires_in=120)
+
+    assert (download.url, download.expires_in) == ("https://s3.example/k", 120)
+    with pytest.raises(Exception):
+        download.url = "mutated"  # type: ignore[misc]

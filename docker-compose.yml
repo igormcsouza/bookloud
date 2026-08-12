@@ -51,15 +51,21 @@ services:
       - AUDIO_BUCKET=bookloud-local-audio
       - MARKS_BUCKET=bookloud-local-marks
       - EXTRACT_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-extract
-      # Unused by the API today -- kept for symmetry so the four env blocks
-      # (backend/extract-worker/synthesize-worker/stitch-worker) stay readable
-      # side by side.
+      # Used by the API as of phase 6: POST /books/{id}/resynthesize publishes
+      # the fan-out for the chunks it rewinds, and publishes directly to the
+      # stitch queue in the zero-failed-chunk (STITCH_FAILED) branch, where no
+      # chunk will ever increment again. (These were previously here "for
+      # symmetry"; they are load-bearing now.)
       - SYNTHESIZE_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-synthesize
       - STITCH_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-stitch
       # generate_presigned_post signs URLs against the client's own endpoint
       # (AWS_ENDPOINT_URL, i.e. http://localstack:4566 inside compose) --
       # unreachable from the browser on the host. This override makes
-      # presigned upload URLs host-reachable (PLANS/phase-3.md §9.4).
+      # presigned upload URLs host-reachable (PLANS/phase-3.md §9.4) -- and,
+      # as of phase 6, presigned *download* URLs too: GET /books/{id}/audio
+      # signs with the same client, and the failure mode is silent (the URL is
+      # well-formed and correctly signed, the browser just cannot connect).
+      # See PLANS/phase-6.md §4.2.
       - S3_PUBLIC_ENDPOINT_URL=http://localhost:4566
       # Used only by local/cognito_bootstrap.py (run inside this container --
       # it already has boto3), not by the app itself: the backend never

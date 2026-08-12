@@ -417,3 +417,370 @@ def test_get_book_status_for_a_nonexistent_book_returns_404(authed_app_client) -
 
 def test_get_book_status_anonymous_returns_401(app_client) -> None:
     assert app_client.get("/books/book-1/status").status_code == 401
+
+
+# --- phase 6: audio delivery (PLANS/phase-6.md §4.3, §13.2) --------------------
+
+AUDIO_BUCKET = "bookloud-test-audio"
+MARKS_BUCKET = "bookloud-test-marks"
+MANIFEST_DOC = b'{"version":1,"bookId":"book-1","durationMs":4200,"segments":[],"missing":[0]}'
+MARKS_DOC = b'{"version":1,"chunkIndex":1,"words":[{"t":0,"d":10,"s":0,"e":3,"w":"The"}]}'
+
+
+@pytest.fixture
+def audio_buckets(dynamodb_table, monkeypatch: pytest.MonkeyPatch):
+    """Real (moto) S3 buckets behind ``settings.audio_bucket``/
+    ``settings.marks_bucket``, mirroring the ``pdf_bucket`` fixture. The
+    delivery routes build ``S3AudioDelivery``/``S3ObjectStorage`` per request,
+    so no ``dependency_overrides`` are needed."""
+    import src.config as config
+
+    monkeypatch.setattr(config.settings, "audio_bucket", AUDIO_BUCKET)
+    monkeypatch.setattr(config.settings, "marks_bucket", MARKS_BUCKET)
+    client = boto3.client("s3", region_name="us-east-1")
+    client.create_bucket(Bucket=AUDIO_BUCKET)
+    client.create_bucket(Bucket=MARKS_BUCKET)
+    return client
+
+
+def _seed_stitched_book(dynamodb_table, s3, *, with_marks: bool = True):
+    """A READY book with a stitched book.mp3, a manifest and one DONE chunk
+    carrying its own audio/marks."""
+    from src.contexts.library.domain.value_objects import ChunkStatus
+
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    chunk_repo = _chunk_repo(dynamodb_table)
+    seed_chunks(chunk_repo, book_id="book-1", user_id=CLAIMS["sub"], count=3)
+
+    audio_key = f"audio/{CLAIMS['sub']}/book-1/book.mp3"
+    manifest_key = f"marks/{CLAIMS['sub']}/book-1/book.json"
+    chunk_audio_key = f"audio/{CLAIMS['sub']}/book-1/000001.mp3"
+    chunk_marks_key = f"marks/{CLAIMS['sub']}/book-1/000001.json"
+
+    s3.put_object(Bucket=AUDIO_BUCKET, Key=audio_key, Body=b"\xff\xf3\x00\x00")
+    s3.put_object(Bucket=MARKS_BUCKET, Key=manifest_key, Body=MANIFEST_DOC)
+    if with_marks:
+        s3.put_object(Bucket=MARKS_BUCKET, Key=chunk_marks_key, Body=MARKS_DOC)
+
+    chunk_repo.update_status(
+        "book-1",
+        1,
+        ChunkStatus.DONE,
+        audio_key=chunk_audio_key,
+        marks_key=chunk_marks_key if with_marks else None,
+        duration_ms=1500,
+    )
+    repo.update_status(
+        CLAIMS["sub"],
+        "book-1",
+        BookStatus.READY,
+        chunks_total=3,
+        chunks_done=3,
+        audio_key=audio_key,
+        manifest_key=manifest_key,
+        audio_duration_ms=4200,
+    )
+
+
+def _chunk_repo(dynamodb_table):
+    from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
+        DynamoDbChunkRepository,
+    )
+
+    return DynamoDbChunkRepository(table=dynamodb_table)
+
+
+def test_get_book_audio_returns_a_presigned_url(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+
+    response = authed_app_client.get("/books/book-1/audio")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert sorted(body) == ["contentType", "durationMs", "expiresIn", "url"]
+    assert "X-Amz-Signature=" in body["url"]
+    assert body["expiresIn"] == 3600
+    # From the DynamoDB row, never from the file (PLANS/phase-5.md §7.1).
+    assert body["durationMs"] == 4200
+    assert body["contentType"] == "audio/mpeg"
+
+
+def test_get_book_audio_without_audio_returns_409(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    """The everyday state of every non-prod environment (phase-4 §0)."""
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id=CLAIMS["sub"])
+    assert authed_app_client.get("/books/book-1/audio").status_code == 409
+
+
+def test_get_book_audio_for_another_users_book_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id="someone-else")
+    assert authed_app_client.get("/books/book-1/audio").status_code == 404
+
+
+def test_get_book_audio_anonymous_returns_401(app_client) -> None:
+    assert app_client.get("/books/book-1/audio").status_code == 401
+
+
+def test_get_chunk_audio_returns_a_presigned_url(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+
+    response = authed_app_client.get("/books/book-1/chunks/1/audio")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "X-Amz-Signature=" in body["url"]
+    assert "000001.mp3" in body["url"]
+    assert body["durationMs"] == 1500
+
+
+def test_get_chunk_audio_without_audio_returns_409(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+    # Chunk 0 never synthesized.
+    assert authed_app_client.get("/books/book-1/chunks/0/audio").status_code == 409
+
+
+def test_get_chunk_audio_for_a_missing_chunk_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+    assert authed_app_client.get("/books/book-1/chunks/99/audio").status_code == 404
+
+
+def test_get_chunk_audio_for_another_users_book_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id="someone-else")
+    assert authed_app_client.get("/books/book-1/chunks/1/audio").status_code == 404
+
+
+def test_get_chunk_audio_anonymous_returns_401(app_client) -> None:
+    assert app_client.get("/books/book-1/chunks/1/audio").status_code == 401
+
+
+def test_get_book_manifest_returns_the_object_verbatim(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+
+    response = authed_app_client.get("/books/book-1/manifest")
+
+    assert response.status_code == 200
+    # Byte-for-byte: the document is the contract (PLANS/phase-5.md §7.2).
+    assert response.content == MANIFEST_DOC
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["cache-control"] == "private, max-age=3600"
+
+
+def test_get_book_manifest_without_a_manifest_key_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id=CLAIMS["sub"])
+    assert authed_app_client.get("/books/book-1/manifest").status_code == 404
+
+
+def test_get_book_manifest_with_the_object_deleted_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    """A PR bucket torn down under a still-open tab -- "text only, no audio",
+    not a crash (§9's degradation table)."""
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+    audio_buckets.delete_object(
+        Bucket=MARKS_BUCKET, Key=f"marks/{CLAIMS['sub']}/book-1/book.json"
+    )
+    assert authed_app_client.get("/books/book-1/manifest").status_code == 404
+
+
+def test_get_book_manifest_for_another_users_book_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id="someone-else")
+    assert authed_app_client.get("/books/book-1/manifest").status_code == 404
+
+
+def test_get_book_manifest_anonymous_returns_401(app_client) -> None:
+    assert app_client.get("/books/book-1/manifest").status_code == 401
+
+
+def test_get_chunk_marks_returns_the_object_verbatim(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+
+    response = authed_app_client.get("/books/book-1/chunks/1/marks")
+
+    assert response.status_code == 200
+    assert response.content == MARKS_DOC
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["cache-control"] == "private, max-age=86400"
+
+
+def test_get_chunk_marks_without_a_marks_key_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    """The normal case for every chunk in a PR environment -- which is why
+    the client negatively caches it instead of retrying."""
+    _seed_stitched_book(dynamodb_table, audio_buckets)
+    assert authed_app_client.get("/books/book-1/chunks/0/marks").status_code == 404
+
+
+def test_get_chunk_marks_for_another_users_book_returns_404(
+    authed_app_client, audio_buckets, dynamodb_table
+) -> None:
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id="someone-else")
+    assert authed_app_client.get("/books/book-1/chunks/1/marks").status_code == 404
+
+
+def test_get_chunk_marks_anonymous_returns_401(app_client) -> None:
+    assert app_client.get("/books/book-1/chunks/1/marks").status_code == 401
+
+
+# --- phase 6: POST /books/{id}/resynthesize (PLANS/phase-6.md §5) --------------
+
+
+@pytest.fixture
+def fake_queues(dynamodb_table):
+    """Recording fakes behind the two SQS providers.
+
+    The one place in this file that needs ``dependency_overrides``: every
+    other adapter is pointed at moto by monkeypatching a *setting*, but SQS
+    has no URL to point anywhere -- ``api_stack.py`` grants the API Lambda
+    ``sqs:SendMessage`` on both real queues this phase, and there is nothing
+    for moto to intercept without one. Overriding the provider also lets the
+    test assert the exact published payload, which is the part that matters."""
+    from src.contexts.library.interface.dependencies import (
+        get_stitch_queue,
+        get_synthesis_queue,
+    )
+    from src.main import app
+    from tests.contexts.library.fakes import FakeStitchQueue, FakeSynthesisQueue
+
+    synthesis, stitch = FakeSynthesisQueue(), FakeStitchQueue()
+    app.dependency_overrides[get_synthesis_queue] = lambda: synthesis
+    app.dependency_overrides[get_stitch_queue] = lambda: stitch
+    try:
+        yield synthesis, stitch
+    finally:
+        app.dependency_overrides.pop(get_synthesis_queue, None)
+        app.dependency_overrides.pop(get_stitch_queue, None)
+
+
+def _seed_partial_book(dynamodb_table, *, failed: tuple[int, ...] = (1, 2), reason="NO_AUDIO"):
+    from src.contexts.library.domain.value_objects import ChunkStatus
+
+    repo = _book_repo(dynamodb_table)
+    chunk_repo = _chunk_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    seed_chunks(chunk_repo, book_id="book-1", user_id=CLAIMS["sub"], count=3)
+    for index in range(3):
+        if index in failed:
+            chunk_repo.update_status(
+                "book-1", index, ChunkStatus.FAILED, failure_reason="EXTERNAL_TTS_DISABLED"
+            )
+        else:
+            chunk_repo.update_status(
+                "book-1",
+                index,
+                ChunkStatus.DONE,
+                audio_key=f"audio/{CLAIMS['sub']}/book-1/{index:06d}.mp3",
+                duration_ms=1000,
+            )
+    repo.update_status(
+        CLAIMS["sub"],
+        "book-1",
+        BookStatus.PARTIAL,
+        chunks_total=3,
+        chunks_done=3,
+        chunks_failed=len(failed),
+        manifest_key=f"marks/{CLAIMS['sub']}/book-1/book.json",
+        failure_reason=reason,
+    )
+
+
+def test_resynthesize_returns_202_with_the_rewound_book(
+    authed_app_client, dynamodb_table, fake_queues
+) -> None:
+    _seed_partial_book(dynamodb_table)
+    synthesis, _stitch = fake_queues
+
+    response = authed_app_client.post("/books/book-1/resynthesize")
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["retriedChunks"] == 2
+    assert body["republishedStitch"] is False
+    # The client drops `book` straight into its poll state, so it must be
+    # book_status_to_dict's exact shape.
+    assert body["book"]["status"] == "EXTRACTED"
+    assert body["book"]["terminal"] is False
+    assert body["book"]["progress"]["chunksDone"] == 1
+    assert body["book"]["progress"]["chunksFailed"] == 0
+    assert body["book"]["audio"]["audioKey"] is None
+    assert synthesis.calls == [
+        {"user_id": CLAIMS["sub"], "book_id": "book-1", "chunk_indexes": [1, 2]}
+    ]
+
+
+def test_resynthesize_a_stitch_failed_book_publishes_a_stitch(
+    authed_app_client, dynamodb_table, fake_queues
+) -> None:
+    _seed_partial_book(dynamodb_table, failed=(), reason="STITCH_FAILED")
+    synthesis, stitch = fake_queues
+
+    response = authed_app_client.post("/books/book-1/resynthesize")
+
+    assert response.status_code == 202
+    assert response.json()["retriedChunks"] == 0
+    assert response.json()["republishedStitch"] is True
+    assert synthesis.calls == []
+    assert stitch.calls == [{"user_id": CLAIMS["sub"], "book_id": "book-1"}]
+
+
+@pytest.mark.parametrize(
+    "status", ["UPLOADED", "EXTRACTING", "EXTRACTED", "STITCHING", "READY", "FAILED"]
+)
+def test_resynthesize_a_non_partial_book_returns_409(
+    authed_app_client, dynamodb_table, fake_queues, status: str
+) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"])
+    repo.update_status(CLAIMS["sub"], "book-1", BookStatus(status), chunks_total=3)
+
+    assert authed_app_client.post("/books/book-1/resynthesize").status_code == 409
+
+
+def test_resynthesize_twice_returns_202_then_409(
+    authed_app_client, dynamodb_table, fake_queues
+) -> None:
+    """The conditional book update is the exactly-once gate -- a
+    double-clicked button produces one 202 and one 409."""
+    _seed_partial_book(dynamodb_table)
+
+    assert authed_app_client.post("/books/book-1/resynthesize").status_code == 202
+    assert authed_app_client.post("/books/book-1/resynthesize").status_code == 409
+
+
+def test_resynthesize_another_users_book_returns_404(
+    authed_app_client, dynamodb_table, fake_queues
+) -> None:
+    seed_book(_book_repo(dynamodb_table), id="book-1", user_id="someone-else")
+    assert authed_app_client.post("/books/book-1/resynthesize").status_code == 404
+
+
+def test_resynthesize_a_nonexistent_book_returns_404(
+    authed_app_client, dynamodb_table, fake_queues
+) -> None:
+    assert authed_app_client.post("/books/ghost/resynthesize").status_code == 404
+
+
+def test_resynthesize_anonymous_returns_401(app_client) -> None:
+    assert app_client.post("/books/book-1/resynthesize").status_code == 401

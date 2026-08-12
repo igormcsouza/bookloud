@@ -1,18 +1,38 @@
 """``POST /books`` (create + presigned upload, PLANS/phase-3.md §4.1),
 ``POST /books/{id}/upload-url`` (re-issue, §4.2), ``GET /books``,
-``GET /books/{id}``, ``GET /books/{id}/chunks`` (§4.3), and
-``GET /books/{id}/status`` (PLANS/phase-5.md §8). All routes sit under the
-existing ``/{proxy+}`` JWT authorizer -- no ``api_stack.py`` change, no new
-public path.
+``GET /books/{id}``, ``GET /books/{id}/chunks`` (§4.3),
+``GET /books/{id}/status`` (PLANS/phase-5.md §8), and phase 6's reader
+surface: ``GET /books/{id}/audio``, ``GET /books/{id}/chunks/{n}/audio``,
+``GET /books/{id}/manifest``, ``GET /books/{id}/chunks/{n}/marks`` and
+``POST /books/{id}/resynthesize`` (PLANS/phase-6.md §4.3/§5).
+
+Every route sits under the existing ``/{proxy+}`` JWT authorizer -- no new
+public path. (``api_stack.py`` *does* change this phase, but only to grant
+``sqs:SendMessage`` on two more queues for ``/resynthesize``, and to collapse
+the enumerated per-method routes to ``ANY``; the authorizer split is
+untouched.)
+
+The one asymmetry worth naming: the presigned URL ``GET /books/{id}/audio``
+returns is the **only** thing in the whole app that authenticates by
+signature rather than by ``Authorization`` header. That is forced, not
+chosen -- ``<audio src=...>`` cannot carry a header, and proxying ~240 MB
+through a 6 MB Lambda response is arithmetic, not preference (§3.1/§3.2).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
 from src.auth.dependencies import CurrentUser, get_current_user
 from src.contexts.library.application.commands import RequestBookUploadCommand
+from src.contexts.library.application.delivery import (
+    GetBookAudioUrl,
+    GetBookManifest,
+    GetChunkAudioUrl,
+    GetChunkMarks,
+)
+from src.contexts.library.application.resynthesis import ResynthesizeBook
 from src.contexts.library.application.use_cases import (
     GetBook,
     ListBookChunks,
@@ -21,21 +41,38 @@ from src.contexts.library.application.use_cases import (
     RequestBookUpload,
 )
 from src.contexts.library.domain.repository import BookRepository, ChunkRepository
-from src.contexts.library.domain.storage import PdfStorage
+from src.contexts.library.domain.stitching import StitchQueue
+from src.contexts.library.domain.storage import AudioDelivery, ObjectStorage, PdfStorage
+from src.contexts.library.domain.synthesis import SynthesisQueue
 from src.contexts.library.interface.dependencies import (
+    get_audio_delivery,
     get_book_repository,
     get_chunk_repository,
     get_clock,
     get_id_generator,
+    get_marks_storage,
     get_pdf_storage,
+    get_stitch_queue,
+    get_synthesis_queue,
 )
 from src.contexts.library.interface.schemas import (
+    audio_url_to_dict,
     book_status_to_dict,
     book_to_dict,
     chunk_to_dict,
+    resynthesis_to_dict,
     upload_to_dict,
 )
 from src.shared_kernel.application.ports import Clock, IdGenerator
+
+# Both documents are immutable for a given book once written (every S3 key is
+# a pure function of the ids, and a re-stitch overwrites in place), so a
+# private browser cache is safe. The manifest gets the shorter window because
+# a /resynthesize can legitimately replace it; per-chunk marks cannot change
+# without the chunk index changing.
+_MANIFEST_CACHE_CONTROL = "private, max-age=3600"
+_MARKS_CACHE_CONTROL = "private, max-age=86400"
+_JSON_MEDIA_TYPE = "application/json"
 
 router = APIRouter(tags=["library"])
 
@@ -114,3 +151,112 @@ def list_book_chunks(
 ) -> list[dict]:
     chunks = ListBookChunks(book_repository, chunk_repository).execute(user.sub, book_id)
     return [chunk_to_dict(chunk) for chunk in chunks]
+
+
+# --- phase 6: audio delivery (PLANS/phase-6.md §4.3) ------------------------
+
+
+@router.get("/books/{book_id}/audio")
+def get_book_audio(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+    audio_delivery: AudioDelivery = Depends(get_audio_delivery),
+) -> dict:
+    """Mints a presigned S3 GET for the stitched ``book.mp3`` (§3).
+
+    A **409** when the book has no ``audioKey`` -- the everyday state of
+    every non-prod environment (PLANS/phase-4.md §0), so it is a documented
+    outcome the reader renders as "you can still read the book", not an
+    error path. A foreign or missing book is a 404, never a 403.
+    """
+    use_case = GetBookAudioUrl(book_repository, audio_delivery)
+    return audio_url_to_dict(use_case.execute(user.sub, book_id))
+
+
+@router.get("/books/{book_id}/chunks/{index}/audio")
+def get_chunk_audio(
+    book_id: str,
+    index: int,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+    chunk_repository: ChunkRepository = Depends(get_chunk_repository),
+    audio_delivery: AudioDelivery = Depends(get_audio_delivery),
+) -> dict:
+    """Backend-only this phase (PLANS/phase-6.md OQ-1). It is what makes
+    phase-5 §7.2's invariant 3 -- a book whose concatenation failed is still
+    playable chunk by chunk -- a real capability rather than a claim; the
+    second playback engine that would consume it in the UI is deferred until
+    prod actually produces a ``STITCH_FAILED`` book."""
+    use_case = GetChunkAudioUrl(book_repository, chunk_repository, audio_delivery)
+    return audio_url_to_dict(use_case.execute(user.sub, book_id, index))
+
+
+@router.get("/books/{book_id}/manifest")
+def get_book_manifest(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+    marks_storage: ObjectStorage = Depends(get_marks_storage),
+) -> Response:
+    """Returns ``marks/<u>/<b>/book.json`` **verbatim** -- no
+    re-serialization. The document is already the contract
+    (PLANS/phase-5.md §7.2 calls it one in so many words); re-shaping it here
+    would create a second place for the schema to drift from the stitcher
+    that writes it."""
+    use_case = GetBookManifest(book_repository, marks_storage)
+    payload = use_case.execute(user.sub, book_id)
+    return Response(
+        content=payload,
+        media_type=_JSON_MEDIA_TYPE,
+        headers={"Cache-Control": _MANIFEST_CACHE_CONTROL},
+    )
+
+
+@router.get("/books/{book_id}/chunks/{index}/marks")
+def get_chunk_marks(
+    book_id: str,
+    index: int,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+    chunk_repository: ChunkRepository = Depends(get_chunk_repository),
+    marks_storage: ObjectStorage = Depends(get_marks_storage),
+) -> Response:
+    """Returns the per-chunk marks document verbatim. A **404 is the normal
+    case** for every chunk in a PR environment (no chunk ever synthesized),
+    which is exactly why the client negatively caches it rather than
+    retrying."""
+    use_case = GetChunkMarks(book_repository, chunk_repository, marks_storage)
+    payload = use_case.execute(user.sub, book_id, index)
+    return Response(
+        content=payload,
+        media_type=_JSON_MEDIA_TYPE,
+        headers={"Cache-Control": _MARKS_CACHE_CONTROL},
+    )
+
+
+# --- phase 6: resynthesis (PLANS/phase-6.md §5) -----------------------------
+
+
+@router.post("/books/{book_id}/resynthesize", status_code=202)
+def resynthesize_book(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+    chunk_repository: ChunkRepository = Depends(get_chunk_repository),
+    synthesis_queue: SynthesisQueue = Depends(get_synthesis_queue),
+    stitch_queue: StitchQueue = Depends(get_stitch_queue),
+    clock: Clock = Depends(get_clock),
+) -> dict:
+    """``202``, not ``200``: nothing has been resynthesized yet -- N messages
+    have been published. ``409`` on any status but ``PARTIAL``; the
+    conditional book update is the exactly-once gate, so a double-clicked
+    button produces one 202 and one 409 (PLANS/phase-6.md §5.2)."""
+    use_case = ResynthesizeBook(
+        book_repository, chunk_repository, synthesis_queue, stitch_queue, clock
+    )
+    result = use_case.execute(user.sub, book_id)
+    # Reloaded, not patched in memory: the client drops this straight into
+    # its poll state, so it must be what the table actually says.
+    book = GetBook(book_repository).execute(user.sub, book_id)
+    return resynthesis_to_dict(result, book)

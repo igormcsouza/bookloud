@@ -225,6 +225,42 @@ jobs:
             --newuser-username "${{ steps.seed-users.outputs.newuser_username }}" \
             --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}"
 
+      # PLANS/phase-6.md OQ-2. Strictly this is phase 8's line item ("wire the
+      # Playwright e2e suite into both the per-PR ephemeral pipeline and the
+      # main-branch CD pipeline"), but the `e2e-local` job cannot exercise
+      # CloudFront, the SSR Lambda, API Gateway's Cognito authorizer or real
+      # S3 -- and `degraded.spec.ts` is only *meaningful* against an
+      # environment whose books are genuinely PARTIAL/NO_AUDIO, which compose
+      # (with SYNTHESIS_STUB_MODE=silent) is not. Two minutes on a pipeline
+      # that already deploys five stacks, versus leaving the deployed UI
+      # untested by any browser for a whole phase. Phase 8 then hardens and
+      # extends this rather than starting from zero.
+      #
+      # `E2E_AUDIO` is deliberately UNSET: this runs the `chromium` project
+      # only, which asserts nothing whatsoever about audio. There is none here
+      # to assert about.
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright e2e against the ephemeral deploy
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: ${{ steps.frontend-url.outputs.url }}
+          E2E_USERNAME: ${{ steps.seed-users.outputs.login_username }}
+          E2E_PASSWORD: ${{ steps.seed-users.outputs.login_password }}
+        run: npx playwright test --project=chromium
+
+      - name: Upload the Playwright trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-pr-${{ github.event.pull_request.number }}
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          retention-days: 7
+
       - name: Comment on PR with deployment URLs
         uses: actions/github-script@v9
         with:

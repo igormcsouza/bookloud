@@ -620,6 +620,8 @@ def _synth_api_stack(environment: str):
         audio_bucket=storage.audio_bucket,
         marks_bucket=storage.marks_bucket,
         extract_queue=pipeline.extract_queue,
+        synthesize_queue=pipeline.synthesize_queue,
+        stitch_queue=pipeline.stitch_queue,
         user_pool=auth.user_pool,
         user_pool_client=auth.user_pool_client,
         environment=environment,
@@ -635,12 +637,82 @@ def test_api_stack_synthesizes(environment: str) -> None:
     # 1 API Lambda + 1 PreSignUp trigger Lambda (from the nested AuthStack
     # construct tree -- but AuthStack is a separate stack, so only the API
     # Lambda lands in *this* stack's template).
+    #
+    # PLANS/phase-6.md Q17: "no new Lambda" is a concurrency-budget promise
+    # (2 synthesize + 1 extract + 2 stitch = 5 of an account-wide 10), so it
+    # is enforced here rather than remembered. The reader adds *requests* to
+    # this function, not functions.
     template.resource_count_is("AWS::Lambda::Function", 1)
     template.resource_count_is("AWS::ApiGatewayV2::Api", 1)
 
     routes = template.find_resources("AWS::ApiGatewayV2::Route")
     route_keys = {r["Properties"]["RouteKey"] for r in routes.values()}
     assert any("/health" in key for key in route_keys)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_route_shape(environment: str) -> None:
+    """PLANS/phase-6.md §16's addendum, as corrected after PR #7.
+
+    9 routes, not the original 25: `ANY` on the four public paths, and
+    enumerated methods on the authorized catch-all. The route reduction is a
+    teardown mitigation -- two of the last three `destroy-pr` runs failed
+    with HttpApiCognitoAuthorizer returning `InternalFailure` on delete,
+    stranding four pr-N stacks each time; the failure is transient (both pr-4
+    and pr-6 deleted cleanly on retry, no code change) with no observable
+    service-side cause, so we provoke it less hard and retry it in
+    destroy-pr.yml."""
+    template = _synth_api_stack(environment)
+
+    routes = template.find_resources("AWS::ApiGatewayV2::Route")
+    route_keys = sorted(r["Properties"]["RouteKey"] for r in routes.values())
+
+    assert route_keys == [
+        "ANY /docs",
+        "ANY /health",
+        "ANY /openapi.json",
+        "ANY /redoc",
+        "DELETE /{proxy+}",
+        "GET /{proxy+}",
+        "HEAD /{proxy+}",
+        "POST /{proxy+}",
+        "PUT /{proxy+}",
+    ]
+    template.resource_count_is("AWS::ApiGatewayV2::Route", 9)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_no_authorized_route_matches_options(environment: str) -> None:
+    """The regression test for the CORS outage on PR #7.
+
+    `ANY /{proxy+}` matched OPTIONS, and a matched route takes precedence
+    over HttpApi's automatic cors_preflight response -- so every browser
+    preflight hit the JWT authorizer and came back 401, and the browser then
+    refused every cross-origin request. Measured against the deployed pr-7
+    API before the fix:
+
+        HTTP/2 401
+        www-authenticate: Bearer
+        {"message":"Unauthorized"}
+
+    Nothing else catches this. Local compose talks to FastAPI directly, whose
+    CORSMiddleware answers preflights, so API Gateway is never in the loop;
+    only a real browser against a real deploy sees it. Hence an explicit
+    assertion on the property that actually matters: no route carrying an
+    authorizer may match an OPTIONS request."""
+    template = _synth_api_stack(environment)
+
+    for route in template.find_resources("AWS::ApiGatewayV2::Route").values():
+        props = route["Properties"]
+        if props["AuthorizationType"] == "NONE":
+            continue  # public: a preflight reaching FastAPI is answered fine
+        method = props["RouteKey"].split(" ", 1)[0]
+        assert method not in ("ANY", "OPTIONS"), (
+            f"{props['RouteKey']} is authorized and matches OPTIONS -- CORS "
+            f"preflights will 401 and every cross-origin request will fail"
+        )
 
 
 @pytest.mark.docker
@@ -658,14 +730,18 @@ def test_api_stack_jwt_authorizer(environment: str) -> None:
     routes = template.find_resources("AWS::ApiGatewayV2::Route")
     by_key = {r["Properties"]["RouteKey"]: r["Properties"] for r in routes.values()}
 
-    proxy_route = by_key["ANY /{proxy+}"] if "ANY /{proxy+}" in by_key else next(
-        props for key, props in by_key.items() if "/{proxy+}" in key
-    )
+    proxy_route = by_key["GET /{proxy+}"]
     assert proxy_route["AuthorizationType"] == "JWT"
     assert "AuthorizerId" in proxy_route
 
-    health_route = next(props for key, props in by_key.items() if "/health" in key)
-    assert health_route["AuthorizationType"] == "NONE"
+    # Asserted for EVERY public path, not just /health: after the ANY-route
+    # collapse (PLANS/phase-6.md §16) there is exactly one route per path, so
+    # getting one of them wrong either exposes the API or breaks it, with no
+    # sibling route left to mask the mistake.
+    for path in ("/health", "/docs", "/redoc", "/openapi.json"):
+        public_route = by_key[f"ANY {path}"]
+        assert public_route["AuthorizationType"] == "NONE", path
+        assert "AuthorizerId" not in public_route, path
 
 
 @pytest.mark.docker
@@ -691,3 +767,84 @@ def test_api_stack_lambda_role_grants_dynamodb_query(environment: str) -> None:
                 actions.append(action)
 
     assert "dynamodb:Query" in actions
+
+
+# --- phase 6 additions (PLANS/phase-6.md §13.3) -----------------------------
+
+
+def _api_role_actions(template) -> list[str]:
+    actions: list[str] = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+    return actions
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_has_queue_urls(environment: str) -> None:
+    """POST /books/{id}/resynthesize needs both -- the fan-out for the chunks
+    it rewinds, and the direct stitch publish for the zero-failed-chunk
+    branch."""
+    template = _synth_api_stack(environment)
+
+    (fn,) = template.find_resources("AWS::Lambda::Function").values()
+    env = fn["Properties"]["Environment"]["Variables"]
+
+    assert "SYNTHESIZE_QUEUE_URL" in env
+    assert "STITCH_QUEUE_URL" in env
+    assert "EXTRACT_QUEUE_URL" in env
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_grants_send_to_all_three_queues(environment: str) -> None:
+    """The **count**, not merely the presence: with a bare `in` check, losing
+    one of the three grants would still pass. A missing grant surfaces only
+    as a 500 from /resynthesize in a deployed environment."""
+    template = _synth_api_stack(environment)
+
+    actions = _api_role_actions(template)
+
+    assert actions.count("sqs:SendMessage") == 3
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_still_reads_audio_and_marks(environment: str) -> None:
+    """Regression guard on the grants the phase-6 read path depends on and
+    which are granted only *incidentally*, by `grant_read_write`: the
+    presigned URL's validity rests on s3:GetObject over audio_bucket, and
+    GET /books/{id}/manifest reads marks_bucket directly."""
+    template = _synth_api_stack(environment)
+
+    actions = _api_role_actions(template)
+
+    assert "s3:GetObject*" in actions
+    # audio_bucket + marks_bucket + pdf_bucket.
+    assert actions.count("s3:GetObject*") >= 3
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_function_shape(environment: str) -> None:
+    """No ReservedConcurrentExecutions, so re-adding it fails a unit test
+    instead of a six-minute deploy.
+
+    This account's *total* Lambda concurrency limit is 10 and AWS rejects
+    every possible value ("decreases account's UnreservedConcurrentExecution
+    below its minimum value of [10]"), in prod exactly as in pr-N -- caught as
+    a CREATE_FAILED on PR #5 (PLANS/phase-4.md §0's §6.3 correction). The
+    synthesize and stitch functions already carry this assertion; phase 6 is
+    what finally puts real request load on the API function, so it gets one
+    too."""
+    template = _synth_api_stack(environment)
+
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"ReservedConcurrentExecutions": Match.absent()},
+    )

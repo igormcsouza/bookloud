@@ -5,22 +5,30 @@ synced to audio, plus a chat sidebar for asking questions about the book,
 scoped to the section currently being read.
 
 Built phase by phase per `IMPLEMENTATION_PLAN.md`. This repo is currently at
-**Phase 5**: Stitching & status polling. Every non-public backend route
-requires a valid Cognito JWT; the frontend has working login/logout/
-session-refresh via a Next.js backend-for-frontend; local dev emulates
-Cognito with `jagregory/cognito-local`. The backend's `Library` bounded
-context owns `Book`/`Chunk` CRUD against the single DynamoDB table plus the
-full pipeline: `POST /books` creates a book and returns a presigned S3
-upload; the PDF landing in the bucket fires an S3 event -> SQS -> the extract
-Lambda (PyMuPDF extraction, running header/footer filtering, chunking,
-`CHUNK#n` rows, book -> `EXTRACTED`); a per-chunk fan-out drives the
+**Phase 6**: the reader UI -- the first phase where a human actually uses the
+app. Every non-public backend route requires a valid Cognito JWT; the frontend
+has working login/logout/session-refresh via a Next.js backend-for-frontend;
+local dev emulates Cognito with `jagregory/cognito-local`. The backend's
+`Library` bounded context owns `Book`/`Chunk` CRUD against the single DynamoDB
+table plus the full pipeline: `POST /books` creates a book and returns a
+presigned S3 upload; the PDF landing in the bucket fires an S3 event -> SQS ->
+the extract Lambda (PyMuPDF extraction, running header/footer filtering,
+chunking, `CHUNK#n` rows, book -> `EXTRACTED`); a per-chunk fan-out drives the
 synthesize Lambda (TTS -> MP3 + word timings, chunk -> `DONE`, atomic
 `chunksDone` increment); and the increment that completes the book publishes
 one message to a third queue where the **stitch Lambda** concatenates every
 `DONE` chunk's MP3 into a single `book.mp3`, writes a book manifest
-(`book.json`) rebasing each chunk into book-global milliseconds, and flips
-the book to `READY` or `PARTIAL`. `GET /books/{id}/status` is the one cheap
-poll a client needs.
+(`book.json`) rebasing each chunk into book-global milliseconds, and flips the
+book to `READY` or `PARTIAL`. `GET /books/{id}/status` is the one cheap poll a
+client needs.
+
+On top of that, the frontend now has a **two-pane reader**: a left sidebar
+listing books and polling their status, a centre pane rendering the extracted
+text with the spoken word highlighted, and a player bar that plays, pauses,
+seeks and changes speed. Uploading a PDF from the browser finally has a UI (the
+presigned POST has existed since phase 3 with nothing calling it), and a
+`PARTIAL` book can be repaired with `POST /books/{id}/resynthesize` instead of
+being a dead end.
 
 ## Library context (backend)
 
@@ -54,7 +62,9 @@ library/
 ├── infrastructure/   keys.py/s3_keys.py (PK/SK + S3 key helpers),
 │                    book_mapper.py/chunk_mapper.py (dict <-> entity),
 │                    the two DynamoDB repository adapters,
-│                    s3_pdf_storage.py (presigned POST + get_bytes),
+│                    s3_client.py (the one browser-reachable S3 client),
+                    s3_pdf_storage.py (presigned POST + get_bytes),
+                    s3_audio_delivery.py (presigned GET, SigV4),
 │                    s3_object_storage.py (incl. S3MultipartWriter),
 │                    sqs_synthesis_queue.py, sqs_stitch_queue.py,
 │                    pymupdf_extractor.py (the only module importing
@@ -67,14 +77,18 @@ library/
 └── interface/        FastAPI Depends providers, camelCase response
                      schemas, POST /books + POST /books/{id}/upload-url +
                      GET /books + GET /books/{id} + GET /books/{id}/chunks
-                     + GET /books/{id}/status controllers,
+                     + GET /books/{id}/status + (phase 6)
+                     GET /books/{id}/audio + GET /books/{id}/manifest +
+                     GET /books/{id}/chunks/{n}/audio +
+                     GET /books/{id}/chunks/{n}/marks +
+                     POST /books/{id}/resynthesize controllers,
                      extract_handler.py + synthesize_handler.py +
                      stitch_handler.py (the three SQS Lambda handlers), and
                      local_{extract,synthesize,stitch}_worker.py (their
                      LocalStack-dev poll-loop equivalents)
 ```
 
-**Upload contract** (what the phase 6 reader UI will call): `POST /books
+**Upload contract** (what `frontend/components/UploadButton.tsx` does): `POST /books
 {"title": "..."}` returns `{book, upload: {url, fields, key, expiresIn,
 maxBytes}}`. Build a `FormData`, append every entry of `upload.fields` first,
 append the file **last** under the field name `file` (S3 ignores anything
@@ -167,9 +181,62 @@ each chunk into book-global milliseconds:
 - `missing` lists the chunk indexes with no audio, ascending. Failed chunks
   are simply absent from `segments`; no silence is fabricated.
 
-Turning `audioKey` into something an `<audio>` element can play (presigned
-GET vs CloudFront origin, Range support, cache headers) is deliberately a
-phase-6 decision — this phase exposes S3 keys, not URLs.
+### Audio delivery (phase 6)
+
+`audioKey`/`manifestKey` are S3 keys, not URLs. Turning one into something an
+`<audio>` element can play is what phase 6 decided, and the answer is forced
+rather than chosen:
+
+- **`GET /books/{id}/audio` returns JSON containing an S3 presigned GET URL**
+  (`{url, expiresIn, durationMs, contentType}`), fetched with the normal
+  `authFetch`; the client puts that URL in `<audio src>`. `<audio>` issues a
+  plain browser GET that **cannot carry an `Authorization` header**, and
+  `ApiStack` guards `/{proxy+}` with a Cognito authorizer reading exactly that
+  header — so any design where the media request hits our API is dead on
+  arrival. Proxying the bytes is not an alternative but an impossibility:
+  Lambda's response payload cap is 6 MB and a 300-page book is ~240 MB.
+- **Range works, and that is the whole reason seeking works.** SigV4
+  query-string presigning signs the method, host, path and query; the signed
+  header set is just `host`. `Range` is therefore unsigned and S3 honours
+  whatever the browser sends — Chrome issues `Range: bytes=N-` on every seek
+  and expects a `206`. `local/smoke_test.py` asserts this against a real S3
+  API, because no unit test, mock or fake can prove it.
+- **The URL expires in 1 hour, and the client treats that as a hint, not a
+  guarantee.** A URL presigned with the Lambda role's *temporary* credentials
+  is void when those credentials expire, whatever `ExpiresIn` says. So the
+  design is reactive: on the `<audio>` `error` event the client re-requests
+  the URL, restores `currentTime` and resumes, bounded at 3 attempts.
+- **`409`, not an error, when the book has no audio.** That is the everyday
+  state of every environment except local compose.
+- **The manifest and the per-chunk marks are proxied through the API**
+  (`GET /books/{id}/manifest`, `GET /books/{id}/chunks/{n}/marks`), returning
+  the stored S3 objects verbatim. ~60 KB and ~25 KB, nowhere near the 6 MB
+  cap, and it buys: no CORS rule on `marks_bucket`, ownership enforced by the
+  usual `_load_owned_book` rather than by key opacity, and exactly *one*
+  exception to "everything uses `authFetch`" instead of three.
+
+No CORS rule is needed on `audio_bucket` either: a media element loading a
+cross-origin `src` without a `crossorigin` attribute is not a CORS request.
+
+### Repairing a `PARTIAL` book (phase 6)
+
+`POST /books/{id}/resynthesize` — `PARTIAL` only, `202` on success. It resets
+the `FAILED` chunks to `PENDING`, rewinds `chunksDone` by the same amount,
+clears the stale stitch outputs, and re-fires the existing fan-out; when zero
+chunks were reset (the `STITCH_FAILED` case, where no chunk will ever
+increment again) it publishes a stitch message directly instead.
+
+The obvious alternative — adding `PARTIAL` to `_CLAIMABLE_STATUSES` /
+`_REISSUABLE_STATUSES` so the book could simply be re-uploaded or
+re-extracted — is exactly the hazard `PARTIAL` was invented to prevent: a
+stray redelivered S3 event would claim a book with perfectly good text, call
+`delete_for_book`, and re-extract it because the *audio* failed. Those tuples
+are unchanged, and `test_status_tuples_unchanged` asserts all three of them
+literally so that shortcut fails a unit test before it can fail a book.
+
+The conditional `expected_statuses=(PARTIAL,)` book update is the exactly-once
+gate: a double-clicked button, or two open tabs, produces one `202` and one
+`409`.
 
 **Synthesis pipeline.** When extraction finishes, the extract Lambda publishes
 one SQS message per chunk (fan-out), and the synthesize Lambda processes each
@@ -268,6 +335,120 @@ book_id)` before ever calling into `ChunkRepository`.
 
 See `PLANS/phase-2.md` for the full design rationale and decisions log.
 
+## Reader UI (frontend, phase 6)
+
+Route group `app/(app)/` holds the two-pane shell — `/` is the library,
+`/books/<id>` is the reader. Route groups don't appear in URLs, so `/login`
+and `/signup` keep their own bare centred layout outside it, and
+`middleware.ts`'s existing matcher already gates `/books/*`.
+
+```
+frontend/
+├── app/(app)/layout.tsx       server: <BooksProvider><BookSidebar/>{children}
+├── app/(app)/page.tsx         server: "/" — the library empty state
+├── app/(app)/books/[bookId]/  server: <ReaderView bookId=…/>
+├── components/                BookSidebar, BookListItem, UploadButton,
+│                              ReaderView, ReadingPane, ChunkParagraph,
+│                              PlayerBar, AudioNotice, HealthBadge,
+│                              BooksProvider
+├── hooks/                     useBookList, useBookStatus, usePlayback
+└── lib/                       books.ts (API client), manifest.ts, marks.ts,
+                               upload.ts
+```
+
+**Route shells are server components; every data-touching component is
+`"use client"`.** Not a style preference: the id token lives in a browser
+module variable (`lib/auth.ts`), and the only credential the SSR Lambda ever
+sees is the httpOnly refresh cookie. A server component calling the API on the
+user's behalf would need a Cognito `InitiateAuth` round trip plus the API call
+on the render path of a Lambda competing for an account-wide budget of 10
+concurrent executions — on every navigation, for data the client is about to
+start polling anyway.
+
+**No store, no data-fetching library, no new runtime dependency.** The runtime
+dependencies are still exactly `next`, `react`, `react-dom`. Three hooks and
+one small React context share the three things this screen actually shares: the
+book list, the open book's status, and playback position. Revisit when phase
+7's chat sidebar adds a third long-lived slice and a concrete invalidation
+problem — not pre-emptively.
+
+### Highlight sync
+
+**The manifest is the timeline; the audio file is an optimization.** Position,
+segment and word are derived from `book.json` plus the per-chunk marks, never
+from `audio.duration` (which, with no Xing header, is a browser *estimate* for
+a mixed-engine book).
+
+- **`requestAnimationFrame` drives the highlight (~60 Hz), `timeupdate` drives
+  the scrubber (~4 Hz).** This refines `IMPLEMENTATION_PLAN.md`'s phase-6
+  bullet, which said `timeupdate`. Chrome fires `timeupdate` about every
+  250 ms; at 150 wpm a word is ~400 ms and function words are 120-200 ms, so a
+  250 ms sampler skips short words outright and visibly jerks on the rest.
+- **Two binary searches, both `bisectRight(…) - 1`**: `segments[].t` (≤330
+  entries) then the rebased `words[].t` (~300). Steady state is not a search
+  at all — the loop keeps the current index and does one comparison
+  (`stillInside`), falling back to the bisect only on a discontinuity.
+- **A word is lit from `words[i].t` until `words[i+1].t`**, by start
+  boundaries rather than `[t, t+d)`. The partition is total (no dark gap
+  between words), `stillInside` is exactly the inverse of `locateWord`, and
+  the "engines report word ends optimistically" clamping problem disappears.
+- **Rebasing is one addition, applied once at cache insert**: `t_global =
+  segment.t + word.t`. `s`/`e` stay **chunk-relative** — that asymmetry is
+  what lets `ChunkParagraph` slice the active paragraph with no global-offset
+  bookkeeping.
+- **No per-word `<span>`s.** One `<p>` per chunk; only the active chunk renders
+  `text.slice(0,s)` + `<mark>` + `text.slice(e)`. `React.memo` keeps the other
+  paragraphs untouched, and `setState` fires only when the word index actually
+  changes (~2-3 Hz, not 60).
+- **Marks are fetched lazily, one segment at a time, with a one-segment
+  prefetch and a bounded cache.** Fetching all of them up front is ~6.6 MB
+  across 330 requests before the first note plays. A 404 (the normal case for
+  every chunk in a PR environment) is **negatively cached** — without that, the
+  rAF loop would re-request a missing marks object 60 times a second.
+
+### Graceful degradation
+
+**If chunk text exists, it renders.** There is no state in which an error
+screen replaces the reading pane while text is available.
+
+| book state | reading pane | player | notice |
+|---|---|---|---|
+| `UPLOADED`/`EXTRACTING` | skeleton | absent | "Reading your PDF…" |
+| `EXTRACTED`/`STITCHING` | **full text** | disabled | "Preparing audio — n%" + bar |
+| `FAILED` | — | absent | "We couldn't read this PDF (reason)." + Re-upload |
+| `READY` | full | enabled | — |
+| `PARTIAL`, no reason | full | **enabled** | "n of m sections have no audio — playback skips them." |
+| `PARTIAL`/`NO_AUDIO`, chunks `EXTERNAL_TTS_DISABLED` | full | absent | "Text-to-speech is turned off in this environment. You can still read the book." + Try audio again |
+| `PARTIAL`/`NO_AUDIO`, chunks `ALL_ENGINES_FAILED` | full | absent | "Every text-to-speech engine failed for this book. You can still read it." + Try audio again |
+| `PARTIAL`/`STITCH_FAILED` | full | disabled | "Audio couldn't be assembled." + Try audio again |
+| manifest object gone | full | absent | "Audio information is unavailable. You can still read the book." |
+
+Rows 6 and 7 are not edge cases: because real TTS is prod-only, `PARTIAL`/
+`NO_AUDIO` is the *only* terminal state a book ever reaches in local dev and in
+every ephemeral PR environment.
+
+### Polling
+
+- **Reader**: `GET /books/{id}/status` every 2 s, backing off to 5 s after
+  60 s, stopping on the server's `terminal` flag, on a 404, or after a
+  15-minute hard cap.
+- **Sidebar**: `GET /books` every 5 s **only while some book is non-terminal**,
+  and not at all when every book is terminal — the common steady state should
+  generate zero background traffic.
+- Both suspend on `document.hidden` and fire one immediate poll on becoming
+  visible. That is a correctness requirement, not a nicety: a forgotten tab at
+  2 s/poll is ~43,000 requests/day against an API Lambda with ~5 executions of
+  headroom.
+
+### Known ceiling
+
+`GET /books/{id}/chunks` returns every chunk's full text in one response. The
+hard limit is Lambda's 6 MB response cap, at roughly **3,300 chunks (~2,700
+pages)**. Not paginated, deliberately — a cursor plus a virtualized scroll
+container interacts badly with the slice-the-active-paragraph rendering above,
+for a limit no personal library will hit. The reader logs a console warning
+above 2,000 chunks so the day it matters is not a mystery.
+
 ## Auth model
 
 Username + password sign-in (not email-based). **Accounts are admin-provisioned
@@ -338,6 +519,10 @@ make smoke   # smoke test against the running stack: upload -> extraction ->
              # locally the offline SilentSynthesizer produces real bytes so
              # the concatenation and manifest are genuinely exercised.
 make down    # tear everything down
+
+make e2e-local  # the phase-6 gate: up -> ui -> Playwright (incl. the
+                # `playback` project, which only exists with E2E_AUDIO=1)
+                # -> down
 ```
 
 `make up` seeds a local Cognito pool (via `jagregory/cognito-local`) with two
@@ -360,7 +545,27 @@ make test
 
 `make synth` runs `cdk synth -c environment=dev` for a local sanity check of
 every stack. `make e2e` is the CI-friendly one-shot: `up` -> `ui` -> smoke
-both -> `down`.
+both -> `down`. `make e2e-local` is the fuller one, adding the Playwright
+suite.
+
+**End-to-end tests, and where each one can honestly run.** `get_speech_
+synthesizer()` gates on `ENVIRONMENT != "prod"` first and unconditionally, so
+in every deployed environment every chunk fails with `EXTERNAL_TTS_DISABLED`
+and there is no audio at all. Local compose is the only place a browser test
+can hear anything, and only because `SYNTHESIS_STUB_MODE=silent` (set on the
+compose `synthesize-worker`, and nowhere else) makes `SilentSynthesizer`
+produce real MPEG-2 frames and real word marks.
+
+| spec | local compose (`E2E_AUDIO=1`) | `deploy-pr` | asserts |
+|---|---|---|---|
+| `e2e/upload-and-read.spec.ts` | yes | yes | login -> upload -> poll to terminal -> the text renders. **No audio assertion at all.** |
+| `e2e/degraded.spec.ts` | skipped (the local book is `READY`) | yes | on a `PARTIAL`/`NO_AUDIO` book: text readable, no `<audio src>` mounted, the notice copy, and "Try audio again" -> `202` -> back to terminal |
+| `e2e/playback.spec.ts` | yes | not created | play, the highlight advances, pause, seek across a segment boundary and back |
+
+The `playback` project runs `channel: "chrome"`, not bundled Chromium, which
+omits proprietary media codecs — and it **hard-fails** on an empty
+`canPlayType("audio/mpeg")` rather than skipping, because a silent skip in the
+one test that exercises audio would be worse than having no test.
 
 ## Repo layout
 
@@ -377,11 +582,14 @@ bookloud/
 │               (infra/stacks/pipeline_stack.py), differing only by their
 │               container `cmd`.
 ├── frontend/   Next.js 15 (App Router) + Tailwind, deployed via OpenNext to
-│               Lambda + CloudFront. Landing page, login (incl. forced
-│               first-login password change), and the auth BFF route
-│               handlers today; the reader UI and chat sidebar land in
-│               phases 6-7. app/signup/ still exists but is unreachable from
-│               the UI (admin-only provisioning, see Auth model above).
+│               Lambda + CloudFront. Login (incl. forced first-login password
+│               change), the auth BFF route handlers, and (phase 6) the
+│               two-pane reader: app/(app)/ route group, components/,
+│               hooks/, lib/{books,manifest,marks,upload}.ts, and the
+│               Playwright suite in e2e/. The chat sidebar lands in phase 7.
+│               app/signup/ still exists but is unreachable from the UI
+│               (admin-only provisioning, see Auth model above). Runtime
+│               dependencies are still exactly next/react/react-dom.
 ├── infra/      Python CDK app: AuthStack (Cognito, self_sign_up_enabled=
 │               False, PreSignUp trigger kept but unreachable), StorageStack
 │               (DynamoDB + S3), PipelineStack (extract/synthesize/stitch
@@ -401,8 +609,11 @@ bookloud/
 │               loops (LocalStack community can't run our container-image
 │               Lambda).
 ├── docker-compose.yml, Makefile
-├── .github/workflows/   ci.yml (reusable), deploy-pr.yml, destroy-pr.yml,
-│                        deploy-prod.yml
+├── .github/workflows/   ci.yml (reusable: backend/frontend/infra tests,
+│                        local-smoke, and e2e-local — the compose Playwright
+│                        run), deploy-pr.yml (deploy + smoke + the `chromium`
+│                        Playwright project against the real deploy),
+│                        destroy-pr.yml, deploy-prod.yml
 ├── IMPLEMENTATION_PLAN.md   the overall phase-by-phase plan
 └── PLANS/phase-N.md         each phase's approved, detailed implementation plan
 ```
