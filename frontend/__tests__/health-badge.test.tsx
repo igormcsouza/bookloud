@@ -28,6 +28,26 @@ describe("HealthBadge", () => {
     );
   });
 
+  it("abbreviates a full 40-char SHA and keeps the whole one on hover", async () => {
+    // The real /health returns a full git SHA, which overflowed the sidebar
+    // this badge lives in. The earlier test's "abc1234" was already short, so
+    // nothing exercised the actual deployed value.
+    const full = "a5f869961d18ffe34e06bbfb8fb69f0f3c1a89e2";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok", commit: full }),
+      }),
+    );
+    render(<HealthBadge />);
+    await waitFor(() =>
+      expect(screen.getByText(/^API:/)).toHaveTextContent("API: ok (a5f8699)"),
+    );
+    expect(screen.getByText(/^API:/)).not.toHaveTextContent(full);
+    expect(screen.getByText(/^API:/)).toHaveAttribute("title", `API commit ${full}`);
+  });
+
   it("falls back to 'unknown' when the payload carries no commit", async () => {
     vi.stubGlobal(
       "fetch",

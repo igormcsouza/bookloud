@@ -43,10 +43,19 @@ export default function HealthBadge() {
     );
   }
 
+  // The API returns a full 40-char git SHA, which overflowed the sidebar this
+  // renders in. Abbreviated to git's own 7-char short form -- still enough to
+  // identify which build is deployed, which is the entire point of showing it
+  // -- with the full SHA on hover and a truncating class as a backstop for any
+  // value that is somehow still long.
   if (health.status === "ok") {
     return (
-      <span className="text-moss-300" role="status">
-        API: ok ({health.commit})
+      <span
+        className="block truncate text-moss-300"
+        role="status"
+        title={`API commit ${health.commit}`}
+      >
+        API: ok ({health.commit.slice(0, 7)})
       </span>
     );
   }

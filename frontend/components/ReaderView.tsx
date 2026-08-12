@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AudioNotice, { describeBook } from "@/components/AudioNotice";
 import PlayerBar from "@/components/PlayerBar";
@@ -39,9 +39,27 @@ export default function ReaderView({ bookId }: { bookId: string }) {
   // writes chunks *before* the EXTRACTED flip, so the book is readable from
   // then on -- and making the user wait for synthesis to read is precisely
   // what constraint 2 forbids.
+  //
+  // But that first fetch happens while every chunk is still PENDING, so each
+  // one carries failureReason: null. Fetching only once left the reader
+  // holding that pre-synthesis snapshot forever, and modalChunkFailure() then
+  // saw no reasons at all -- so a PARTIAL book in a stub environment reported
+  // "Every text-to-speech engine failed for this book" instead of "Text-to-
+  // speech is turned off in this environment". Wrong, and alarming: in prod
+  // that message means something is genuinely broken.
+  //
+  // So refetch ONCE MORE when the book goes terminal, which is when
+  // failureReason is finally populated. `fetchedTerminal` keeps it to exactly
+  // two fetches (text early, reasons at the end) rather than one per poll.
   const chunksTotal = status?.progress.chunksTotal ?? 0;
+  const chunksTerminal = status?.terminal ?? false;
+  const fetchedTerminalRef = useRef(false);
   useEffect(() => {
-    if (chunksTotal === 0 || chunks.length > 0) return;
+    if (chunksTotal === 0) return;
+    const needsFirstFetch = chunks.length === 0;
+    const needsReasons = chunksTerminal && !fetchedTerminalRef.current;
+    if (!needsFirstFetch && !needsReasons) return;
+    if (chunksTerminal) fetchedTerminalRef.current = true;
     let cancelled = false;
     void getBookChunks(bookId)
       .then((loaded) => {
@@ -51,7 +69,7 @@ export default function ReaderView({ bookId }: { bookId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [bookId, chunks.length, chunksTotal]);
+  }, [bookId, chunks.length, chunksTotal, chunksTerminal]);
 
   // The manifest only exists once the stitcher has run, so it waits for
   // terminal -- and it is fetched even when there is no audio, because the
