@@ -34,8 +34,8 @@ def mock_urlopen(monkeypatch):
 
 @pytest.fixture
 def mock_secret(monkeypatch):
-    import src.contexts.library.infrastructure.secrets as secrets_mod
-    monkeypatch.setattr(secrets_mod, "get_secret", lambda name: "fake_key")
+    import src.contexts.library.infrastructure.openai_chat_model as chat_model_mod
+    monkeypatch.setattr(chat_model_mod, "get_secret", lambda name: "fake_key")
 
 
 @pytest.fixture

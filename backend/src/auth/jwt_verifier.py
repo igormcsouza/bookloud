@@ -29,7 +29,7 @@ class CognitoJwtVerifier:
         self._fetch = fetch or self._default_fetch
         
         self._jwks: dict | None = None
-        self._last_fetch_time: float = 0.0
+        self._last_fetch_time: float = -float('inf')
 
     def _default_fetch(self, url: str) -> bytes:
         with urllib.request.urlopen(url) as response:

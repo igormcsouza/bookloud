@@ -66,6 +66,8 @@ def make_token(private_pem, **kwargs):
     
     headers = {"kid": "test-kid"}
     headers.update(kwargs.get("header_overrides", {}))
+    if "kid" in headers and headers["kid"] is None:
+        del headers["kid"]
     
     alg = kwargs.get("alg", "RS256")
     key = private_pem if alg != "none" else ""

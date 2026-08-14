@@ -176,8 +176,20 @@ def resolve_context(
     # Sort by created_at ascending
     sorted_history = sorted(history, key=lambda m: m.created_at)
     
+    # Normalise: drop trailing user if no assistant after it
+    while sorted_history and sorted_history[-1].role == ChatRole.USER:
+        sorted_history.pop()
+
+    # Normalise: drop leading assistant
+    while sorted_history and sorted_history[0].role == ChatRole.ASSISTANT:
+        sorted_history.pop(0)
+        
     # Take last 6
     recent_history = sorted_history[-MAX_HISTORY_PAIRS * 2:]
+    
+    # In case slicing created a new leading assistant
+    while recent_history and recent_history[0].role == ChatRole.ASSISTANT:
+        recent_history.pop(0)
     
     # Truncate content
     truncated_history = []
@@ -202,14 +214,6 @@ def resolve_context(
                 cached_input_tokens=m.cached_input_tokens,
             )
         )
-
-    # Normalise: drop leading assistant
-    while truncated_history and truncated_history[0].role == ChatRole.ASSISTANT:
-        truncated_history.pop(0)
-
-    # Normalise: drop trailing user if no assistant after it
-    while truncated_history and truncated_history[-1].role == ChatRole.USER:
-        truncated_history.pop()
 
     # 5. Question
     final_question = question[:MAX_QUESTION_CHARS]
