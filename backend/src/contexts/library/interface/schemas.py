@@ -128,7 +128,7 @@ def resynthesis_to_dict(result: ResynthesizeBookResult, book: Book) -> dict:
     }
 
 
-def upload_to_dict(upload: PresignedUpload) -> dict:
+def upload_to_dict(upload: 'PresignedUpload') -> dict:
     return {
         "url": upload.url,
         "fields": upload.fields,
@@ -136,3 +136,32 @@ def upload_to_dict(upload: PresignedUpload) -> dict:
         "expiresIn": upload.expires_in,
         "maxBytes": upload.max_bytes,
     }
+
+
+def chat_message_to_dict(msg: 'ChatMessage') -> dict:
+    return {
+        "id": msg.message_id,
+        "role": msg.role.value,
+        "content": msg.content,
+        "anchoredChunk": msg.anchored_chunk,
+        "createdAt": msg.created_at,
+        "finishReason": msg.finish_reason.value if msg.finish_reason else None,
+    }
+
+
+def chat_list_to_dict(messages: list['ChatMessage'], enabled: bool, reason: str | None) -> dict:
+    return {
+        "meta": {
+            "enabled": enabled,
+            "reason": reason,
+        },
+        "items": [chat_message_to_dict(m) for m in messages],
+    }
+
+
+import json
+
+def sse_frame(event: str, data: dict) -> bytes:
+    """Formats a dict as a Server-Sent Event frame (UTF-8)."""
+    payload = json.dumps(data)
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")

@@ -7,7 +7,7 @@
 ## synthesize-worker + stitch-worker, then create the table/buckets/queues and
 ## bootstrap the local Cognito pool/client/dev user.
 up:
-	docker compose up -d --build localstack cognito-local backend extract-worker synthesize-worker stitch-worker
+	docker compose up -d --build localstack cognito-local backend chat extract-worker synthesize-worker stitch-worker
 	./local/setup.sh
 
 ## Start the Next.js frontend too (http://localhost:3000). Reads the Cognito
@@ -28,6 +28,7 @@ seed:
 smoke:
 	set -a; . local/.cognito.env; set +a; \
 	python3 local/smoke_test.py --api-url http://localhost:8000 \
+		--chat-url http://localhost:8001 \
 		--cognito-endpoint http://localhost:9229 \
 		--cognito-client-id "$$COGNITO_CLIENT_ID" \
 		--login-username dev --login-password devpassword \

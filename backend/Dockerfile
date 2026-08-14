@@ -41,3 +41,13 @@ COPY lambda_function.py ./
 COPY src ./src
 
 CMD ["lambda_function.handler"]
+
+# --- lambda-stream ----------------------------------------------------
+FROM lambda AS lambda-stream
+
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /opt/extensions/lambda-adapter /opt/extensions/lambda-adapter
+
+ENV PORT=8000
+ENV AWS_LWA_INVOKE_MODE=response_stream
+
+CMD ["python", "-m", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8000"]

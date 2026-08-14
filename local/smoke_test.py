@@ -579,7 +579,7 @@ def check_upload_and_stitch(
     *,
     skip_synthesis: bool = False,
     expect_synthesis: str = "failed",
-) -> None:
+) -> str:
     """PLANS/phase-3.md §9.3, extended by PLANS/phase-4.md §0/§9.3 and
     PLANS/phase-5.md §9.3 -- the phase's real gate. POST /books -> upload the
     embedded fixture PDF via the presigned POST -> poll GET /books/{id} until
@@ -777,6 +777,8 @@ def check_upload_and_stitch(
     # so nothing above may depend on its state afterwards.
     check_audio_delivery(api_url, book_id, id_token, expect_synthesis)
     check_resynthesize(api_url, book_id, id_token, expect_synthesis, stitch_timeout)
+    
+    return book_id
 
 
 # --- phase 6: audio delivery + resynthesis (PLANS/phase-6.md §12.2) ---------
@@ -997,6 +999,32 @@ def _check_chunks_synthesized_silently(chunks: list) -> None:
         )
 
 
+def check_chat(
+    chat_url: str,
+    cognito_endpoint: str,
+    cognito_client_id: str,
+    username: str,
+    password: str,
+    book_id: str,
+) -> None:
+    id_token = _login(cognito_endpoint, cognito_client_id, username, password)
+    
+    url = f"{chat_url.rstrip('/')}/books/{book_id}/chat"
+    req = urllib.request.Request(
+        url,
+        method="POST",
+        headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
+        data=json.dumps({"question": "Smoke Test", "anchoredChunk": 0}).encode("utf-8"),
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        status = resp.status
+        body = resp.read().decode("utf-8")
+        
+    check(status == 200, f"expected 200 from POST /books/{book_id}/chat, got {status}")
+    check("event: meta" in body, "missing meta event in SSE stream")
+    check("event: done" in body, "missing done event in SSE stream")
+    print(f"OK  POST {url} -> {status} (SSE stream OK)")
+
 def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_id: str) -> None:
     """SignUp a throwaway user, then log in and hit /me -- covers "signup" +
     "login" + authenticated access in one deployed-environment check. Never
@@ -1019,6 +1047,7 @@ def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-url", default="http://localhost:8000")
+    parser.add_argument("--chat-url", default=None)
     parser.add_argument("--frontend-url", default=None)
     parser.add_argument("--expect-commit", default=None)
     parser.add_argument("--expect-environment", default=None)
@@ -1088,6 +1117,15 @@ def main() -> int:
                 skip_synthesis=args.skip_synthesis,
                 expect_synthesis=args.expect_synthesis,
             )
+            if args.chat_url:
+                check_chat(
+                    args.chat_url,
+                    args.cognito_endpoint,
+                    args.cognito_client_id,
+                    args.login_username,
+                    args.login_password,
+                    book_id,
+                )
 
         if args.newuser_username and args.newuser_temp_password:
             check_new_password_challenge_flow(

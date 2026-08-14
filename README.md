@@ -5,8 +5,7 @@ synced to audio, plus a chat sidebar for asking questions about the book,
 scoped to the section currently being read.
 
 Built phase by phase per `IMPLEMENTATION_PLAN.md`. This repo is currently at
-**Phase 6**: the reader UI -- the first phase where a human actually uses the
-app. Every non-public backend route requires a valid Cognito JWT; the frontend
+**Phase 7**: the reader UI and chat sidebar. Every non-public backend route requires a valid Cognito JWT; the frontend
 has working login/logout/session-refresh via a Next.js backend-for-frontend;
 local dev emulates Cognito with `jagregory/cognito-local`. The backend's
 `Library` bounded context owns `Book`/`Chunk` CRUD against the single DynamoDB
@@ -86,6 +85,8 @@ library/
                      stitch_handler.py (the three SQS Lambda handlers), and
                      local_{extract,synthesize,stitch}_worker.py (their
                      LocalStack-dev poll-loop equivalents)
+                     plus (phase 7) chat_controllers.py (streaming via a
+                     secondary ASGI app inside the new ChatFunction)
 ```
 
 **Upload contract** (what `frontend/components/UploadButton.tsx` does): `POST /books
@@ -314,6 +315,8 @@ for the full decisions log.
 |---|---|---|
 | book | `USER#<sub>` | `BOOK#<bookId>` |
 | chunk | `BOOK#<bookId>` | `CHUNK#<index>` (zero-padded to 6 digits, e.g. `CHUNK#000007`) |
+| chat message | `BOOK#<bookId>` | `CHAT#<timestamp>#<id>` |
+| chat quota | `USER#<sub>` | `QUOTA#<YYYY-MM>` |
 
 Isolation is enforced **by the key**, not a post-read check: every
 `BookRepository` method takes `(user_id, book_id)` and addresses
@@ -578,9 +581,9 @@ bookloud/
 │               (contexts/library/, phases 2-4) today; stitching, the
 │               reader UI and chat land in phases 5-7. src/auth/ is
 │               cross-cutting, not a context. The same image also backs the
-│               extract and synthesize Lambdas
-│               (infra/stacks/pipeline_stack.py), differing only by their
-│               container `cmd`.
+│               extract, synthesize, and stitch Lambdas, plus the streaming
+│               ChatFunction, differing only by their container `cmd` or
+│               Lambda handler.
 ├── frontend/   Next.js 15 (App Router) + Tailwind, deployed via OpenNext to
 │               Lambda + CloudFront. Login (incl. forced first-login password
 │               change), the auth BFF route handlers, and (phase 6) the

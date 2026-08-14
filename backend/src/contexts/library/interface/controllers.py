@@ -54,6 +54,8 @@ from src.contexts.library.interface.dependencies import (
     get_pdf_storage,
     get_stitch_queue,
     get_synthesis_queue,
+    get_list_book_chat,
+    get_clear_book_chat,
 )
 from src.contexts.library.interface.schemas import (
     audio_url_to_dict,
@@ -260,3 +262,29 @@ def resynthesize_book(
     # its poll state, so it must be what the table actually says.
     book = GetBook(book_repository).execute(user.sub, book_id)
     return resynthesis_to_dict(result, book)
+
+
+@router.get("/books/{book_id}/chat")
+def list_book_chat(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    use_case = Depends(get_list_book_chat),
+) -> dict:
+    from src.shared_kernel.domain.errors import ConflictError
+    from src.contexts.library.interface.schemas import chat_list_to_dict
+    
+    try:
+        messages = use_case.execute(user_id=user.sub, book_id=book_id)
+        return chat_list_to_dict(messages, enabled=True, reason=None)
+    except ConflictError as e:
+        if "NO_TEXT" in str(e):
+            return chat_list_to_dict([], enabled=False, reason="NO_TEXT")
+        raise
+
+@router.delete("/books/{book_id}/chat", status_code=204)
+def clear_book_chat(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    use_case = Depends(get_clear_book_chat),
+) -> None:
+    use_case.execute(user_id=user.sub, book_id=book_id)

@@ -626,6 +626,7 @@ def _synth_api_stack(environment: str):
         user_pool_client=auth.user_pool_client,
         environment=environment,
         git_sha="test-sha",
+        openai_secret_name="dummy_secret",
     )
     return Template.from_stack(api)
 
@@ -848,3 +849,74 @@ def test_api_stack_function_shape(environment: str) -> None:
         "AWS::Lambda::Function",
         {"ReservedConcurrentExecutions": Match.absent()},
     )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_chat_function(environment: str) -> None:
+    from stacks.config import Config
+    
+    template = _synth_api_stack(environment)
+    
+    # 1. ChatFunction exists with specific memory, timeout, arch
+    template.has_resource_properties("AWS::Lambda::Function", {
+        "MemorySize": 256,
+        "Timeout": 30,
+        "Architectures": ["arm64"],
+        "Environment": {
+            "Variables": Match.object_like({
+                Config.ENV_OPENAI_SECRET_NAME: "dummy_secret",
+                Config.ENV_COGNITO_USER_POOL_ID: Match.any_value(),
+            })
+        }
+    })
+
+    # 2. Function URL config
+    template.has_resource_properties("AWS::Lambda::Url", {
+        "AuthType": "NONE",
+        "InvokeMode": "RESPONSE_STREAM",
+        "Cors": {
+            "AllowOrigins": ["*"],
+            "AllowMethods": ["POST"],
+            "AllowHeaders": ["*"]
+        }
+    })
+
+    # 3. Secrets manager grant
+    template.has_resource_properties("AWS::IAM::Policy", {
+        "PolicyDocument": {
+            "Statement": Match.array_with([
+                Match.object_like({
+                    "Action": [
+                        "secretsmanager:GetSecretValue",
+                        "secretsmanager:DescribeSecret"
+                    ],
+                    "Effect": "Allow"
+                })
+            ])
+        }
+    })
+
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_frontend_chat_wiring(environment: str) -> None:
+    from stacks.config import Config
+    
+    app = cdk.App()
+    stack = FrontendStack(
+        app,
+        f"TestFrontend-{environment}",
+        environment=environment,
+        api_base_url="api_url",
+        chat_base_url="chat_url",
+        cognito_client_id="c_id",
+        cognito_region="c_region",
+    )
+    template = Template.from_stack(stack)
+    
+    template.has_resource_properties("AWS::Lambda::Function", {
+        "Environment": {
+            "Variables": Match.object_like({
+                Config.ENV_CHAT_BASE_URL: "chat_url"
+            })
+        }
+    })

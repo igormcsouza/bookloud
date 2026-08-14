@@ -76,6 +76,7 @@ api = ApiStack(
     user_pool_client=auth.user_pool_client,
     environment=environment,
     git_sha=git_sha,
+    openai_secret_name=app.node.try_get_context("openai_secret_name") or "",
     env=env,
 )
 
@@ -88,6 +89,7 @@ FrontendStack(
     app,
     stack_name("Frontend", environment),
     api_base_url=api.http_api.url or "",
+    chat_base_url=api.chat_url.url or "",
     cognito_client_id=auth.user_pool_client.user_pool_client_id,
     cognito_region=auth.region,
     environment=environment,

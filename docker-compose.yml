@@ -80,6 +80,41 @@ services:
       cognito-local:
         condition: service_started
 
+  chat:
+    build:
+      context: ./backend
+      target: dev
+    restart: unless-stopped
+    command: ["uv", "run", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+    ports:
+      - "8001:8001"
+    environment:
+      - ENVIRONMENT=local
+      - GIT_SHA=local
+      - LOG_LEVEL=DEBUG
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=local
+      - AWS_SECRET_ACCESS_KEY=local
+      - TABLE_NAME=bookloud-local
+      - PDF_BUCKET=bookloud-local-pdfs
+      - AUDIO_BUCKET=bookloud-local-audio
+      - MARKS_BUCKET=bookloud-local-marks
+      - COGNITO_USER_POOL_ID=local_111111111
+      - COGNITO_CLIENT_ID=local_22222222222222222222222222
+      # cognito_local uses endpoint URL directly
+      - COGNITO_ENDPOINT_URL=http://cognito-local:9229
+      # S3_PUBLIC_ENDPOINT_URL might not be strictly needed for chat but good to have
+      - S3_PUBLIC_ENDPOINT_URL=http://localhost:4566
+    volumes:
+      - ./backend:/app
+      - ./local:/local-shared
+    depends_on:
+      localstack:
+        condition: service_healthy
+      cognito-local:
+        condition: service_started
+
   # Runs the same handle_records the extract Lambda's `handler` calls, in a
   # poll loop against LocalStack's SQS instead of a real event source mapping
   # -- LocalStack community can't run our container-image Lambda (PLANS/
@@ -194,18 +229,16 @@ services:
       context: ./frontend
       args:
         - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+        - NEXT_PUBLIC_CHAT_BASE_URL=http://localhost:8001
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      # Runtime (not build args): read server-side only, by
-      # frontend/lib/cognito.ts's BFF route handlers -- never baked into the
-      # client bundle. Values come from local/.cognito.env, written by
-      # cognito_bootstrap.py (see `make ui`).
       - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID}
       - COGNITO_REGION=us-east-1
       - COGNITO_ENDPOINT=http://cognito-local:9229
       - ENVIRONMENT=local
     depends_on:
       - backend
+      - chat
       - cognito-local

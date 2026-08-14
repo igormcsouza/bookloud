@@ -50,6 +50,7 @@ class ApiStack(cdk.Stack):
         user_pool_client: cognito.IUserPoolClient,
         environment: str,
         git_sha: str,
+        openai_secret_name: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -215,3 +216,46 @@ class ApiStack(cdk.Stack):
 
         cdk.CfnOutput(self, "ApiUrl", value=http_api.url or "")
         cdk.CfnOutput(self, "ApiFunctionName", value=fn.function_name)
+
+        chat_env = {
+            Config.ENV_ENVIRONMENT: environment,
+            Config.ENV_GIT_SHA: git_sha,
+            Config.ENV_TABLE_NAME: table.table_name,
+            Config.ENV_PDF_BUCKET: pdf_bucket.bucket_name,
+            Config.ENV_AUDIO_BUCKET: audio_bucket.bucket_name,
+            Config.ENV_MARKS_BUCKET: marks_bucket.bucket_name,
+            Config.ENV_COGNITO_USER_POOL_ID: user_pool.user_pool_id,
+            Config.ENV_COGNITO_CLIENT_ID: user_pool_client.user_pool_client_id,
+            Config.ENV_COGNITO_REGION: cdk.Stack.of(self).region,
+            Config.ENV_OPENAI_SECRET_NAME: openai_secret_name,
+            Config.ENV_LOG_LEVEL: "INFO",
+        }
+
+        self.chat_fn = lambda_.DockerImageFunction(
+            self, "ChatFunction",
+            code=lambda_.DockerImageCode.from_image_asset(
+                backend_dir, target="lambda-stream"
+            ),
+            architecture=lambda_.Architecture.ARM_64,
+            timeout=cdk.Duration.seconds(30),
+            memory_size=256,
+            environment=chat_env
+        )
+        table.grant_read_write_data(self.chat_fn)
+        
+        if openai_secret_name:
+            from aws_cdk import aws_secretsmanager
+            secret = aws_secretsmanager.Secret.from_secret_name_v2(self, "OpenAiSecret", openai_secret_name)
+            secret.grant_read(self.chat_fn)
+
+        self.chat_url = self.chat_fn.add_function_url(
+            auth_type=lambda_.FunctionUrlAuthType.NONE,
+            invoke_mode=lambda_.InvokeMode.RESPONSE_STREAM,
+            cors=lambda_.FunctionUrlCorsOptions(
+                allowed_origins=["*"],
+                allowed_methods=[lambda_.HttpMethod.POST],
+                allowed_headers=["*"],
+            ),
+        )
+
+        cdk.CfnOutput(self, "ChatUrl", value=self.chat_url.url)

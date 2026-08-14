@@ -63,6 +63,7 @@ function ChunkParagraph({
   return (
     <p
       ref={paragraphRef}
+      data-chunk-index={chunk.index}
       data-testid={`chunk-${chunk.index}`}
       data-active={active ? "true" : undefined}
       data-missing={missing ? "true" : undefined}

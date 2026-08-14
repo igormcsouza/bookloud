@@ -95,13 +95,23 @@ class Config:
 
     # --- env var name read by frontend/lib/api.ts ---
     ENV_API_BASE_URL = "NEXT_PUBLIC_API_BASE_URL"
+    ENV_CHAT_BASE_URL = "NEXT_PUBLIC_CHAT_BASE_URL"
 
     # --- env vars set on the SSR Lambda, read by frontend/lib/cognito.ts ---
     # Deliberately NOT NEXT_PUBLIC_* -- server-only, read at runtime by the
     # Next.js BFF route handlers, never baked into the client bundle.
     ENV_COGNITO_CLIENT_ID = "COGNITO_CLIENT_ID"
+    ENV_COGNITO_USER_POOL_ID = "COGNITO_USER_POOL_ID"
     ENV_COGNITO_REGION = "COGNITO_REGION"
     ENV_COGNITO_ENDPOINT = "COGNITO_ENDPOINT"  # local dev only (cognito-local); unset in AWS
+
+    # --- phase 7: Chat Lambda env vars, read by backend/src/config.py ---
+    ENV_OPENAI_SECRET_NAME = "OPENAI_SECRET_NAME"
+    ENV_OPENAI_MODEL = "OPENAI_MODEL"
+    ENV_OPENAI_MAX_OUTPUT_TOKENS = "OPENAI_MAX_OUTPUT_TOKENS"
+    ENV_CHAT_DAILY_LIMIT = "CHAT_DAILY_LIMIT"
+    
+    OPENAI_SECRET_NAME = "bookloud/openai-api-key"
 
 
 def is_prod(environment: str) -> bool:
