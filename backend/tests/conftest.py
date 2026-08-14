@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
 
 
 @pytest.fixture(autouse=True)

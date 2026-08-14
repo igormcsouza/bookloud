@@ -19,13 +19,14 @@ class CognitoJwtVerifier:
         region: str,
         user_pool_id: str,
         audience: str,
+        jwks_url: str | None = None,
         fetch: Callable[[str], bytes] | None = None
     ) -> None:
         self._region = region
         self._user_pool_id = user_pool_id
         self._audience = audience
         self._issuer = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
-        self._jwks_url = f"{self._issuer}/.well-known/jwks.json"
+        self._jwks_url = jwks_url or f"{self._issuer}/.well-known/jwks.json"
         self._fetch = fetch or self._default_fetch
         
         self._jwks: dict | None = None
