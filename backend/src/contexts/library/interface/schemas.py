@@ -151,11 +151,12 @@ def chat_message_to_dict(msg: 'ChatMessage') -> dict:
 
 def chat_list_to_dict(messages: list['ChatMessage'], enabled: bool, reason: str | None) -> dict:
     return {
-        "meta": {
+        "chat": {
             "enabled": enabled,
             "reason": reason,
+            "model": None,
         },
-        "items": [chat_message_to_dict(m) for m in messages],
+        "messages": [chat_message_to_dict(m) for m in messages],
     }
 
 

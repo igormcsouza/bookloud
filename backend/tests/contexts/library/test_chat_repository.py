@@ -49,8 +49,6 @@ def test_list_messages_limit(repo):
         # Need distinct padded created_at so they sort properly
         t = f"2026-08-12T10:00:{i:02d}.000000+00:00"
         m = ChatMessage("b1", str(i), "u1", ChatRole.USER, str(i), 0, t)
-        repo.save_turn(m, m) # Saving same twice is fine for test, though SK might conflict if exact same
-        
         m_a = ChatMessage("b1", f"{i}a", "u1", ChatRole.ASSISTANT, str(i), 0, t.replace(f"{i:02d}", f"{i+10:02d}"))
         repo.save_turn(m, m_a)
         
