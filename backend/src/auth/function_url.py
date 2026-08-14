@@ -14,7 +14,9 @@ def get_verifier() -> CognitoJwtVerifier:
     global _verifier
     if _verifier is None:
         jwks_url = None
-        if settings.aws_endpoint_url:
+        if settings.cognito_endpoint_url:
+            jwks_url = f"{settings.cognito_endpoint_url.rstrip('/')}/{settings.cognito_user_pool_id}/.well-known/jwks.json"
+        elif settings.aws_endpoint_url:
             jwks_url = f"{settings.aws_endpoint_url.rstrip('/')}/{settings.cognito_user_pool_id}/.well-known/jwks.json"
             
         _verifier = CognitoJwtVerifier(

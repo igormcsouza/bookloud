@@ -74,6 +74,7 @@ class Settings(BaseSettings):
 
     cognito_user_pool_id: str = ""
     cognito_client_id: str = ""
+    cognito_endpoint_url: str | None = None
     aws_region: str = "us-east-1"
 
     openai_secret_name: str = ""

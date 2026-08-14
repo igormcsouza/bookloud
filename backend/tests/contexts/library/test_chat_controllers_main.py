@@ -39,9 +39,9 @@ def test_list_chat_success(client):
     response = client.get("/books/b1/chat")
     assert response.status_code == 200
     data = response.json()
-    assert data["meta"]["enabled"] is True
-    assert len(data["items"]) == 1
-    assert data["items"][0]["content"] == "q"
+    assert data["chat"]["enabled"] is True
+    assert len(data["messages"]) == 1
+    assert data["messages"][0]["content"] == "q"
 
 
 def test_list_chat_no_text(client):
@@ -49,9 +49,9 @@ def test_list_chat_no_text(client):
     response = client.get("/books/b1/chat")
     assert response.status_code == 200
     data = response.json()
-    assert data["meta"]["enabled"] is False
-    assert data["meta"]["reason"] == "NO_TEXT"
-    assert len(data["items"]) == 0
+    assert data["chat"]["enabled"] is False
+    assert data["chat"]["reason"] == "NO_TEXT"
+    assert len(data["messages"]) == 0
 
 
 def test_clear_chat(client):
