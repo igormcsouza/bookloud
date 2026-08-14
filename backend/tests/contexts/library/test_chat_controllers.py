@@ -50,7 +50,7 @@ def client():
 
 def test_ask_question_controller(client, monkeypatch):
     import src.auth.function_url as fu
-    monkeypatch.setattr(fu, "get_verifier", lambda: type("V", (), {"verify": lambda t: {"sub": "user1", "token_use": "id"}})())
+    monkeypatch.setattr(fu, "get_verifier", lambda: type("V", (), {"verify": lambda t, token_use=None: {"sub": "user1", "token_use": "id"}})())
     
     response = client.post(
         "/books/b1/chat",

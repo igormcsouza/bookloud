@@ -60,9 +60,10 @@ class FakeClock:
 
 @pytest.fixture
 def base_deps():
-    book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
-    foreign_book = Book("b2", "u2", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
-    no_text_book = Book("b3", "u1", "Title", BookStatus.UPLOADED, 0, 0, 0, datetime.now(timezone.utc))
+    now_str = datetime.now(timezone.utc).isoformat()
+    book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, now_str, now_str)
+    foreign_book = Book("b2", "u2", "Title", BookStatus.READY, 1, 1, 1, now_str, now_str)
+    no_text_book = Book("b3", "u1", "Title", BookStatus.UPLOADED, 0, 0, 0, now_str, now_str)
     
     return {
         "book_repository": FakeBookRepo({"b1": book, "b2": foreign_book, "b3": no_text_book}),

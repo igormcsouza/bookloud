@@ -1,0 +1,1049 @@
+﻿2026-08-14T14:53:10.3366210Z Current runner version: '2.336.0'
+2026-08-14T14:53:10.3404266Z ##[group]Runner Image Provisioner
+2026-08-14T14:53:10.3405711Z Hosted Compute Agent
+2026-08-14T14:53:10.3406638Z Version: 20260729.566
+2026-08-14T14:53:10.3407741Z Commit: cf7153fe6e25b664e8693c24944bf2b00355d109
+2026-08-14T14:53:10.3408950Z Build Date: 2026-07-29T19:17:02Z
+2026-08-14T14:53:10.3410023Z Worker ID: {fedc4dbf-e8bc-4ff6-a986-bf9d0e414610}
+2026-08-14T14:53:10.3411534Z Azure Region: eastus
+2026-08-14T14:53:10.3412455Z ##[endgroup]
+2026-08-14T14:53:10.3414875Z ##[group]Operating System
+2026-08-14T14:53:10.3415941Z Ubuntu
+2026-08-14T14:53:10.3416724Z 24.04.4
+2026-08-14T14:53:10.3417642Z LTS
+2026-08-14T14:53:10.3418450Z ##[endgroup]
+2026-08-14T14:53:10.3419376Z ##[group]Runner Image
+2026-08-14T14:53:10.3420390Z Image: ubuntu-24.04
+2026-08-14T14:53:10.3421607Z Version: 20260810.271.1
+2026-08-14T14:53:10.3423644Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260810.271/images/ubuntu/Ubuntu2404-Readme.md
+2026-08-14T14:53:10.3426228Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260810.271
+2026-08-14T14:53:10.3427843Z ##[endgroup]
+2026-08-14T14:53:10.3429943Z ##[group]GITHUB_TOKEN Permissions
+2026-08-14T14:53:10.3432988Z Contents: read
+2026-08-14T14:53:10.3433884Z Metadata: read
+2026-08-14T14:53:10.3434896Z PullRequests: write
+2026-08-14T14:53:10.3435866Z ##[endgroup]
+2026-08-14T14:53:10.3439448Z Secret source: Actions
+2026-08-14T14:53:10.3441645Z Prepare workflow directory
+2026-08-14T14:53:10.3926605Z Prepare all required actions
+2026-08-14T14:53:10.3997529Z Getting action download info
+2026-08-14T14:53:10.6296326Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-08-14T14:53:10.8074883Z Download action repository 'actions/setup-python@v6' (SHA:ece7cb06caefa5fff74198d8649806c4678c61a1)
+2026-08-14T14:53:10.9374742Z Download action repository 'astral-sh/setup-uv@v8.3.2' (SHA:11f9893b081a58869d3b5fccaea48c9e9e46f990)
+2026-08-14T14:53:11.2795075Z Uses: igormcsouza/bookloud/.github/workflows/ci.yml@refs/pull/9/merge (0011d8faf97e997b3683d3559be029dad85e2d9f)
+2026-08-14T14:53:11.2800340Z Complete job name: CI / Backend tests
+2026-08-14T14:53:11.3603151Z ##[group]Run actions/checkout@v7
+2026-08-14T14:53:11.3604180Z with:
+2026-08-14T14:53:11.3604701Z   repository: igormcsouza/bookloud
+2026-08-14T14:53:11.3608939Z   token: ***
+2026-08-14T14:53:11.3609443Z   ssh-strict: true
+2026-08-14T14:53:11.3609943Z   ssh-user: git
+2026-08-14T14:53:11.3610458Z   persist-credentials: true
+2026-08-14T14:53:11.3611002Z   clean: true
+2026-08-14T14:53:11.3611709Z   sparse-checkout-cone-mode: true
+2026-08-14T14:53:11.3612296Z   fetch-depth: 1
+2026-08-14T14:53:11.3612797Z   fetch-tags: false
+2026-08-14T14:53:11.3613300Z   show-progress: true
+2026-08-14T14:53:11.3613797Z   lfs: false
+2026-08-14T14:53:11.3614262Z   submodules: false
+2026-08-14T14:53:11.3614765Z   set-safe-directory: true
+2026-08-14T14:53:11.3615318Z   allow-unsafe-pr-checkout: false
+2026-08-14T14:53:11.3616170Z ##[endgroup]
+2026-08-14T14:53:11.4991111Z Syncing repository: igormcsouza/bookloud
+2026-08-14T14:53:11.4994634Z ##[group]Getting Git version info
+2026-08-14T14:53:11.5013343Z Working directory is '/home/runner/work/bookloud/bookloud'
+2026-08-14T14:53:11.5015624Z [command]/usr/bin/git version
+2026-08-14T14:53:11.5017009Z git version 2.54.0
+2026-08-14T14:53:11.5020549Z ##[endgroup]
+2026-08-14T14:53:11.5028039Z Temporarily overriding HOME='/home/runner/work/_temp/f6193753-e960-4f16-b856-cbb0be91afe1' before making global git config changes
+2026-08-14T14:53:11.5030602Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-14T14:53:11.5033247Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/bookloud/bookloud
+2026-08-14T14:53:11.5092577Z Deleting the contents of '/home/runner/work/bookloud/bookloud'
+2026-08-14T14:53:11.5094767Z ##[group]Determining repository object format
+2026-08-14T14:53:11.5096399Z ##[endgroup]
+2026-08-14T14:53:11.5098158Z ##[group]Initializing the repository
+2026-08-14T14:53:11.5099545Z [command]/usr/bin/git init /home/runner/work/bookloud/bookloud
+2026-08-14T14:53:11.5195636Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-08-14T14:53:11.5211122Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-08-14T14:53:11.5222186Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-08-14T14:53:11.5242257Z hint: call:
+2026-08-14T14:53:11.5262179Z hint:
+2026-08-14T14:53:11.5282292Z hint: 	git config --global init.defaultBranch <name>
+2026-08-14T14:53:11.5283633Z hint:
+2026-08-14T14:53:11.5301864Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-08-14T14:53:11.5322455Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-08-14T14:53:11.5340068Z hint:
+2026-08-14T14:53:11.5341531Z hint: 	git branch -m <name>
+2026-08-14T14:53:11.5343221Z hint:
+2026-08-14T14:53:11.5362510Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-08-14T14:53:11.5391611Z Initialized empty Git repository in /home/runner/work/bookloud/bookloud/.git/
+2026-08-14T14:53:11.5420479Z [command]/usr/bin/git remote add origin https://github.com/igormcsouza/bookloud
+2026-08-14T14:53:11.5425592Z ##[endgroup]
+2026-08-14T14:53:11.5426928Z ##[group]Disabling automatic garbage collection
+2026-08-14T14:53:11.5428107Z [command]/usr/bin/git config --local gc.auto 0
+2026-08-14T14:53:11.5430499Z ##[endgroup]
+2026-08-14T14:53:11.5431935Z ##[group]Setting up auth
+2026-08-14T14:53:11.5432826Z Removing SSH command configuration
+2026-08-14T14:53:11.5434116Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-14T14:53:11.5437866Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-14T14:53:11.6063968Z Removing HTTP extra header
+2026-08-14T14:53:11.6066360Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-14T14:53:11.6094376Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-14T14:53:11.6310001Z Removing includeIf entries pointing to credentials config files
+2026-08-14T14:53:11.6312661Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-14T14:53:11.6367138Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-14T14:53:11.6636147Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-08-14T14:53:11.6683756Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/bookloud/bookloud/.git.path /home/runner/work/_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:53:11.6723297Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/bookloud/bookloud/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:53:11.6766563Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:53:11.6810025Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:53:11.6846023Z ##[endgroup]
+2026-08-14T14:53:11.6848141Z ##[group]Fetching the repository
+2026-08-14T14:53:11.6854407Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +0011d8faf97e997b3683d3559be029dad85e2d9f:refs/remotes/pull/9/merge
+2026-08-14T14:53:12.1349138Z From https://github.com/igormcsouza/bookloud
+2026-08-14T14:53:12.1362493Z  * [new ref]         0011d8faf97e997b3683d3559be029dad85e2d9f -> pull/9/merge
+2026-08-14T14:53:12.1406935Z ##[endgroup]
+2026-08-14T14:53:12.1409163Z ##[group]Determining the checkout info
+2026-08-14T14:53:12.1412140Z ##[endgroup]
+2026-08-14T14:53:12.1414200Z [command]/usr/bin/git sparse-checkout disable
+2026-08-14T14:53:12.1473705Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-08-14T14:53:12.1522195Z ##[group]Checking out the ref
+2026-08-14T14:53:12.1532393Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/9/merge
+2026-08-14T14:53:12.1805924Z Note: switching to 'refs/remotes/pull/9/merge'.
+2026-08-14T14:53:12.1813125Z 
+2026-08-14T14:53:12.1814468Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-08-14T14:53:12.1816719Z changes and commit them, and you can discard any commits you make in this
+2026-08-14T14:53:12.1818972Z state without impacting any branches by switching back to a branch.
+2026-08-14T14:53:12.1821060Z 
+2026-08-14T14:53:12.1822655Z If you want to create a new branch to retain commits you create, you may
+2026-08-14T14:53:12.1825590Z do so (now or later) by using -c with the switch command. Example:
+2026-08-14T14:53:12.1826964Z 
+2026-08-14T14:53:12.1828220Z   git switch -c <new-branch-name>
+2026-08-14T14:53:12.1829260Z 
+2026-08-14T14:53:12.1830014Z Or undo this operation with:
+2026-08-14T14:53:12.1831715Z 
+2026-08-14T14:53:12.1832625Z   git switch -
+2026-08-14T14:53:12.1834137Z 
+2026-08-14T14:53:12.1835374Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-08-14T14:53:12.1837770Z 
+2026-08-14T14:53:12.1839478Z HEAD is now at 0011d8f Merge 89336dd0b60752def08bdc7b19a5b9870b73e870 into 562a8eec079dba4beb0b23549cc18c5ca360351b
+2026-08-14T14:53:12.1846606Z ##[endgroup]
+2026-08-14T14:53:12.1887111Z [command]/usr/bin/git log -1 --format=%H
+2026-08-14T14:53:12.1928148Z 0011d8faf97e997b3683d3559be029dad85e2d9f
+2026-08-14T14:53:12.2398669Z ##[group]Run actions/setup-python@v6
+2026-08-14T14:53:12.2399631Z with:
+2026-08-14T14:53:12.2400392Z   python-version: 3.12
+2026-08-14T14:53:12.2401207Z   check-latest: false
+2026-08-14T14:53:12.2406048Z   token: ***
+2026-08-14T14:53:12.2406829Z   update-environment: true
+2026-08-14T14:53:12.2407686Z   allow-prereleases: false
+2026-08-14T14:53:12.2408515Z   freethreaded: false
+2026-08-14T14:53:12.2409308Z ##[endgroup]
+2026-08-14T14:53:12.3955867Z ##[group]Installed versions
+2026-08-14T14:53:12.4359961Z Successfully set up CPython (3.12.13)
+2026-08-14T14:53:12.4362411Z ##[endgroup]
+2026-08-14T14:53:12.4981026Z ##[group]Run astral-sh/setup-uv@v8.3.2
+2026-08-14T14:53:12.4982277Z with:
+2026-08-14T14:53:12.4982992Z   version: latest
+2026-08-14T14:53:12.4983733Z   enable-cache: true
+2026-08-14T14:53:12.4984528Z   cache-dependency-glob: backend/uv.lock
+2026-08-14T14:53:12.4985414Z   activate-environment: false
+2026-08-14T14:53:12.4986254Z   no-project: false
+2026-08-14T14:53:12.4987104Z   working-directory: /home/runner/work/bookloud/bookloud
+2026-08-14T14:53:12.4992119Z   github-token: ***
+2026-08-14T14:53:12.4993014Z   restore-cache: true
+2026-08-14T14:53:12.4993778Z   save-cache: true
+2026-08-14T14:53:12.4994515Z   prune-cache: true
+2026-08-14T14:53:12.4995267Z   cache-python: false
+2026-08-14T14:53:12.4996044Z   ignore-nothing-to-cache: false
+2026-08-14T14:53:12.4996886Z   ignore-empty-workdir: false
+2026-08-14T14:53:12.4997725Z   download-from-astral-mirror: true
+2026-08-14T14:53:12.4998579Z   add-problem-matchers: true
+2026-08-14T14:53:12.4999366Z   quiet: false
+2026-08-14T14:53:12.5000172Z   resolution-strategy: highest
+2026-08-14T14:53:12.5000962Z env:
+2026-08-14T14:53:12.5002029Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:12.5003227Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-08-14T14:53:12.5004389Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:12.5005763Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:12.5006847Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:12.5007929Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-08-14T14:53:12.5008901Z ##[endgroup]
+2026-08-14T14:53:12.7634496Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-08-14T14:53:12.8647760Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.12.4/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-08-14T14:53:13.0344547Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/03a79713-8336-4543-a96c-e95fe2ae5940 -f /home/runner/work/_temp/441d616c-c6a5-4cb8-b45a-032dbd70dd75
+2026-08-14T14:53:13.6426623Z Added /home/runner/.local/bin to the path
+2026-08-14T14:53:13.6430083Z Added /opt/hostedtoolcache/uv/0.12.4/x86_64 to the path
+2026-08-14T14:53:13.6432968Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-08-14T14:53:13.6435365Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-08-14T14:53:13.6448201Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-08-14T14:53:13.6449655Z Successfully installed uv version 0.12.4
+2026-08-14T14:53:14.2334289Z Searching files using cache dependency glob: /home/runner/work/bookloud/bookloud/backend/uv.lock
+2026-08-14T14:53:14.2417982Z /home/runner/work/bookloud/bookloud/backend/uv.lock
+2026-08-14T14:53:14.2466375Z Found 1 files to hash.
+2026-08-14T14:53:14.2593507Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.13-pruned-d68d64e58dd833688fe2aba76c40d526bf090d5fc044765f1abc1f09f8541097
+2026-08-14T14:53:14.3282917Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.13-pruned-d68d64e58dd833688fe2aba76c40d526bf090d5fc044765f1abc1f09f8541097
+2026-08-14T14:53:14.4077434Z Received 1476 of 1476 (100.0%), 0.0 MBs/sec
+2026-08-14T14:53:14.4084529Z Cache Size: ~0 MB (1476 B)
+2026-08-14T14:53:14.4132255Z [command]/usr/bin/tar -xf /home/runner/work/_temp/63d67242-a83d-4bc4-867d-b101054ab78e/cache.tzst -P -C /home/runner/work/bookloud/bookloud --use-compress-program unzstd
+2026-08-14T14:53:14.4227409Z Cache restored successfully
+2026-08-14T14:53:14.4234715Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.13-pruned-d68d64e58dd833688fe2aba76c40d526bf090d5fc044765f1abc1f09f8541097
+2026-08-14T14:53:14.5401802Z ##[group]Run uv sync --group dev
+2026-08-14T14:53:14.5402347Z [36;1muv sync --group dev[0m
+2026-08-14T14:53:14.5450111Z shell: /usr/bin/bash -e {0}
+2026-08-14T14:53:14.5450428Z env:
+2026-08-14T14:53:14.5450732Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:14.5451209Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-08-14T14:53:14.5452078Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:14.5452507Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:14.5452903Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:14.5453300Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-08-14T14:53:14.5453732Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-14T14:53:14.5454123Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-14T14:53:14.5454449Z ##[endgroup]
+2026-08-14T14:53:14.6104578Z Using CPython 3.12.13 interpreter at: /opt/hostedtoolcache/Python/3.12.13/x64/bin/python3
+2026-08-14T14:53:14.6105765Z Creating virtual environment at: .venv
+2026-08-14T14:53:15.2162793Z Resolved 65 packages in 601ms
+2026-08-14T14:53:15.2722285Z Downloading pydantic-core (2.0MiB)
+2026-08-14T14:53:15.2723232Z Downloading uvloop (4.2MiB)
+2026-08-14T14:53:15.2726868Z Downloading aiohttp (1.7MiB)
+2026-08-14T14:53:15.2730082Z Downloading pygments (1.2MiB)
+2026-08-14T14:53:15.2732088Z Downloading moto (6.4MiB)
+2026-08-14T14:53:15.2777581Z Downloading botocore (14.8MiB)
+2026-08-14T14:53:15.2963286Z Downloading cryptography (4.5MiB)
+2026-08-14T14:53:15.2964545Z Downloading pymupdf (24.5MiB)
+2026-08-14T14:53:15.6424956Z  Downloaded pydantic-core
+2026-08-14T14:53:15.6652614Z  Downloaded aiohttp
+2026-08-14T14:53:15.8448895Z  Downloaded uvloop
+2026-08-14T14:53:15.9219142Z  Downloaded cryptography
+2026-08-14T14:53:15.9353000Z  Downloaded pygments
+2026-08-14T14:53:15.9518605Z  Downloaded pymupdf
+2026-08-14T14:53:16.2682947Z  Downloaded moto
+2026-08-14T14:53:16.3085483Z  Downloaded botocore
+2026-08-14T14:53:16.3087811Z Prepared 62 packages in 1.08s
+2026-08-14T14:53:16.4510086Z Installed 62 packages in 141ms
+2026-08-14T14:53:16.4512423Z  + aiohappyeyeballs==2.7.1
+2026-08-14T14:53:16.4513350Z  + aiohttp==3.14.3
+2026-08-14T14:53:16.4513756Z  + aiosignal==1.4.0
+2026-08-14T14:53:16.4514117Z  + annotated-doc==0.0.5
+2026-08-14T14:53:16.4514516Z  + annotated-types==0.8.0
+2026-08-14T14:53:16.4514886Z  + anyio==4.14.2
+2026-08-14T14:53:16.4515207Z  + attrs==26.1.0
+2026-08-14T14:53:16.4515566Z  + boto3==1.43.64
+2026-08-14T14:53:16.4515891Z  + botocore==1.43.64
+2026-08-14T14:53:16.4516240Z  + certifi==2026.7.22
+2026-08-14T14:53:16.4516571Z  + cffi==2.1.1
+2026-08-14T14:53:16.4516907Z  + charset-normalizer==3.4.9
+2026-08-14T14:53:16.4517300Z  + click==8.4.2
+2026-08-14T14:53:16.4517620Z  + coverage==7.15.3
+2026-08-14T14:53:16.4517966Z  + cryptography==50.0.0
+2026-08-14T14:53:16.4518315Z  + docker==7.2.0
+2026-08-14T14:53:16.4518634Z  + edge-tts==7.2.8
+2026-08-14T14:53:16.4518977Z  + fastapi==0.141.1
+2026-08-14T14:53:16.4519311Z  + frozenlist==1.8.0
+2026-08-14T14:53:16.4519652Z  + h11==0.16.0
+2026-08-14T14:53:16.4519963Z  + httpcore==1.0.9
+2026-08-14T14:53:16.4520290Z  + httptools==0.8.0
+2026-08-14T14:53:16.4520628Z  + httpx==0.28.1
+2026-08-14T14:53:16.4520948Z  + idna==3.18
+2026-08-14T14:53:16.4521429Z  + iniconfig==2.3.0
+2026-08-14T14:53:16.4521759Z  + jmespath==1.1.0
+2026-08-14T14:53:16.4522079Z  + mangum==0.21.0
+2026-08-14T14:53:16.4522414Z  + markupsafe==3.0.3
+2026-08-14T14:53:16.4522756Z  + moto==5.2.2
+2026-08-14T14:53:16.4531963Z  + multidict==6.7.1
+2026-08-14T14:53:16.4539361Z  + packaging==26.3
+2026-08-14T14:53:16.4548932Z  + pluggy==1.6.0
+2026-08-14T14:53:16.4549357Z  + propcache==0.5.2
+2026-08-14T14:53:16.4549748Z  + py-partiql-parser==0.6.3
+2026-08-14T14:53:16.4550149Z  + pycparser==3.0
+2026-08-14T14:53:16.4550496Z  + pydantic==2.13.4
+2026-08-14T14:53:16.4550814Z  + pydantic-core==2.46.4
+2026-08-14T14:53:16.4551186Z  + pydantic-settings==2.14.2
+2026-08-14T14:53:16.4554434Z  + pygments==2.20.0
+2026-08-14T14:53:16.4554856Z  + pyjwt==2.13.0
+2026-08-14T14:53:16.4555181Z  + pymupdf==1.28.0
+2026-08-14T14:53:16.4555509Z  + pytest==9.1.1
+2026-08-14T14:53:16.4555841Z  + pytest-cov==7.1.0
+2026-08-14T14:53:16.4556217Z  + python-dateutil==2.9.0.post0
+2026-08-14T14:53:16.4556633Z  + python-dotenv==1.2.2
+2026-08-14T14:53:16.4556994Z  + pyyaml==6.0.3
+2026-08-14T14:53:16.4557325Z  + requests==2.34.2
+2026-08-14T14:53:16.4557681Z  + responses==0.26.2
+2026-08-14T14:53:16.4558034Z  + s3transfer==0.19.2
+2026-08-14T14:53:16.4558386Z  + six==1.17.0
+2026-08-14T14:53:16.4558719Z  + starlette==1.3.1
+2026-08-14T14:53:16.4559129Z  + tabulate==0.10.0
+2026-08-14T14:53:16.4559475Z  + typing-extensions==4.16.0
+2026-08-14T14:53:16.4559882Z  + typing-inspection==0.4.2
+2026-08-14T14:53:16.4560273Z  + urllib3==2.7.0
+2026-08-14T14:53:16.4560595Z  + uvicorn==0.52.1
+2026-08-14T14:53:16.4560917Z  + uvloop==0.22.1
+2026-08-14T14:53:16.4561435Z  + watchfiles==1.2.0
+2026-08-14T14:53:16.4561805Z  + websockets==17.0.1
+2026-08-14T14:53:16.4562164Z  + werkzeug==3.1.8
+2026-08-14T14:53:16.4562505Z  + xmltodict==1.0.4
+2026-08-14T14:53:16.4562844Z  + yarl==1.24.5
+2026-08-14T14:53:16.4631121Z ##[group]Run uv run pytest --tb=short
+2026-08-14T14:53:16.4631903Z [36;1muv run pytest --tb=short[0m
+2026-08-14T14:53:16.4674348Z shell: /usr/bin/bash -e {0}
+2026-08-14T14:53:16.4674634Z env:
+2026-08-14T14:53:16.4674927Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:16.4675411Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-08-14T14:53:16.4676058Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:16.4676452Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:16.4676866Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-08-14T14:53:16.4677256Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-08-14T14:53:16.4677669Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-08-14T14:53:16.4678052Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-08-14T14:53:16.4678377Z ##[endgroup]
+2026-08-14T14:53:27.2805726Z ============================= test session starts ==============================
+2026-08-14T14:53:27.2806862Z platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0
+2026-08-14T14:53:27.2808277Z rootdir: /home/runner/work/bookloud/bookloud/backend
+2026-08-14T14:53:27.2809144Z configfile: pyproject.toml
+2026-08-14T14:53:27.2817742Z testpaths: tests
+2026-08-14T14:53:27.2818565Z plugins: anyio-4.14.2, cov-7.1.0
+2026-08-14T14:53:27.2819686Z collected 892 items
+2026-08-14T14:53:27.2820195Z 
+2026-08-14T14:53:27.3208451Z tests/auth/test_controllers.py ...                                       [  0%]
+2026-08-14T14:53:27.3423560Z tests/auth/test_dependencies.py .........                                [  1%]
+2026-08-14T14:53:27.3690492Z tests/auth/test_function_url_middleware.py .....                         [  1%]
+2026-08-14T14:53:27.9704415Z tests/auth/test_jwt_verifier.py FF.FFFF.F                                [  2%]
+2026-08-14T14:53:28.0053443Z tests/auth/test_local_dev.py .........                                   [  3%]
+2026-08-14T14:53:32.2783840Z tests/contexts/library/test_book_repository.py ......................... [  6%]
+2026-08-14T14:53:34.7709039Z ..............                                                           [  8%]
+2026-08-14T14:53:34.8616028Z tests/contexts/library/test_chat_context.py FFFFFFFF                     [  9%]
+2026-08-14T14:53:35.1828865Z tests/contexts/library/test_chat_controllers.py F                        [  9%]
+2026-08-14T14:53:35.2352465Z tests/contexts/library/test_chat_controllers_main.py ...                 [  9%]
+2026-08-14T14:53:35.2408190Z tests/contexts/library/test_chat_dependencies.py ...                     [  9%]
+2026-08-14T14:53:35.2444276Z tests/contexts/library/test_chat_keys.py ..                              [ 10%]
+2026-08-14T14:53:35.5334442Z tests/contexts/library/test_chat_quota_repository.py E                   [ 10%]
+2026-08-14T14:53:36.6955205Z tests/contexts/library/test_chat_repository.py EEE                       [ 10%]
+2026-08-14T14:53:36.7612394Z tests/contexts/library/test_chat_use_case.py EEEEEEEEE                   [ 11%]
+2026-08-14T14:53:40.1947284Z tests/contexts/library/test_chunk_repository.py ......................   [ 14%]
+2026-08-14T14:53:40.2565363Z tests/contexts/library/test_chunking.py ................................ [ 17%]
+2026-08-14T14:53:40.2820494Z ..............                                                           [ 19%]
+2026-08-14T14:53:47.4102864Z tests/contexts/library/test_controllers.py ............................. [ 22%]
+2026-08-14T14:53:55.2746841Z ............................                                             [ 25%]
+2026-08-14T14:53:58.8188076Z tests/contexts/library/test_delivery_use_cases.py ..................     [ 27%]
+2026-08-14T14:53:59.2546253Z tests/contexts/library/test_dependencies.py ...........................  [ 30%]
+2026-08-14T14:53:59.3085999Z tests/contexts/library/test_domain.py .................................. [ 34%]
+2026-08-14T14:53:59.3264013Z ..........                                                               [ 35%]
+2026-08-14T14:54:05.3624868Z tests/contexts/library/test_edge_tts_synthesizer.py ..............       [ 37%]
+2026-08-14T14:54:06.6601158Z tests/contexts/library/test_extract_handler.py ................          [ 39%]
+2026-08-14T14:54:06.6722945Z tests/contexts/library/test_extraction.py ........                       [ 39%]
+2026-08-14T14:54:06.7115187Z tests/contexts/library/test_extraction_use_case.py ..................... [ 42%]
+2026-08-14T14:54:06.7202647Z ....                                                                     [ 42%]
+2026-08-14T14:54:06.7305847Z tests/contexts/library/test_fallback_synthesizer.py .....                [ 43%]
+2026-08-14T14:54:14.7922811Z tests/contexts/library/test_google_tts_synthesizer.py .................. [ 45%]
+2026-08-14T14:54:16.8063356Z .......                                                                  [ 46%]
+2026-08-14T14:54:16.8246184Z tests/contexts/library/test_keys.py ...........                          [ 47%]
+2026-08-14T14:54:16.8747781Z tests/contexts/library/test_layout.py ................................   [ 50%]
+2026-08-14T14:54:17.4088226Z tests/contexts/library/test_local_extract_worker.py .....                [ 51%]
+2026-08-14T14:54:17.6056867Z tests/contexts/library/test_local_stitch_worker.py .......               [ 52%]
+2026-08-14T14:54:17.7983489Z tests/contexts/library/test_local_synthesize_worker.py .......           [ 53%]
+2026-08-14T14:54:17.8478260Z tests/contexts/library/test_mappers.py ................................. [ 56%]
+2026-08-14T14:54:17.8506270Z .                                                                        [ 56%]
+2026-08-14T14:54:17.8900270Z tests/contexts/library/test_marks.py .........................           [ 59%]
+2026-08-14T14:54:17.9466817Z tests/contexts/library/test_mp3.py .................................     [ 63%]
+2026-08-14T14:54:18.4655595Z tests/contexts/library/test_openai_chat_model.py FFF                     [ 63%]
+2026-08-14T14:54:18.4738352Z tests/contexts/library/test_openai_prompt.py .....                       [ 64%]
+2026-08-14T14:54:18.8274834Z tests/contexts/library/test_pymupdf_extractor.py .................       [ 66%]
+2026-08-14T14:54:24.1605393Z tests/contexts/library/test_resynthesis_use_case.py .................... [ 68%]
+2026-08-14T14:54:24.4428755Z .                                                                        [ 68%]
+2026-08-14T14:54:25.7115470Z tests/contexts/library/test_s3_audio_delivery.py ..........              [ 69%]
+2026-08-14T14:54:25.7620965Z tests/contexts/library/test_s3_keys.py ................................. [ 73%]
+2026-08-14T14:54:25.7848334Z .............                                                            [ 74%]
+2026-08-14T14:54:28.1964138Z tests/contexts/library/test_s3_object_storage.py .............           [ 76%]
+2026-08-14T14:54:29.6843105Z tests/contexts/library/test_s3_pdf_storage.py ........                   [ 77%]
+2026-08-14T14:54:29.7314493Z tests/contexts/library/test_schemas.py ............................      [ 80%]
+2026-08-14T14:54:30.2067287Z tests/contexts/library/test_secrets.py ....                              [ 80%]
+2026-08-14T14:54:30.2405196Z tests/contexts/library/test_silent_synthesizer.py ..........             [ 81%]
+2026-08-14T14:54:30.4903922Z tests/contexts/library/test_sqs_stitch_queue.py ...                      [ 82%]
+2026-08-14T14:54:30.7336314Z tests/contexts/library/test_sqs_synthesis_queue.py .......               [ 82%]
+2026-08-14T14:54:31.4752766Z tests/contexts/library/test_stitch_handler.py ............               [ 84%]
+2026-08-14T14:54:31.5229926Z tests/contexts/library/test_stitch_use_case.py ......................... [ 87%]
+2026-08-14T14:54:31.5330387Z ....                                                                     [ 87%]
+2026-08-14T14:54:31.5602432Z tests/contexts/library/test_stitching_domain.py ..............           [ 89%]
+2026-08-14T14:54:31.5692548Z tests/contexts/library/test_stub_chat_model.py ..                        [ 89%]
+2026-08-14T14:54:31.5811985Z tests/contexts/library/test_stub_synthesizer.py ....                     [ 89%]
+2026-08-14T14:54:31.6227002Z tests/contexts/library/test_synthesis_use_case.py ...................... [ 92%]
+2026-08-14T14:54:31.6454085Z ...........                                                              [ 93%]
+2026-08-14T14:54:32.2275246Z tests/contexts/library/test_synthesize_handler.py ..............         [ 95%]
+2026-08-14T14:54:32.2583631Z tests/contexts/library/test_use_cases.py ..................              [ 97%]
+2026-08-14T14:54:32.2712635Z tests/test_chat_app.py ..                                                [ 97%]
+2026-08-14T14:54:32.2830887Z tests/test_config.py ...                                                 [ 97%]
+2026-08-14T14:54:32.3063669Z tests/test_health.py ...                                                 [ 97%]
+2026-08-14T14:54:32.3156593Z tests/test_infrastructure_adapters.py .....                              [ 98%]
+2026-08-14T14:54:32.3253516Z tests/test_infrastructure_aws.py ....                                    [ 98%]
+2026-08-14T14:54:32.3397557Z tests/test_lambda_function.py ....                                       [ 99%]
+2026-08-14T14:54:33.4274092Z tests/test_main.py .....                                                 [100%]
+2026-08-14T14:54:33.4274942Z 
+2026-08-14T14:54:33.4278265Z ==================================== ERRORS ====================================
+2026-08-14T14:54:33.4279505Z __________________ ERROR at setup of test_increment_and_check __________________
+2026-08-14T14:54:33.4280498Z tests/contexts/library/test_chat_quota_repository.py:34: in repo
+2026-08-14T14:54:33.4281665Z     return DynamoDbChatQuotaRepository(table_name=table_name)
+2026-08-14T14:54:33.4282443Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4283242Z src/contexts/library/infrastructure/dynamodb_chat_quota_repository.py:12: in __init__
+2026-08-14T14:54:33.4284273Z     self.dynamodb = boto3.resource("dynamodb", endpoint_url=settings.aws_endpoint_url or None)
+2026-08-14T14:54:33.4285149Z                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4285897Z .venv/lib/python3.12/site-packages/boto3/__init__.py:102: in resource
+2026-08-14T14:54:33.4286645Z     return _get_default_session().resource(*args, **kwargs)
+2026-08-14T14:54:33.4287329Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4288026Z .venv/lib/python3.12/site-packages/boto3/session.py:475: in resource
+2026-08-14T14:54:33.4288693Z     client = self.client(
+2026-08-14T14:54:33.4289317Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4290006Z     return self._session.create_client(
+2026-08-14T14:54:33.4290782Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4291624Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4292126Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4292796Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4293543Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4294250Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4294972Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4295768Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4296640Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4297442Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4298273Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4299118Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4300015Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4300940Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4302264Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4303393Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4304291Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4305155Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4305925Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4307046Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4308003Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4308915Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4309808Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4310710Z     raise NoRegionError()
+2026-08-14T14:54:33.4311639Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4312637Z ______________ ERROR at setup of test_save_turn_and_list_messages ______________
+2026-08-14T14:54:33.4313600Z tests/contexts/library/test_chat_repository.py:34: in repo
+2026-08-14T14:54:33.4314435Z     return DynamoDbChatRepository(table_name=table_name)
+2026-08-14T14:54:33.4315185Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4316069Z src/contexts/library/infrastructure/dynamodb_chat_repository.py:16: in __init__
+2026-08-14T14:54:33.4317244Z     self.dynamodb = boto3.resource("dynamodb", endpoint_url=settings.aws_endpoint_url or None)
+2026-08-14T14:54:33.4318257Z                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4319171Z .venv/lib/python3.12/site-packages/boto3/__init__.py:102: in resource
+2026-08-14T14:54:33.4320030Z     return _get_default_session().resource(*args, **kwargs)
+2026-08-14T14:54:33.4320771Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4321709Z .venv/lib/python3.12/site-packages/boto3/session.py:475: in resource
+2026-08-14T14:54:33.4322511Z     client = self.client(
+2026-08-14T14:54:33.4323243Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4324050Z     return self._session.create_client(
+2026-08-14T14:54:33.4324855Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4325665Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4326248Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4327012Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4327883Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4328722Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4329560Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4330384Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4331366Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4332205Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4333060Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4333980Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4335461Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4336386Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4337386Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4338152Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4339001Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4339852Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4340611Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4341624Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4342991Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4343944Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4344832Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4345728Z     raise NoRegionError()
+2026-08-14T14:54:33.4346446Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4347607Z __________________ ERROR at setup of test_list_messages_limit __________________
+2026-08-14T14:54:33.4348538Z tests/contexts/library/test_chat_repository.py:34: in repo
+2026-08-14T14:54:33.4349375Z     return DynamoDbChatRepository(table_name=table_name)
+2026-08-14T14:54:33.4350093Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4350968Z src/contexts/library/infrastructure/dynamodb_chat_repository.py:16: in __init__
+2026-08-14T14:54:33.4352280Z     self.dynamodb = boto3.resource("dynamodb", endpoint_url=settings.aws_endpoint_url or None)
+2026-08-14T14:54:33.4353302Z                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4354187Z .venv/lib/python3.12/site-packages/boto3/__init__.py:102: in resource
+2026-08-14T14:54:33.4355051Z     return _get_default_session().resource(*args, **kwargs)
+2026-08-14T14:54:33.4355785Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4356556Z .venv/lib/python3.12/site-packages/boto3/session.py:475: in resource
+2026-08-14T14:54:33.4357370Z     client = self.client(
+2026-08-14T14:54:33.4358061Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4358857Z     return self._session.create_client(
+2026-08-14T14:54:33.4359660Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4360461Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4361046Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4361944Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4362818Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4363654Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4364522Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4365333Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4366175Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4366975Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4367807Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4368669Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4369580Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4370500Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4371625Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4372739Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4373574Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4374414Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4375175Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4376060Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4377012Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4377911Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4378812Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4379704Z     raise NoRegionError()
+2026-08-14T14:54:33.4380435Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4381501Z _________________________ ERROR at setup of test_clear _________________________
+2026-08-14T14:54:33.4382272Z tests/contexts/library/test_chat_repository.py:34: in repo
+2026-08-14T14:54:33.4383251Z     return DynamoDbChatRepository(table_name=table_name)
+2026-08-14T14:54:33.4383903Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4384693Z src/contexts/library/infrastructure/dynamodb_chat_repository.py:16: in __init__
+2026-08-14T14:54:33.4385794Z     self.dynamodb = boto3.resource("dynamodb", endpoint_url=settings.aws_endpoint_url or None)
+2026-08-14T14:54:33.4387025Z                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4387877Z .venv/lib/python3.12/site-packages/boto3/__init__.py:102: in resource
+2026-08-14T14:54:33.4388762Z     return _get_default_session().resource(*args, **kwargs)
+2026-08-14T14:54:33.4389508Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4390462Z .venv/lib/python3.12/site-packages/boto3/session.py:475: in resource
+2026-08-14T14:54:33.4391430Z     client = self.client(
+2026-08-14T14:54:33.4392391Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4393324Z     return self._session.create_client(
+2026-08-14T14:54:33.4394122Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4394906Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4395494Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4396244Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4397137Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4397969Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4398818Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4399671Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4400531Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4401482Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4402286Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4403135Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4404061Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4404949Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4405904Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4406641Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4407450Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4408254Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4409032Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4409945Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4410891Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4411957Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4412850Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4413699Z     raise NoRegionError()
+2026-08-14T14:54:33.4414413Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4415392Z ___________________ ERROR at setup of test_ask_foreign_book ____________________
+2026-08-14T14:54:33.4416344Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4417354Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4418303Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4419253Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4420271Z ___________________ ERROR at setup of test_list_foreign_book ___________________
+2026-08-14T14:54:33.4421621Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4422661Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4423606Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4424569Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4425815Z __________________ ERROR at setup of test_clear_foreign_book ___________________
+2026-08-14T14:54:33.4426695Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4427581Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4428460Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4429358Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4430317Z ______________________ ERROR at setup of test_ask_no_text ______________________
+2026-08-14T14:54:33.4431205Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4432270Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4433094Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4433928Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4434817Z _____________________ ERROR at setup of test_list_no_text ______________________
+2026-08-14T14:54:33.4435626Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4436473Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4437275Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4438078Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4438960Z __________________ ERROR at setup of test_ask_quota_exceeded ___________________
+2026-08-14T14:54:33.4439753Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4440568Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4441492Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4442385Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4443444Z _________________ ERROR at setup of test_ask_success_ordering __________________
+2026-08-14T14:54:33.4444259Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4445079Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4445861Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4446686Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4447562Z _____________________ ERROR at setup of test_list_success ______________________
+2026-08-14T14:54:33.4448379Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4449216Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4450018Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4450971Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4452069Z _____________________ ERROR at setup of test_clear_success _____________________
+2026-08-14T14:54:33.4452858Z tests/contexts/library/test_chat_use_case.py:63: in base_deps
+2026-08-14T14:54:33.4453679Z     book = Book("b1", "u1", "Title", BookStatus.READY, 1, 1, 1, datetime.now(timezone.utc))
+2026-08-14T14:54:33.4454968Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4455798Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4456598Z =================================== FAILURES ===================================
+2026-08-14T14:54:33.4457329Z _______________________________ test_valid_token _______________________________
+2026-08-14T14:54:33.4458232Z tests/auth/test_jwt_verifier.py:79: in test_valid_token
+2026-08-14T14:54:33.4458889Z     claims = verifier.verify(token)
+2026-08-14T14:54:33.4459425Z              ^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4459967Z src/auth/jwt_verifier.py:72: in verify
+2026-08-14T14:54:33.4460561Z     raise InvalidToken("Unknown kid")
+2026-08-14T14:54:33.4461189Z E   src.auth.jwt_verifier.InvalidToken: Unknown kid
+2026-08-14T14:54:33.4462070Z _______________________________ test_missing_kid _______________________________
+2026-08-14T14:54:33.4462817Z tests/auth/test_jwt_verifier.py:86: in test_missing_kid
+2026-08-14T14:54:33.4463559Z     token = make_token(private_pem, header_overrides={"kid": None})
+2026-08-14T14:54:33.4464256Z             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4464889Z tests/auth/test_jwt_verifier.py:73: in make_token
+2026-08-14T14:54:33.4465611Z     return jwt.encode(payload, key, algorithm=alg, headers=headers)
+2026-08-14T14:54:33.4466304Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4466999Z .venv/lib/python3.12/site-packages/jwt/api_jwt.py:147: in encode
+2026-08-14T14:54:33.4467686Z     return self._jws.encode(
+2026-08-14T14:54:33.4468307Z .venv/lib/python3.12/site-packages/jwt/api_jws.py:160: in encode
+2026-08-14T14:54:33.4469023Z     self._validate_headers(headers, encoding=True)
+2026-08-14T14:54:33.4469811Z .venv/lib/python3.12/site-packages/jwt/api_jws.py:426: in _validate_headers
+2026-08-14T14:54:33.4470557Z     self._validate_kid(headers["kid"])
+2026-08-14T14:54:33.4471370Z .venv/lib/python3.12/site-packages/jwt/api_jws.py:432: in _validate_kid
+2026-08-14T14:54:33.4472207Z     raise InvalidTokenError("Key ID header parameter must be a string")
+2026-08-14T14:54:33.4473104Z E   jwt.exceptions.InvalidTokenError: Key ID header parameter must be a string
+2026-08-14T14:54:33.4473986Z ______________________________ test_expired_token ______________________________
+2026-08-14T14:54:33.4474760Z tests/auth/test_jwt_verifier.py:102: in test_expired_token
+2026-08-14T14:54:33.4475508Z     with pytest.raises(InvalidToken, match="Token expired"):
+2026-08-14T14:54:33.4476175Z          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4476806Z E   AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.4477418Z E     Expected regex: 'Token expired'
+2026-08-14T14:54:33.4477987Z E     Actual message: 'Unknown kid'
+2026-08-14T14:54:33.4478648Z ____________________________ test_invalid_audience _____________________________
+2026-08-14T14:54:33.4479441Z tests/auth/test_jwt_verifier.py:109: in test_invalid_audience
+2026-08-14T14:54:33.4480231Z     with pytest.raises(InvalidToken, match="Invalid audience"):
+2026-08-14T14:54:33.4480919Z          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4481681Z E   AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.4482291Z E     Expected regex: 'Invalid audience'
+2026-08-14T14:54:33.4482864Z E     Actual message: 'Unknown kid'
+2026-08-14T14:54:33.4483544Z _____________________________ test_invalid_issuer ______________________________
+2026-08-14T14:54:33.4484361Z tests/auth/test_jwt_verifier.py:116: in test_invalid_issuer
+2026-08-14T14:54:33.4485125Z     with pytest.raises(InvalidToken, match="Invalid issuer"):
+2026-08-14T14:54:33.4485802Z          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4486416Z E   AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.4487035Z E     Expected regex: 'Invalid issuer'
+2026-08-14T14:54:33.4487607Z E     Actual message: 'Unknown kid'
+2026-08-14T14:54:33.4488440Z ____________________________ test_token_use_access _____________________________
+2026-08-14T14:54:33.4489219Z tests/auth/test_jwt_verifier.py:123: in test_token_use_access
+2026-08-14T14:54:33.4489998Z     with pytest.raises(InvalidToken, match="Invalid token_use"):
+2026-08-14T14:54:33.4490784Z          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4491678Z E   AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.4492345Z E     Expected regex: 'Invalid token_use'
+2026-08-14T14:54:33.4492926Z E     Actual message: 'Unknown kid'
+2026-08-14T14:54:33.4493587Z ___________________________ test_jwks_rate_limiting ____________________________
+2026-08-14T14:54:33.4494392Z tests/auth/test_jwt_verifier.py:154: in test_jwks_rate_limiting
+2026-08-14T14:54:33.4495075Z     assert fetch_count == 1
+2026-08-14T14:54:33.4495591Z E   assert 0 == 1
+2026-08-14T14:54:33.4496196Z ______________________ test_resolve_context_clamps_anchor ______________________
+2026-08-14T14:54:33.4497141Z tests/contexts/library/test_chat_context.py:55: in test_resolve_context_clamps_anchor
+2026-08-14T14:54:33.4497944Z     book = make_book(chunks_total=3)
+2026-08-14T14:54:33.4498607Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4499309Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4500008Z     return Book(
+2026-08-14T14:54:33.4500669Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4501705Z _______________ test_resolve_context_window_clipped_not_shifted ________________
+2026-08-14T14:54:33.4502735Z tests/contexts/library/test_chat_context.py:74: in test_resolve_context_window_clipped_not_shifted
+2026-08-14T14:54:33.4503594Z     book = make_book(chunks_total=10)
+2026-08-14T14:54:33.4504142Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4504765Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4505420Z     return Book(
+2026-08-14T14:54:33.4506086Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4506991Z _____________ test_resolve_context_ceiling_eviction_drops_farthest _____________
+2026-08-14T14:54:33.4508021Z tests/contexts/library/test_chat_context.py:87: in test_resolve_context_ceiling_eviction_drops_farthest
+2026-08-14T14:54:33.4508907Z     book = make_book(chunks_total=5)
+2026-08-14T14:54:33.4509448Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4510078Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4510718Z     return Book(
+2026-08-14T14:54:33.4511487Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4512405Z ________ test_resolve_context_ceiling_truncates_anchor_if_only_one_left ________
+2026-08-14T14:54:33.4513508Z tests/contexts/library/test_chat_context.py:104: in test_resolve_context_ceiling_truncates_anchor_if_only_one_left
+2026-08-14T14:54:33.4514438Z     book = make_book(chunks_total=1)
+2026-08-14T14:54:33.4514969Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4515586Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4516218Z     return Book(
+2026-08-14T14:54:33.4516851Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4517770Z __________ test_resolve_context_history_truncation_and_normalization ___________
+2026-08-14T14:54:33.4518852Z tests/contexts/library/test_chat_context.py:113: in test_resolve_context_history_truncation_and_normalization
+2026-08-14T14:54:33.4519755Z     book = make_book()
+2026-08-14T14:54:33.4520226Z            ^^^^^^^^^^^
+2026-08-14T14:54:33.4520796Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4521568Z     return Book(
+2026-08-14T14:54:33.4522201Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4523072Z ___________________ test_resolve_context_question_truncation ___________________
+2026-08-14T14:54:33.4524367Z tests/contexts/library/test_chat_context.py:143: in test_resolve_context_question_truncation
+2026-08-14T14:54:33.4525275Z     book = make_book()
+2026-08-14T14:54:33.4525768Z            ^^^^^^^^^^^
+2026-08-14T14:54:33.4526372Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4527051Z     return Book(
+2026-08-14T14:54:33.4527899Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4528847Z ___________________ test_resolve_context_raises_if_no_chunks ___________________
+2026-08-14T14:54:33.4529822Z tests/contexts/library/test_chat_context.py:152: in test_resolve_context_raises_if_no_chunks
+2026-08-14T14:54:33.4530675Z     book = make_book(chunks_total=0)
+2026-08-14T14:54:33.4531354Z            ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4531982Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4532617Z     return Book(
+2026-08-14T14:54:33.4533269Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4534123Z ____________________________ test_chat_availability ____________________________
+2026-08-14T14:54:33.4534980Z tests/contexts/library/test_chat_context.py:159: in test_chat_availability
+2026-08-14T14:54:33.4535919Z     assert chat_availability(make_book(status=BookStatus.READY, chunks_total=10)) is True
+2026-08-14T14:54:33.4536757Z                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4537482Z tests/contexts/library/test_chat_context.py:14: in make_book
+2026-08-14T14:54:33.4538131Z     return Book(
+2026-08-14T14:54:33.4538769Z E   TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.4539629Z _________________________ test_ask_question_controller _________________________
+2026-08-14T14:54:33.4540519Z tests/contexts/library/test_chat_controllers.py:55: in test_ask_question_controller
+2026-08-14T14:54:33.4541428Z     response = client.post(
+2026-08-14T14:54:33.4542118Z .venv/lib/python3.12/site-packages/starlette/testclient.py:555: in post
+2026-08-14T14:54:33.4542843Z     return super().post(
+2026-08-14T14:54:33.4543465Z .venv/lib/python3.12/site-packages/httpx/_client.py:1144: in post
+2026-08-14T14:54:33.4544138Z     return self.request(
+2026-08-14T14:54:33.4544800Z .venv/lib/python3.12/site-packages/starlette/testclient.py:454: in request
+2026-08-14T14:54:33.4545601Z     return super().request(
+2026-08-14T14:54:33.4546237Z .venv/lib/python3.12/site-packages/httpx/_client.py:825: in request
+2026-08-14T14:54:33.4547077Z     return self.send(request, auth=auth, follow_redirects=follow_redirects)
+2026-08-14T14:54:33.4547835Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4548595Z .venv/lib/python3.12/site-packages/httpx/_client.py:914: in send
+2026-08-14T14:54:33.4549391Z     response = self._send_handling_auth(
+2026-08-14T14:54:33.4550144Z .venv/lib/python3.12/site-packages/httpx/_client.py:942: in _send_handling_auth
+2026-08-14T14:54:33.4550903Z     response = self._send_handling_redirects(
+2026-08-14T14:54:33.4551813Z .venv/lib/python3.12/site-packages/httpx/_client.py:979: in _send_handling_redirects
+2026-08-14T14:54:33.4552633Z     response = self._send_single_request(request)
+2026-08-14T14:54:33.4553218Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4553937Z .venv/lib/python3.12/site-packages/httpx/_client.py:1014: in _send_single_request
+2026-08-14T14:54:33.4554715Z     response = transport.handle_request(request)
+2026-08-14T14:54:33.4555319Z                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4556040Z .venv/lib/python3.12/site-packages/starlette/testclient.py:356: in handle_request
+2026-08-14T14:54:33.4556761Z     raise exc
+2026-08-14T14:54:33.4557382Z .venv/lib/python3.12/site-packages/starlette/testclient.py:353: in handle_request
+2026-08-14T14:54:33.4558189Z     portal.call(self.app, scope, receive, send)
+2026-08-14T14:54:33.4559069Z .venv/lib/python3.12/site-packages/anyio/from_thread.py:338: in call
+2026-08-14T14:54:33.4559867Z     return cast(T_Retval, self.start_task_soon(func, *args).result())
+2026-08-14T14:54:33.4560560Z                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4561539Z /opt/hostedtoolcache/Python/3.12.13/x64/lib/python3.12/concurrent/futures/_base.py:456: in result
+2026-08-14T14:54:33.4562576Z     return self.__get_result()
+2026-08-14T14:54:33.4563100Z            ^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4563905Z /opt/hostedtoolcache/Python/3.12.13/x64/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+2026-08-14T14:54:33.4564788Z     raise self._exception
+2026-08-14T14:54:33.4565432Z .venv/lib/python3.12/site-packages/anyio/from_thread.py:263: in _call_func
+2026-08-14T14:54:33.4566152Z     retval = await retval_or_awaitable
+2026-08-14T14:54:33.4566686Z              ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4567369Z .venv/lib/python3.12/site-packages/fastapi/applications.py:1163: in __call__
+2026-08-14T14:54:33.4568126Z     await super().__call__(scope, receive, send)
+2026-08-14T14:54:33.4568862Z .venv/lib/python3.12/site-packages/starlette/applications.py:90: in __call__
+2026-08-14T14:54:33.4569627Z     await self.middleware_stack(scope, receive, send)
+2026-08-14T14:54:33.4570431Z .venv/lib/python3.12/site-packages/starlette/middleware/errors.py:186: in __call__
+2026-08-14T14:54:33.4571181Z     raise exc
+2026-08-14T14:54:33.4571978Z .venv/lib/python3.12/site-packages/starlette/middleware/errors.py:164: in __call__
+2026-08-14T14:54:33.4572743Z     await self.app(scope, receive, _send)
+2026-08-14T14:54:33.4573461Z .venv/lib/python3.12/site-packages/starlette/middleware/cors.py:88: in __call__
+2026-08-14T14:54:33.4574238Z     await self.app(scope, receive, send)
+2026-08-14T14:54:33.4574824Z src/auth/function_url.py:57: in __call__
+2026-08-14T14:54:33.4575387Z     claims = v.verify(token)
+2026-08-14T14:54:33.4575889Z              ^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4576861Z E   TypeError: test_ask_question_controller.<locals>.<lambda>.<locals>.<lambda>() takes 1 positional argument but 2 were given
+2026-08-14T14:54:33.4578015Z ________________________ test_openai_chat_model_success ________________________
+2026-08-14T14:54:33.4578953Z tests/contexts/library/test_openai_chat_model.py:59: in test_openai_chat_model_success
+2026-08-14T14:54:33.4579765Z     deltas = list(model.stream(context))
+2026-08-14T14:54:33.4580321Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4581023Z src/contexts/library/infrastructure/openai_chat_model.py:17: in stream
+2026-08-14T14:54:33.4581921Z     api_key = get_secret(self.secret_name)
+2026-08-14T14:54:33.4582478Z               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4583134Z src/contexts/library/infrastructure/secrets.py:20: in get_secret
+2026-08-14T14:54:33.4583995Z     response = client("secretsmanager").get_secret_value(SecretId=secret_name)
+2026-08-14T14:54:33.4584725Z                ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4585292Z src/infrastructure/aws.py:24: in client
+2026-08-14T14:54:33.4585860Z     return boto3.client(service, **kwargs)
+2026-08-14T14:54:33.4586409Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4587056Z .venv/lib/python3.12/site-packages/boto3/__init__.py:93: in client
+2026-08-14T14:54:33.4587788Z     return _get_default_session().client(*args, **kwargs)
+2026-08-14T14:54:33.4588428Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4589095Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4589766Z     return self._session.create_client(
+2026-08-14T14:54:33.4590518Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4591441Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4591962Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4592637Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4593372Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4594261Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4594995Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4595707Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4596445Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4597550Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4598426Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4599163Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4599955Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4600757Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4601759Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4602405Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4603135Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4603883Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4604538Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4605289Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4606094Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4606855Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4607635Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4608406Z     raise NoRegionError()
+2026-08-14T14:54:33.4609029Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4609849Z _____________________ test_openai_chat_model_connect_error _____________________
+2026-08-14T14:54:33.4610792Z tests/contexts/library/test_openai_chat_model.py:72: in test_openai_chat_model_connect_error
+2026-08-14T14:54:33.4611754Z     list(model.stream(context))
+2026-08-14T14:54:33.4612440Z src/contexts/library/infrastructure/openai_chat_model.py:17: in stream
+2026-08-14T14:54:33.4613172Z     api_key = get_secret(self.secret_name)
+2026-08-14T14:54:33.4613725Z               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4614370Z src/contexts/library/infrastructure/secrets.py:20: in get_secret
+2026-08-14T14:54:33.4615223Z     response = client("secretsmanager").get_secret_value(SecretId=secret_name)
+2026-08-14T14:54:33.4615936Z                ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4616480Z src/infrastructure/aws.py:24: in client
+2026-08-14T14:54:33.4617048Z     return boto3.client(service, **kwargs)
+2026-08-14T14:54:33.4617594Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4618235Z .venv/lib/python3.12/site-packages/boto3/__init__.py:93: in client
+2026-08-14T14:54:33.4618957Z     return _get_default_session().client(*args, **kwargs)
+2026-08-14T14:54:33.4619581Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4620244Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4620921Z     return self._session.create_client(
+2026-08-14T14:54:33.4621740Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4622422Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4622930Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4623587Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4624311Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4625014Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4625730Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4626441Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4627168Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4628090Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4628851Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4629580Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4630358Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4631135Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4632267Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4632925Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4633650Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4634383Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4635051Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4635813Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4636645Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4637418Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4638183Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4638957Z     raise NoRegionError()
+2026-08-14T14:54:33.4639580Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4640423Z ___________________ test_openai_chat_model_mid_stream_error ____________________
+2026-08-14T14:54:33.4641527Z tests/contexts/library/test_openai_chat_model.py:86: in test_openai_chat_model_mid_stream_error
+2026-08-14T14:54:33.4642350Z     d1 = next(stream)
+2026-08-14T14:54:33.4642809Z          ^^^^^^^^^^^^
+2026-08-14T14:54:33.4643417Z src/contexts/library/infrastructure/openai_chat_model.py:17: in stream
+2026-08-14T14:54:33.4644144Z     api_key = get_secret(self.secret_name)
+2026-08-14T14:54:33.4644687Z               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4645458Z src/contexts/library/infrastructure/secrets.py:20: in get_secret
+2026-08-14T14:54:33.4646343Z     response = client("secretsmanager").get_secret_value(SecretId=secret_name)
+2026-08-14T14:54:33.4647051Z                ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4647602Z src/infrastructure/aws.py:24: in client
+2026-08-14T14:54:33.4648165Z     return boto3.client(service, **kwargs)
+2026-08-14T14:54:33.4648707Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4649406Z .venv/lib/python3.12/site-packages/boto3/__init__.py:93: in client
+2026-08-14T14:54:33.4650132Z     return _get_default_session().client(*args, **kwargs)
+2026-08-14T14:54:33.4650757Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4651553Z .venv/lib/python3.12/site-packages/boto3/session.py:337: in client
+2026-08-14T14:54:33.4652232Z     return self._session.create_client(
+2026-08-14T14:54:33.4652914Z .venv/lib/python3.12/site-packages/botocore/context.py:123: in wrapper
+2026-08-14T14:54:33.4653598Z     return func(*args, **kwargs)
+2026-08-14T14:54:33.4654105Z            ^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4654776Z .venv/lib/python3.12/site-packages/botocore/session.py:1031: in create_client
+2026-08-14T14:54:33.4655508Z     client = client_creator.create_client(
+2026-08-14T14:54:33.4656204Z .venv/lib/python3.12/site-packages/botocore/client.py:161: in create_client
+2026-08-14T14:54:33.4656920Z     client_args = self._get_client_args(
+2026-08-14T14:54:33.4657632Z .venv/lib/python3.12/site-packages/botocore/client.py:561: in _get_client_args
+2026-08-14T14:54:33.4658404Z     return args_creator.get_client_args(
+2026-08-14T14:54:33.4659102Z .venv/lib/python3.12/site-packages/botocore/args.py:121: in get_client_args
+2026-08-14T14:54:33.4659818Z     final_args = self.compute_client_args(
+2026-08-14T14:54:33.4660550Z .venv/lib/python3.12/site-packages/botocore/args.py:265: in compute_client_args
+2026-08-14T14:54:33.4661459Z     endpoint_config = self._compute_endpoint_config(
+2026-08-14T14:54:33.4662416Z .venv/lib/python3.12/site-packages/botocore/args.py:459: in _compute_endpoint_config
+2026-08-14T14:54:33.4663291Z     return self._resolve_endpoint(**resolve_endpoint_kwargs)
+2026-08-14T14:54:33.4663941Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-08-14T14:54:33.4664662Z .venv/lib/python3.12/site-packages/botocore/args.py:577: in _resolve_endpoint
+2026-08-14T14:54:33.4679008Z     return endpoint_bridge.resolve(
+2026-08-14T14:54:33.4680004Z .venv/lib/python3.12/site-packages/botocore/client.py:675: in resolve
+2026-08-14T14:54:33.4680808Z     resolved = self.endpoint_resolver.construct_endpoint(
+2026-08-14T14:54:33.4681845Z .venv/lib/python3.12/site-packages/botocore/regions.py:237: in construct_endpoint
+2026-08-14T14:54:33.4682647Z     result = self._endpoint_for_partition(
+2026-08-14T14:54:33.4683431Z .venv/lib/python3.12/site-packages/botocore/regions.py:285: in _endpoint_for_partition
+2026-08-14T14:54:33.4684220Z     raise NoRegionError()
+2026-08-14T14:54:33.4684872Z E   botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.4685666Z =============================== warnings summary ===============================
+2026-08-14T14:54:33.4686411Z .venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+2026-08-14T14:54:33.4688014Z   /home/runner/work/bookloud/bookloud/backend/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+2026-08-14T14:54:33.4689644Z     from starlette.testclient import TestClient as TestClient  # noqa
+2026-08-14T14:54:33.4690216Z 
+2026-08-14T14:54:33.4690779Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-08-14T14:54:33.4691731Z ================================ tests coverage ================================
+2026-08-14T14:54:33.4692513Z _______________ coverage: platform linux, python 3.12.13-final-0 _______________
+2026-08-14T14:54:33.4693103Z 
+2026-08-14T14:54:33.4693531Z Name                                                                    Stmts   Miss  Cover   Missing
+2026-08-14T14:54:33.4694379Z -----------------------------------------------------------------------------------------------------
+2026-08-14T14:54:33.4695238Z lambda_function.py                                                          3      0   100%
+2026-08-14T14:54:33.4696010Z src/__init__.py                                                             0      0   100%
+2026-08-14T14:54:33.4696809Z src/auth/__init__.py                                                        0      0   100%
+2026-08-14T14:54:33.4697617Z src/auth/controllers.py                                                     7      0   100%
+2026-08-14T14:54:33.4698467Z src/auth/dependencies.py                                                   23      0   100%
+2026-08-14T14:54:33.4699335Z src/auth/function_url.py                                                   37      3    92%   15-21
+2026-08-14T14:54:33.4700283Z src/auth/jwt_verifier.py                                                   62     31    50%   35-36, 40-42, 47-56, 63-64, 68, 74-99
+2026-08-14T14:54:33.4701366Z src/auth/local_dev.py                                                      42      3    93%   76-77, 79
+2026-08-14T14:54:33.4702190Z src/chat_app.py                                                            10      0   100%
+2026-08-14T14:54:33.4702942Z src/config.py                                                              30      0   100%
+2026-08-14T14:54:33.4703751Z src/contexts/__init__.py                                                    0      0   100%
+2026-08-14T14:54:33.4704618Z src/contexts/library/__init__.py                                            0      0   100%
+2026-08-14T14:54:33.4705541Z src/contexts/library/application/__init__.py                                0      0   100%
+2026-08-14T14:54:33.4706632Z src/contexts/library/application/chat.py                                   55     32    42%   26-27, 30-33, 38-39, 42-43, 64-70, 75-127
+2026-08-14T14:54:33.4708079Z src/contexts/library/application/commands.py                                6      0   100%
+2026-08-14T14:54:33.4709119Z src/contexts/library/application/delivery.py                               58      0   100%
+2026-08-14T14:54:33.4710120Z src/contexts/library/application/extraction.py                             74      0   100%
+2026-08-14T14:54:33.4711114Z src/contexts/library/application/resynthesis.py                            46      0   100%
+2026-08-14T14:54:33.4712525Z src/contexts/library/application/stitching.py                             143      0   100%
+2026-08-14T14:54:33.4713580Z src/contexts/library/application/synthesis.py                             130      2    98%   238, 266
+2026-08-14T14:54:33.4714642Z src/contexts/library/application/use_cases.py                              69      0   100%
+2026-08-14T14:54:33.4715584Z src/contexts/library/domain/__init__.py                                     0      0   100%
+2026-08-14T14:54:33.4716500Z src/contexts/library/domain/book.py                                        30      0   100%
+2026-08-14T14:54:33.4717460Z src/contexts/library/domain/chat.py                                       110     40    64%   79, 83, 101-107, 121-217
+2026-08-14T14:54:33.4718419Z src/contexts/library/domain/chunk.py                                       29      0   100%
+2026-08-14T14:54:33.4719399Z src/contexts/library/domain/chunking.py                                   162     10    94%   94, 145, 211, 269, 313, 320-324
+2026-08-14T14:54:33.4720388Z src/contexts/library/domain/extraction.py                                  33      0   100%
+2026-08-14T14:54:33.4721510Z src/contexts/library/domain/layout.py                                     139      4    97%   63, 248, 256, 263
+2026-08-14T14:54:33.4722488Z src/contexts/library/domain/marks.py                                       56      1    98%   98
+2026-08-14T14:54:33.4723413Z src/contexts/library/domain/repository.py                                  23      0   100%
+2026-08-14T14:54:33.4724360Z src/contexts/library/domain/stitching.py                                   61      0   100%
+2026-08-14T14:54:33.4725310Z src/contexts/library/domain/storage.py                                     21      0   100%
+2026-08-14T14:54:33.4726253Z src/contexts/library/domain/synthesis.py                                   36      0   100%
+2026-08-14T14:54:33.4727235Z src/contexts/library/domain/value_objects.py                               54      0   100%
+2026-08-14T14:54:33.4728216Z src/contexts/library/infrastructure/__init__.py                             0      0   100%
+2026-08-14T14:54:33.4729194Z src/contexts/library/infrastructure/book_mapper.py                         15      0   100%
+2026-08-14T14:54:33.4730235Z src/contexts/library/infrastructure/chat_mapper.py                         27     22    19%   6-27, 30-42
+2026-08-14T14:54:33.4731441Z src/contexts/library/infrastructure/chunk_mapper.py                        14      0   100%
+2026-08-14T14:54:33.4732476Z src/contexts/library/infrastructure/dynamodb_book_repository.py           114      0   100%
+2026-08-14T14:54:33.4733618Z src/contexts/library/infrastructure/dynamodb_chat_quota_repository.py      24     13    46%   13, 19-39, 42-51
+2026-08-14T14:54:33.4734858Z src/contexts/library/infrastructure/dynamodb_chat_repository.py            36     21    42%   17, 20-32, 35-37, 41-62
+2026-08-14T14:54:33.4735979Z src/contexts/library/infrastructure/dynamodb_chunk_repository.py           93      0   100%
+2026-08-14T14:54:33.4737051Z src/contexts/library/infrastructure/edge_tts_synthesizer.py                59      2    97%   79, 87
+2026-08-14T14:54:33.4738101Z src/contexts/library/infrastructure/fallback_synthesizer.py                17      0   100%
+2026-08-14T14:54:33.4739208Z src/contexts/library/infrastructure/google_tts_synthesizer.py             135      9    93%   63-67, 78, 134, 207-210
+2026-08-14T14:54:33.4740292Z src/contexts/library/infrastructure/keys.py                                25      0   100%
+2026-08-14T14:54:33.4741720Z src/contexts/library/infrastructure/mp3.py                                 96      6    94%   52, 54, 91, 97, 203-204
+2026-08-14T14:54:33.4742827Z src/contexts/library/infrastructure/openai_chat_model.py                   39     25    36%   18-61
+2026-08-14T14:54:33.4743883Z src/contexts/library/infrastructure/openai_prompt.py                       20      0   100%
+2026-08-14T14:54:33.4744941Z src/contexts/library/infrastructure/pymupdf_extractor.py                  116      0   100%
+2026-08-14T14:54:33.4746175Z src/contexts/library/infrastructure/s3_audio_delivery.py                   11      0   100%
+2026-08-14T14:54:33.4747199Z src/contexts/library/infrastructure/s3_client.py                           14      0   100%
+2026-08-14T14:54:33.4748186Z src/contexts/library/infrastructure/s3_keys.py                             53      0   100%
+2026-08-14T14:54:33.4749164Z src/contexts/library/infrastructure/s3_object_storage.py                   71      0   100%
+2026-08-14T14:54:33.4750155Z src/contexts/library/infrastructure/s3_pdf_storage.py                      25      0   100%
+2026-08-14T14:54:33.4751152Z src/contexts/library/infrastructure/secrets.py                             12      0   100%
+2026-08-14T14:54:33.4752443Z src/contexts/library/infrastructure/silent_synthesizer.py                  25      0   100%
+2026-08-14T14:54:33.4753454Z src/contexts/library/infrastructure/sqs_stitch_queue.py                    16      0   100%
+2026-08-14T14:54:33.4754472Z src/contexts/library/infrastructure/sqs_synthesis_queue.py                 40      0   100%
+2026-08-14T14:54:33.4755512Z src/contexts/library/infrastructure/stub_chat_model.py                     29      0   100%
+2026-08-14T14:54:33.4756523Z src/contexts/library/infrastructure/stub_synthesizer.py                     6      0   100%
+2026-08-14T14:54:33.4757509Z src/contexts/library/interface/__init__.py                                  0      0   100%
+2026-08-14T14:54:33.4758520Z src/contexts/library/interface/chat_controllers.py                         39     22    44%   36-76
+2026-08-14T14:54:33.4759588Z src/contexts/library/interface/controllers.py                              85      1    99%   282
+2026-08-14T14:54:33.4760681Z src/contexts/library/interface/dependencies.py                             79     10    87%   62-63, 66-67, 87-88, 99-100, 106-107
+2026-08-14T14:54:33.4761930Z src/contexts/library/interface/extract_handler.py                          50      0   100%
+2026-08-14T14:54:33.4762949Z src/contexts/library/interface/local_extract_worker.py                     29      0   100%
+2026-08-14T14:54:33.4763952Z src/contexts/library/interface/local_stitch_worker.py                      30      0   100%
+2026-08-14T14:54:33.4764949Z src/contexts/library/interface/local_synthesize_worker.py                  30      0   100%
+2026-08-14T14:54:33.4765970Z src/contexts/library/interface/schemas.py                                  32      2    94%   166-167
+2026-08-14T14:54:33.4766951Z src/contexts/library/interface/stitch_handler.py                           40      0   100%
+2026-08-14T14:54:33.4767961Z src/contexts/library/interface/synthesize_handler.py                       41      0   100%
+2026-08-14T14:54:33.4768865Z src/health/__init__.py                                                      0      0   100%
+2026-08-14T14:54:33.4769665Z src/health/controllers.py                                                   7      0   100%
+2026-08-14T14:54:33.4770501Z src/infrastructure/__init__.py                                              0      0   100%
+2026-08-14T14:54:33.4771468Z src/infrastructure/aws.py                                                  14      0   100%
+2026-08-14T14:54:33.4772327Z src/infrastructure/clock.py                                                 6      0   100%
+2026-08-14T14:54:33.4773189Z src/infrastructure/dynamodb.py                                              6      0   100%
+2026-08-14T14:54:33.4774037Z src/infrastructure/ids.py                                                   5      0   100%
+2026-08-14T14:54:33.4774815Z src/main.py                                                                28      0   100%
+2026-08-14T14:54:33.4775793Z src/shared_kernel/__init__.py                                               0      0   100%
+2026-08-14T14:54:33.4776671Z src/shared_kernel/application/__init__.py                                   0      0   100%
+2026-08-14T14:54:33.4777571Z src/shared_kernel/application/ports.py                                      5      0   100%
+2026-08-14T14:54:33.4778605Z src/shared_kernel/domain/__init__.py                                        0      0   100%
+2026-08-14T14:54:33.4779474Z src/shared_kernel/domain/errors.py                                         20      3    85%   54-56
+2026-08-14T14:54:33.4780368Z -----------------------------------------------------------------------------------------------------
+2026-08-14T14:54:33.4781173Z TOTAL                                                                    3227    262    92%
+2026-08-14T14:54:33.7258695Z Required test coverage of 90% reached. Total coverage: 91.88%
+2026-08-14T14:54:33.7260732Z =========================== short test summary info ============================
+2026-08-14T14:54:33.7262938Z FAILED tests/auth/test_jwt_verifier.py::test_valid_token - src.auth.jwt_verifier.InvalidToken: Unknown kid
+2026-08-14T14:54:33.7272312Z FAILED tests/auth/test_jwt_verifier.py::test_missing_kid - jwt.exceptions.InvalidTokenError: Key ID header parameter must be a string
+2026-08-14T14:54:33.7273874Z FAILED tests/auth/test_jwt_verifier.py::test_expired_token - AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.7274802Z   Expected regex: 'Token expired'
+2026-08-14T14:54:33.7291992Z   Actual message: 'Unknown kid'
+2026-08-14T14:54:33.7312350Z FAILED tests/auth/test_jwt_verifier.py::test_invalid_audience - AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.7315549Z   Expected regex: 'Invalid audience'
+2026-08-14T14:54:33.7331955Z   Actual message: 'Unknown kid'
+2026-08-14T14:54:33.7349263Z FAILED tests/auth/test_jwt_verifier.py::test_invalid_issuer - AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.7350256Z   Expected regex: 'Invalid issuer'
+2026-08-14T14:54:33.7350767Z   Actual message: 'Unknown kid'
+2026-08-14T14:54:33.7351797Z FAILED tests/auth/test_jwt_verifier.py::test_token_use_access - AssertionError: Regex pattern did not match.
+2026-08-14T14:54:33.7352651Z   Expected regex: 'Invalid token_use'
+2026-08-14T14:54:33.7353146Z   Actual message: 'Unknown kid'
+2026-08-14T14:54:33.7353806Z FAILED tests/auth/test_jwt_verifier.py::test_jwks_rate_limiting - assert 0 == 1
+2026-08-14T14:54:33.7355122Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_clamps_anchor - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7357214Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_window_clipped_not_shifted - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7359279Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_ceiling_eviction_drops_farthest - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7361686Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_ceiling_truncates_anchor_if_only_one_left - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7363765Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_history_truncation_and_normalization - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7365667Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_question_truncation - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7367422Z FAILED tests/contexts/library/test_chat_context.py::test_resolve_context_raises_if_no_chunks - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7369563Z FAILED tests/contexts/library/test_chat_context.py::test_chat_availability - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7371603Z FAILED tests/contexts/library/test_chat_controllers.py::test_ask_question_controller - TypeError: test_ask_question_controller.<locals>.<lambda>.<locals>.<lambda>() takes 1 positional argument but 2 were given
+2026-08-14T14:54:33.7373468Z FAILED tests/contexts/library/test_openai_chat_model.py::test_openai_chat_model_success - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7375286Z FAILED tests/contexts/library/test_openai_chat_model.py::test_openai_chat_model_connect_error - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7376966Z FAILED tests/contexts/library/test_openai_chat_model.py::test_openai_chat_model_mid_stream_error - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7378579Z ERROR tests/contexts/library/test_chat_quota_repository.py::test_increment_and_check - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7380249Z ERROR tests/contexts/library/test_chat_repository.py::test_save_turn_and_list_messages - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7381983Z ERROR tests/contexts/library/test_chat_repository.py::test_list_messages_limit - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7383478Z ERROR tests/contexts/library/test_chat_repository.py::test_clear - botocore.exceptions.NoRegionError: You must specify a region.
+2026-08-14T14:54:33.7384916Z ERROR tests/contexts/library/test_chat_use_case.py::test_ask_foreign_book - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7386564Z ERROR tests/contexts/library/test_chat_use_case.py::test_list_foreign_book - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7388154Z ERROR tests/contexts/library/test_chat_use_case.py::test_clear_foreign_book - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7389634Z ERROR tests/contexts/library/test_chat_use_case.py::test_ask_no_text - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7391089Z ERROR tests/contexts/library/test_chat_use_case.py::test_list_no_text - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7392894Z ERROR tests/contexts/library/test_chat_use_case.py::test_ask_quota_exceeded - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7394540Z ERROR tests/contexts/library/test_chat_use_case.py::test_ask_success_ordering - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7400260Z ERROR tests/contexts/library/test_chat_use_case.py::test_list_success - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7402065Z ERROR tests/contexts/library/test_chat_use_case.py::test_clear_success - TypeError: Book.__init__() missing 1 required positional argument: 'updated_at'
+2026-08-14T14:54:33.7403211Z ======= 19 failed, 860 passed, 1 warning, 13 errors in 73.29s (0:01:13) ========
+2026-08-14T14:54:34.4665500Z ##[error]Process completed with exit code 1.
+2026-08-14T14:54:34.4812760Z Post job cleanup.
+2026-08-14T14:54:34.5890133Z [command]/usr/bin/git version
+2026-08-14T14:54:34.5963529Z git version 2.54.0
+2026-08-14T14:54:34.6014551Z Temporarily overriding HOME='/home/runner/work/_temp/264c8f55-f320-42f3-876f-ab8ae364ea1d' before making global git config changes
+2026-08-14T14:54:34.6016111Z Adding repository directory to the temporary git global config as a safe directory
+2026-08-14T14:54:34.6035265Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/bookloud/bookloud
+2026-08-14T14:54:34.6152429Z Removing SSH command configuration
+2026-08-14T14:54:34.6167090Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-08-14T14:54:34.6222722Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-08-14T14:54:34.6619869Z Removing HTTP extra header
+2026-08-14T14:54:34.6632134Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-08-14T14:54:34.6674115Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-08-14T14:54:34.7202032Z Removing includeIf entries pointing to credentials config files
+2026-08-14T14:54:34.7232847Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-08-14T14:54:34.7305450Z includeif.gitdir:/home/runner/work/bookloud/bookloud/.git.path
+2026-08-14T14:54:34.7306470Z includeif.gitdir:/home/runner/work/bookloud/bookloud/.git/worktrees/*.path
+2026-08-14T14:54:34.7322285Z includeif.gitdir:/github/workspace/.git.path
+2026-08-14T14:54:34.7342268Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-14T14:54:34.7383239Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/bookloud/bookloud/.git.path
+2026-08-14T14:54:34.7452382Z /home/runner/work/_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:54:34.7506107Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/bookloud/bookloud/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-e1d15a8d\-e022\-4182\-8496\-e3106bc3a16d\.config
+2026-08-14T14:54:34.7702661Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/bookloud/bookloud/.git/worktrees/*.path
+2026-08-14T14:54:34.7760881Z /home/runner/work/_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:54:34.7787727Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/bookloud/bookloud/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-e1d15a8d\-e022\-4182\-8496\-e3106bc3a16d\.config
+2026-08-14T14:54:34.7871148Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-08-14T14:54:34.7907599Z /github/runner_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:54:34.7937572Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-e1d15a8d\-e022\-4182\-8496\-e3106bc3a16d\.config
+2026-08-14T14:54:34.8005524Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-08-14T14:54:34.8048048Z /github/runner_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config
+2026-08-14T14:54:34.8063989Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-e1d15a8d\-e022\-4182\-8496\-e3106bc3a16d\.config
+2026-08-14T14:54:34.8152437Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-08-14T14:54:34.8568197Z Removing credentials config '/home/runner/work/_temp/git-credentials-e1d15a8d-e022-4182-8496-e3106bc3a16d.config'
+2026-08-14T14:54:34.8779362Z Cleaning up orphan processes

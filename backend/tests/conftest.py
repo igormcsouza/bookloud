@@ -96,3 +96,4 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AWS_ENDPOINT_URL",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")

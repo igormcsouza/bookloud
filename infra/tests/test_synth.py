@@ -510,11 +510,12 @@ def test_pipeline_stack_no_google_secret_no_secretsmanager_actions_anywhere(envi
 # --- FrontendStack -------------------------------------------------------
 
 
-_FRONTEND_KWARGS = dict(
-    api_base_url="https://api.example.com",
-    cognito_client_id="test-client-id",
-    cognito_region="us-east-1",
-)
+_FRONTEND_KWARGS = {
+    "api_base_url": "https://api.example.com",
+    "chat_base_url": "https://chat.example.com",
+    "cognito_client_id": "test-client-id",
+    "cognito_region": "us-east-1",
+}
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
@@ -643,7 +644,7 @@ def test_api_stack_synthesizes(environment: str) -> None:
     # (2 synthesize + 1 extract + 2 stitch = 5 of an account-wide 10), so it
     # is enforced here rather than remembered. The reader adds *requests* to
     # this function, not functions.
-    template.resource_count_is("AWS::Lambda::Function", 1)
+    template.resource_count_is("AWS::Lambda::Function", 2)
     template.resource_count_is("AWS::ApiGatewayV2::Api", 1)
 
     routes = template.find_resources("AWS::ApiGatewayV2::Route")
@@ -793,7 +794,8 @@ def test_api_stack_has_queue_urls(environment: str) -> None:
     branch."""
     template = _synth_api_stack(environment)
 
-    (fn,) = template.find_resources("AWS::Lambda::Function").values()
+    lambdas = template.find_resources("AWS::Lambda::Function")
+    fn = next(res for name, res in lambdas.items() if name.startswith("ApiFunction"))
     env = fn["Properties"]["Environment"]["Variables"]
 
     assert "SYNTHESIZE_QUEUE_URL" in env

@@ -1105,7 +1105,7 @@ def main() -> int:
                 args.login_username,
                 args.login_password,
             )
-            check_upload_and_stitch(
+            book_id = check_upload_and_stitch(
                 args.api_url,
                 cognito_endpoint,
                 args.cognito_client_id,
@@ -1120,7 +1120,7 @@ def main() -> int:
             if args.chat_url:
                 check_chat(
                     args.chat_url,
-                    args.cognito_endpoint,
+                    cognito_endpoint,
                     args.cognito_client_id,
                     args.login_username,
                     args.login_password,

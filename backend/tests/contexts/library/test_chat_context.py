@@ -19,7 +19,8 @@ def make_book(status=BookStatus.READY, chunks_total=10) -> Book:
         chunks_total=chunks_total,
         chunks_done=chunks_total,
         page_count=0,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
