@@ -44,6 +44,8 @@ from src.contexts.library.domain.repository import BookRepository, ChunkReposito
 from src.contexts.library.domain.stitching import StitchQueue
 from src.contexts.library.domain.storage import AudioDelivery, ObjectStorage, PdfStorage
 from src.contexts.library.domain.synthesis import SynthesisQueue
+from src.contexts.library.domain.chat import ChatModel
+from src.contexts.library.domain.repository import ChatQuotaRepository
 from src.contexts.library.interface.dependencies import (
     get_audio_delivery,
     get_book_repository,
@@ -56,7 +58,10 @@ from src.contexts.library.interface.dependencies import (
     get_synthesis_queue,
     get_list_book_chat,
     get_clear_book_chat,
+    get_chat_model,
+    get_chat_quota_repository,
 )
+from src.config import settings
 from src.contexts.library.interface.schemas import (
     audio_url_to_dict,
     book_status_to_dict,
@@ -269,22 +274,50 @@ def list_book_chat(
     book_id: str,
     user: CurrentUser = Depends(get_current_user),
     use_case = Depends(get_list_book_chat),
+    model: ChatModel = Depends(get_chat_model),
+    chat_quota_repository: ChatQuotaRepository = Depends(get_chat_quota_repository),
+    clock: Clock = Depends(get_clock),
 ) -> dict:
+    """PLANS/phase-7.md §5.3: ``chat.enabled``/``reason`` here is the signal
+    the sidebar disables the composer on *before* a wasted turn, so it comes
+    from the same ``get_chat_model()`` gate the streaming endpoint uses --
+    never hardcoded."""
     from src.shared_kernel.domain.errors import ConflictError
     from src.contexts.library.interface.schemas import chat_list_to_dict
-    
+
+    today = clock.now().strftime("%Y-%m-%d")
+    used_today = chat_quota_repository.get_count(user.sub, today)
+    enabled = model.enabled
+    reason = model.reason.value if model.reason else None
+    reported_model = model.name if enabled else None
+
     try:
         messages = use_case.execute(user_id=user.sub, book_id=book_id)
-        return chat_list_to_dict(messages, enabled=True, reason=None)
+        return chat_list_to_dict(
+            messages,
+            enabled=enabled,
+            reason=reason,
+            model=reported_model,
+            daily_limit=settings.chat_daily_limit,
+            used_today=used_today,
+        )
     except ConflictError as e:
         if "NO_TEXT" in str(e):
-            return chat_list_to_dict([], enabled=False, reason="NO_TEXT")
+            return chat_list_to_dict(
+                [],
+                enabled=False,
+                reason="NO_TEXT",
+                model=None,
+                daily_limit=settings.chat_daily_limit,
+                used_today=used_today,
+            )
         raise
 
-@router.delete("/books/{book_id}/chat", status_code=204)
+@router.delete("/books/{book_id}/chat")
 def clear_book_chat(
     book_id: str,
     user: CurrentUser = Depends(get_current_user),
     use_case = Depends(get_clear_book_chat),
-) -> None:
-    use_case.execute(user_id=user.sub, book_id=book_id)
+) -> dict:
+    deleted = use_case.execute(user_id=user.sub, book_id=book_id)
+    return {"deleted": deleted}

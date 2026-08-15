@@ -1,9 +1,11 @@
+import asyncio
 import importlib
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
-from src.chat_app import app
+from src.chat_app import app, aws_error_handler
 
 @pytest.fixture
 def client():
@@ -36,3 +38,24 @@ def test_chat_app_auth_required_for_chat(monkeypatch):
 
     importlib.reload(config_module)
     importlib.reload(chat_app_module)
+
+
+def test_client_error_maps_to_503_llm_unavailable():
+    """PLANS/phase-7.md §4.5 step 7: get_chat_model()'s eager get_secret()
+    call raises ClientError as a FastAPI dependency -- before any byte of
+    the response -- and this handler is what turns that into one clean 503,
+    never a raw ResourceNotFoundException and never a half stream."""
+    exc = ClientError(
+        {"Error": {"Code": "ResourceNotFoundException", "Message": "not found"}},
+        "GetSecretValue",
+    )
+    fake_request = type(
+        "FakeRequest", (), {"method": "POST", "url": type("U", (), {"path": "/books/b1/chat"})()}
+    )()
+
+    response = asyncio.run(aws_error_handler(fake_request, exc))
+
+    assert response.status_code == 503
+    body = response.body.decode()
+    assert "LLM_UNAVAILABLE" in body
+    assert "ResourceNotFoundException" not in body

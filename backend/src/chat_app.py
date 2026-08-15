@@ -35,11 +35,18 @@ from src.shared_kernel.domain.errors import DomainError
 
 @app.exception_handler(ClientError)
 async def aws_error_handler(request: Request, exc: ClientError) -> JSONResponse:
+    """Reached only by get_chat_model()'s eager get_secret() call, which runs
+    as a FastAPI dependency -- i.e. before the route body, before the
+    StreamingResponse, before any byte (PLANS/phase-7.md §4.5 step 7). A prod
+    stack whose OPENAI_SECRET_NAME points at a secret that does not exist
+    (or that ChatFunction can't read) gets one clean 503, never a half
+    stream and never the raw ResourceNotFoundException."""
     import logging
     logger = logging.getLogger("bookloud")
     logger.error("AWS error on %s %s", request.method, request.url.path, exc_info=exc)
     return JSONResponse(
-        status_code=503, content={"detail": "Storage temporarily unavailable"}
+        status_code=503,
+        content={"code": "LLM_UNAVAILABLE", "message": "Chat is temporarily unavailable. Try again shortly."},
     )
 
 @app.exception_handler(DomainError)

@@ -84,12 +84,23 @@ class ChatContext:
 
 
 @dataclass(frozen=True)
+class ChatUsage:
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class ChatDelta:
     text: str
+    finish_reason: "FinishReason | None" = None
+    usage: "ChatUsage | None" = None
 
 
 class ChatModel(Protocol):
     name: str
+    enabled: bool
+    reason: "ChatDisabledReason | None"
 
     def stream(self, context: ChatContext) -> Iterator[ChatDelta]: ...  # pragma: no cover
 

@@ -46,22 +46,31 @@ async def ask_question(
 
     async def _body() -> AsyncIterator[bytes]:
         meta = {
-            "enabled": True,
-            "reason": None,
+            "enabled": model.enabled,
+            "reason": model.reason.value if model.reason else None,
             "model": model.name,
             "anchorChunk": context.anchor_chunk,
             "windowChunks": list(context.window_indexes),
             "messageId": assistant_message.message_id,
         }
         yield sse_frame("meta", meta)
-        
+
         answer_text = []
-        finish = FinishReason.END_TURN
-        
+        # Both stub paths finish DISABLED (PLANS/phase-7.md §5.1); a real
+        # model defaults to END_TURN unless a `finish_reason` delta overrides
+        # it below.
+        finish = FinishReason.END_TURN if model.enabled else FinishReason.DISABLED
+        usage = None
+
         try:
             for delta in model.stream(context):
-                answer_text.append(delta.text)
-                yield sse_frame("delta", {"text": delta.text})
+                if delta.text:
+                    answer_text.append(delta.text)
+                    yield sse_frame("delta", {"text": delta.text})
+                if delta.finish_reason is not None:
+                    finish = delta.finish_reason
+                if delta.usage is not None:
+                    usage = delta.usage
         except ChatStreamError as exc:
             finish = FinishReason.ERROR
             yield sse_frame("error", {"code": exc.code, "message": exc.public_message})
@@ -69,8 +78,27 @@ async def ask_question(
             if answer_text:
                 assistant_message.content = "".join(answer_text)
                 assistant_message.finish_reason = finish
+                if usage is not None:
+                    assistant_message.input_tokens = usage.input_tokens
+                    assistant_message.output_tokens = usage.output_tokens
+                    assistant_message.cached_input_tokens = usage.cached_input_tokens
                 chat_repository.save_turn(user_message, assistant_message)
-                
-            yield sse_frame("done", {"finishReason": finish.value, "messageId": assistant_message.message_id})
 
-    return StreamingResponse(_body(), media_type="text/event-stream")
+            done_payload = {"finishReason": finish.value, "messageId": assistant_message.message_id}
+            if usage is not None:
+                done_payload["usage"] = {
+                    "inputTokens": usage.input_tokens,
+                    "outputTokens": usage.output_tokens,
+                    "cachedInputTokens": usage.cached_input_tokens,
+                }
+            yield sse_frame("done", done_payload)
+
+    return StreamingResponse(
+        _body(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

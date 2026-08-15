@@ -37,8 +37,10 @@ class StubChatModel:
     prod whenever OPENAI_SECRET_NAME is "" (its default everywhere).
     """
     name = "stub"
+    enabled = False
 
     def __init__(self, reason: ChatDisabledReason) -> None:
+        self.reason = reason
         self._reason = reason
 
     def stream(self, context: ChatContext) -> Iterator[ChatDelta]:

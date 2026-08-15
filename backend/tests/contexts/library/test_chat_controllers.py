@@ -7,6 +7,8 @@ from src.auth.dependencies import get_current_user
 
 class FakeChatModel:
     name = "fake"
+    enabled = True
+    reason = None
     def stream(self, context):
         from src.contexts.library.domain.chat import ChatDelta
         yield ChatDelta("hello")

@@ -36,13 +36,14 @@ class DynamoDbChatRepository(ChatRepository):
             batch.put_item(Item=to_item(user_msg))
             batch.put_item(Item=to_item(assistant_msg))
 
-    def clear(self, book_id: str) -> None:
+    def clear(self, book_id: str) -> int:
         # Need to query all chat items and delete them
         pk = pk_book(book_id)
-        
+
         # We need to paginate to get all CHAT items
         last_evaluated_key = None
-        
+        deleted = 0
+
         with self.table.batch_writer() as batch:
             while True:
                 kwargs = {
@@ -50,13 +51,16 @@ class DynamoDbChatRepository(ChatRepository):
                 }
                 if last_evaluated_key:
                     kwargs["ExclusiveStartKey"] = last_evaluated_key
-                    
+
                 response = self.table.query(**kwargs)
                 items = response.get("Items", [])
-                
+
                 for item in items:
                     batch.delete_item(Key={"PK": pk, "SK": item["SK"]})
-                    
+                    deleted += 1
+
                 last_evaluated_key = response.get("LastEvaluatedKey")
                 if not last_evaluated_key:
                     break
+
+        return deleted

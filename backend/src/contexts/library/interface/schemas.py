@@ -149,12 +149,22 @@ def chat_message_to_dict(msg: 'ChatMessage') -> dict:
     }
 
 
-def chat_list_to_dict(messages: list['ChatMessage'], enabled: bool, reason: str | None) -> dict:
+def chat_list_to_dict(
+    messages: list['ChatMessage'],
+    *,
+    enabled: bool,
+    reason: str | None,
+    model: str | None,
+    daily_limit: int,
+    used_today: int,
+) -> dict:
     return {
         "chat": {
             "enabled": enabled,
             "reason": reason,
-            "model": None,
+            "model": model,
+            "dailyLimit": daily_limit,
+            "usedToday": used_today,
         },
         "messages": [chat_message_to_dict(m) for m in messages],
     }

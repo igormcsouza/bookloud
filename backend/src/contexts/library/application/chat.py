@@ -38,9 +38,9 @@ class ClearBookChat:
         self.book_repository = book_repository
         self.chat_repository = chat_repository
 
-    def execute(self, user_id: str, book_id: str) -> None:
+    def execute(self, user_id: str, book_id: str) -> int:
         book = _load_owned_book(self.book_repository, user_id, book_id)
-        self.chat_repository.clear(book.id)
+        return self.chat_repository.clear(book.id)
 
 
 @dataclass(frozen=True)

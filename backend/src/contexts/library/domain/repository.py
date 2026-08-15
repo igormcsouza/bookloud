@@ -188,7 +188,7 @@ class ChatRepository(Protocol):
     structural reason (PLANS/phase-7.md §7.3)."""
     def list_messages(self, book_id: str, limit: int = 50) -> list['ChatMessage']: ...  # pragma: no cover
     def save_turn(self, user_msg: 'ChatMessage', assistant_msg: 'ChatMessage') -> None: ...  # pragma: no cover
-    def clear(self, book_id: str) -> None: ...  # pragma: no cover
+    def clear(self, book_id: str) -> int: ...  # pragma: no cover
 
 
 class ChatQuotaRepository(Protocol):
