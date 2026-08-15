@@ -108,7 +108,7 @@ export default function PlayerBar({ playback, disabled = false, chatOpen = false
           className={`ml-2 flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
             chatOpen ? "bg-moss-400 text-ink-950 hover:bg-moss-300" : "bg-ink-800 text-sage hover:bg-ink-700 hover:text-white"
           }`}
-          title="Toggle Chat (c)"
+          title="Toggle Chat (Alt+C)"
           aria-pressed={chatOpen}
         >
           <svg className="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

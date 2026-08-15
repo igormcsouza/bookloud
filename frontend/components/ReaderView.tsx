@@ -169,7 +169,10 @@ export default function ReaderView({ bookId }: { bookId: string }) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "c" && e.target === document.body) {
+      // Alt+C, not a bare "c": `e.key` is still "c" when Ctrl is held for a
+      // Ctrl+C copy, so a bare-letter shortcut fires on every copy the user
+      // makes while nothing has focus -- closing chat out from under them.
+      if (e.key.toLowerCase() === "c" && e.altKey && !e.ctrlKey && !e.metaKey && e.target === document.body) {
         toggleChat();
       }
     };
@@ -236,26 +239,29 @@ export default function ReaderView({ bookId }: { bookId: string }) {
         // No PlayerBar means no toggle button reaches the user at all --
         // every non-prod/no-audio environment (the common case: phase-4
         // §0), and every book before it has audio in prod. Without this,
-        // closing the chat (via its own header button or the `c` shortcut)
-        // would make it unreachable again.
-        <button
-          type="button"
-          onClick={toggleChat}
-          title="Toggle Chat (c)"
-          aria-pressed={chatOpen}
-          className={`fixed bottom-4 right-4 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors ${
-            chatOpen ? "bg-moss-400 text-ink-950 hover:bg-moss-300" : "bg-ink-800 text-sage hover:bg-ink-700 hover:text-paper"
-          }`}
-        >
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-            />
-          </svg>
-        </button>
+        // closing the chat (via its own header button or Alt+C) would make
+        // it unreachable again. Hidden while chat is open: ChatSidebar's
+        // own header close button is the affordance then, and this button's
+        // fixed bottom-right position sits directly over the sidebar's
+        // composer otherwise.
+        !chatOpen && (
+          <button
+            type="button"
+            onClick={toggleChat}
+            title="Open chat (Alt+C)"
+            aria-pressed={chatOpen}
+            className="fixed bottom-4 right-4 flex items-center justify-center rounded-full bg-ink-800 p-3 text-sage shadow-lg transition-colors hover:bg-ink-700 hover:text-paper"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+              />
+            </svg>
+          </button>
+        )
       ) : (
         <PlayerBar
           playback={playback}

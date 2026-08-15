@@ -39,7 +39,7 @@ export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTo
         type="button"
         onClick={onClose}
         aria-label="Close chat"
-        title="Close chat (c)"
+        title="Close chat (Alt+C)"
         className="rounded p-1 text-sage hover:bg-ink-800 hover:text-paper"
       >
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
