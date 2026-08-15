@@ -58,6 +58,68 @@ def get_clock() -> Clock:
 def get_id_generator() -> IdGenerator:
     return Uuid4IdGenerator()
 
+def get_chat_repository():
+    from src.contexts.library.infrastructure.dynamodb_chat_repository import DynamoDbChatRepository
+    return DynamoDbChatRepository()
+
+def get_chat_quota_repository():
+    from src.contexts.library.infrastructure.dynamodb_chat_quota_repository import DynamoDbChatQuotaRepository
+    return DynamoDbChatQuotaRepository()
+
+def get_chat_model():
+    """PLANS/phase-4.md §0's rule, applied to the LLM (PLANS/phase-7.md
+    §5.2). The environment gate is checked FIRST and UNCONDITIONALLY: an
+    OPENAI_SECRET_NAME accidentally set on a PR stack still cannot produce a
+    network call, because OpenAiChatModel is never constructed outside prod.
+
+    ``get_secret()`` is called EAGERLY here, while building the model -- as a
+    FastAPI dependency this resolves before the route body runs and before
+    any byte of the response (including the SSE `meta` frame) is sent, so a
+    prod stack pointed at a secret that does not exist raises `ClientError`
+    here and chat_app.py's handler maps it to one clean 503 before streaming
+    ever starts (PLANS/phase-7.md §4.5 step 7, §6.4/OQ-A's correction)."""
+    from src.contexts.library.infrastructure.openai_chat_model import OpenAiChatModel
+    from src.contexts.library.infrastructure.stub_chat_model import StubChatModel
+    from src.contexts.library.domain.chat import ChatDisabledReason
+
+    if settings.environment != "prod":
+        return StubChatModel(reason=ChatDisabledReason.NON_PROD)
+
+    if not settings.openai_secret_name:
+        return StubChatModel(reason=ChatDisabledReason.NOT_CONFIGURED)
+
+    return OpenAiChatModel(
+        api_key=get_secret(settings.openai_secret_name),
+        model=settings.openai_model,
+        max_output_tokens=settings.openai_max_output_tokens,
+    )
+
+def get_ask_book_question() -> AskBookQuestion:
+    from src.contexts.library.application.chat import AskBookQuestion
+    return AskBookQuestion(
+        book_repository=get_book_repository(),
+        chunk_repository=get_chunk_repository(),
+        chat_repository=get_chat_repository(),
+        chat_quota_repository=get_chat_quota_repository(),
+        id_generator=get_id_generator(),
+        clock=get_clock(),
+        daily_limit=settings.chat_daily_limit,
+    )
+
+def get_list_book_chat():
+    from src.contexts.library.application.chat import ListBookChat
+    return ListBookChat(
+        book_repository=get_book_repository(),
+        chat_repository=get_chat_repository(),
+    )
+
+def get_clear_book_chat():
+    from src.contexts.library.application.chat import ClearBookChat
+    return ClearBookChat(
+        book_repository=get_book_repository(),
+        chat_repository=get_chat_repository(),
+    )
+
 
 def get_pdf_storage() -> PdfStorage:
     return S3PdfStorage(bucket=settings.pdf_bucket)

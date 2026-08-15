@@ -67,6 +67,9 @@ class BookRepository(Protocol):
 
     def delete(self, user_id: str, book_id: str) -> None: ...  # pragma: no cover
 
+    def get_manifest_key(self, book_id: str) -> str | None: ...  # pragma: no cover
+    def get_audio_key(self, book_id: str) -> str | None: ...  # pragma: no cover
+
     def update_status(
         self,
         user_id: str,
@@ -176,3 +179,20 @@ class ChunkRepository(Protocol):
         ...  # pragma: no cover
 
     def delete_for_book(self, book_id: str) -> int: ...  # pragma: no cover
+
+
+class ChatRepository(Protocol):
+    """``book_id`` must already have been authorized via
+    ``BookRepository.get(user_id, book_id)``. This port performs no access
+    control -- the same rule ``ChunkRepository`` carries, for the same
+    structural reason (PLANS/phase-7.md §7.3)."""
+    def list_messages(self, book_id: str, limit: int = 50) -> list['ChatMessage']: ...  # pragma: no cover
+    def save_turn(self, user_msg: 'ChatMessage', assistant_msg: 'ChatMessage') -> None: ...  # pragma: no cover
+    def clear(self, book_id: str) -> int: ...  # pragma: no cover
+
+
+class ChatQuotaRepository(Protocol):
+    def increment_and_check(self, user_id: str, date: str, limit: int) -> bool:
+        """Returns True if successful, False if the limit was already reached."""
+        ...  # pragma: no cover
+    def get_count(self, user_id: str, date: str) -> int: ...  # pragma: no cover

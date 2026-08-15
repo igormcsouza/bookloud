@@ -154,6 +154,7 @@ class PipelineStack(cdk.Stack):
             "ExtractFunction",
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir,
+                target="lambda",  # explicit: see api_stack.py's ApiFunction comment
                 cmd=["src.contexts.library.interface.extract_handler.handler"],
             ),
             # PyMuPDF text extraction is CPU-bound; more memory is
@@ -208,6 +209,7 @@ class PipelineStack(cdk.Stack):
             "SynthesizeFunction",
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir,
+                target="lambda",  # explicit: see api_stack.py's ApiFunction comment
                 cmd=["src.contexts.library.interface.synthesize_handler.handler"],
             ),
             # I/O-bound (websocket + HTTPS), not CPU-bound like extraction.
@@ -300,6 +302,7 @@ class PipelineStack(cdk.Stack):
             "StitchFunction",
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir,
+                target="lambda",  # explicit: see api_stack.py's ApiFunction comment
                 cmd=["src.contexts.library.interface.stitch_handler.handler"],
             ),
             # 1536 MB is NOT sized for the whole book: the multipart writer

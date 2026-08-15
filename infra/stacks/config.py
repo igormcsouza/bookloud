@@ -95,13 +95,34 @@ class Config:
 
     # --- env var name read by frontend/lib/api.ts ---
     ENV_API_BASE_URL = "NEXT_PUBLIC_API_BASE_URL"
+    ENV_CHAT_BASE_URL = "NEXT_PUBLIC_CHAT_BASE_URL"
 
     # --- env vars set on the SSR Lambda, read by frontend/lib/cognito.ts ---
     # Deliberately NOT NEXT_PUBLIC_* -- server-only, read at runtime by the
     # Next.js BFF route handlers, never baked into the client bundle.
     ENV_COGNITO_CLIENT_ID = "COGNITO_CLIENT_ID"
+    ENV_COGNITO_USER_POOL_ID = "COGNITO_USER_POOL_ID"
     ENV_COGNITO_REGION = "COGNITO_REGION"
     ENV_COGNITO_ENDPOINT = "COGNITO_ENDPOINT"  # local dev only (cognito-local); unset in AWS
+
+    # --- phase 7: Chat Lambda env vars, read by backend/src/config.py ---
+    ENV_OPENAI_SECRET_NAME = "OPENAI_SECRET_NAME"
+    ENV_OPENAI_MODEL = "OPENAI_MODEL"
+    ENV_OPENAI_MAX_OUTPUT_TOKENS = "OPENAI_MAX_OUTPUT_TOKENS"
+    ENV_CHAT_DAILY_LIMIT = "CHAT_DAILY_LIMIT"
+
+    # Documented *name* the out-of-band secret is created under (PLANS/
+    # phase-7.md §5.2's two-step key setup) -- not a default for
+    # ENV_OPENAI_SECRET_NAME itself, which stays "" everywhere including
+    # prod (app.py) until a human deliberately deploys with the context flag.
+    OPENAI_SECRET_NAME = "bookloud/openai-api-key"
+    # Deployed default for OPENAI_MODEL/OPENAI_MAX_OUTPUT_TOKENS/
+    # CHAT_DAILY_LIMIT -- kept in lockstep with backend/src/config.py's
+    # Settings defaults so a stack that omits the context flag still gets
+    # the same numbers the backend would fall back to on its own.
+    DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+    OPENAI_MAX_OUTPUT_TOKENS = 700
+    CHAT_DAILY_LIMIT = 50
 
 
 def is_prod(environment: str) -> bool:

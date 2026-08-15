@@ -18,6 +18,12 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
+    with:
+      # The full docker-compose e2e suite (with the playback project) is
+      # main-only -- expensive to run on every commit, and this job already
+      # runs its own Playwright pass (chromium only) against the real
+      # ephemeral deploy below.
+      run_e2e: false
 
   deploy:
     name: Deploy PR Environment
@@ -94,6 +100,7 @@ jobs:
           api = outputs.get(f"BookloudApi-{env_name}", {})
           auth = outputs.get(f"BookloudAuth-{env_name}", {})
           print(f"api_url={api.get('ApiUrl', '').rstrip('/')}")
+          print(f"chat_url={api.get('ChatUrl', '').rstrip('/')}")
           print(f"user_pool_id={auth.get('UserPoolId', '')}")
           print(f"user_pool_client_id={auth.get('UserPoolClientId', '')}")
           PY
@@ -170,6 +177,7 @@ jobs:
         working-directory: frontend
         env:
           NEXT_PUBLIC_API_BASE_URL: ${{ steps.deploy-backend.outputs.api_url }}
+          NEXT_PUBLIC_CHAT_BASE_URL: ${{ steps.deploy-backend.outputs.chat_url }}
         run: npx open-next build
 
       - name: Verify OpenNext output
@@ -215,6 +223,7 @@ jobs:
         run: |
           python3 local/smoke_test.py \
             --api-url "${{ steps.deploy-backend.outputs.api_url }}" \
+            --chat-url "${{ steps.deploy-backend.outputs.chat_url }}" \
             --frontend-url "${{ steps.frontend-url.outputs.url }}" \
             --expect-commit "${{ github.sha }}" \
             --expect-environment "${{ env.ENV_NAME }}" \

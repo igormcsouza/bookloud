@@ -4,6 +4,7 @@ import {
   BookNotFoundError,
   CHUNK_COUNT_WARNING,
   NoAudioError,
+  clearChat,
   createBook,
   getAudioUrl,
   getBookChunks,
@@ -11,6 +12,7 @@ import {
   getManifest,
   getMarks,
   listBooks,
+  listChat,
   reissueUpload,
   resynthesize,
   uploadToS3,
@@ -185,6 +187,42 @@ describe("writes", () => {
   it("resynthesize maps 404 to BookNotFoundError", async () => {
     authFetchMock.mockResolvedValue(respond(404));
     await expect(resynthesize("b1")).rejects.toBeInstanceOf(BookNotFoundError);
+  });
+});
+
+describe("listChat", () => {
+  it("returns {messages, chat} from GET /books/{id}/chat", async () => {
+    const payload = {
+      messages: [{ id: "1", role: "user", content: "hi", anchoredChunk: 0, createdAt: "t", positionMs: null, model: null, finishReason: null, inputTokens: null, outputTokens: null, cachedInputTokens: null }],
+      chat: { enabled: false, reason: "NON_PROD", model: null, dailyLimit: 50, usedToday: 0 },
+    };
+    authFetchMock.mockResolvedValue(respond(200, payload));
+
+    const result = await listChat("b1");
+
+    expect(authFetchMock).toHaveBeenCalledWith("http://api.test/books/b1/chat", undefined);
+    expect(result).toEqual(payload);
+  });
+
+  it("maps 404 to BookNotFoundError", async () => {
+    authFetchMock.mockResolvedValue(respond(404));
+    await expect(listChat("b1")).rejects.toBeInstanceOf(BookNotFoundError);
+  });
+});
+
+describe("clearChat", () => {
+  it("issues a DELETE and returns {deleted}", async () => {
+    authFetchMock.mockResolvedValue(respond(200, { deleted: 4 }));
+
+    const result = await clearChat("b1");
+
+    expect(authFetchMock).toHaveBeenCalledWith("http://api.test/books/b1/chat", { method: "DELETE" });
+    expect(result).toEqual({ deleted: 4 });
+  });
+
+  it("maps 404 to BookNotFoundError", async () => {
+    authFetchMock.mockResolvedValue(respond(404));
+    await expect(clearChat("b1")).rejects.toBeInstanceOf(BookNotFoundError);
   });
 });
 

@@ -39,3 +39,18 @@ class ValidationError(DomainError):
     the input itself, not the aggregate's current state."""
 
     status_code = 400
+
+
+class QuotaExceededError(DomainError):
+    status_code = 429
+
+
+class ChatStreamError(DomainError):
+    """Raised during model streaming (e.g., network failure mid-stream).
+    Carries a code for the client."""
+    status_code = 500
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message

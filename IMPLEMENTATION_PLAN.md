@@ -44,7 +44,8 @@ UI: left sidebar = list of uploaded books; center = reading pane + play controls
 |---|---|---|
 | `USER#<id>` | `BOOK#<bookId>` | title, status, chunksTotal, chunksDone, pageCount, createdAt |
 | `BOOK#<bookId>` | `CHUNK#<n>` | text, charStart, charEnd, audioKey, marksKey, status |
-| `BOOK#<bookId>` | `CHAT#<msgId>` | role, content, anchoredChunk, createdAt |
+| `BOOK#<bookId>` | `CHAT#<timestamp>#<msgId>` | role, content, anchoredChunk, createdAt |
+| `USER#<id>` | `QUOTA#<YYYY-MM>` | requestsCount |
 
 ## Phases
 
@@ -127,5 +128,5 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - [x] Phase 4 — TTS synthesis pipeline
 - [x] Phase 5 — Stitching & status polling
 - [x] Phase 6 — Reader UI
-- [ ] Phase 7 — Chat sidebar
+- [x] Phase 7 — Chat sidebar
 - [ ] Phase 8 — CD hardening

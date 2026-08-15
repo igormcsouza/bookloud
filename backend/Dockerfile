@@ -1,9 +1,12 @@
 # Multi-target image for the Bookloud backend.
 #   `dev`    — plain uvicorn server with hot reload, used by docker-compose.
-#   `lambda` — Lambda container image (the default/final stage, so
-#              `DockerImageCode.from_image_asset` in CDK picks it up without
-#              an explicit `target=`). Behavior is driven entirely by
-#              environment variables in both targets.
+#   `lambda` — Lambda container image (the RIC-based one every function
+#              except ChatFunction runs). Every `DockerImageCode.
+#              from_image_asset` call in infra/ passes an explicit
+#              `target="lambda"` -- do not rely on "it's the default stage"
+#              again; see the anonymous final stage at the bottom of this
+#              file for why. Behavior is driven entirely by environment
+#              variables in both targets.
 #
 # Container image (not a zip) because phases 3-4 pull in PyMuPDF and
 # edge-tts, which blow past the Lambda zip layer size limits; establishing
@@ -22,7 +25,7 @@ COPY . .
 
 CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-# --- lambda (default/final stage) -------------------------------------
+# --- lambda -------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.12 AS lambda
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -41,3 +44,57 @@ COPY lambda_function.py ./
 COPY src ./src
 
 CMD ["lambda_function.handler"]
+
+# --- lambda-stream (response streaming; PLANS/phase-7.md §9.2) --------------
+#
+# FROM lambda, so this is the SAME dependency set and the SAME src/ -- the
+# pushed delta is one small layer, not a second full image.
+#
+# The adapter is HERE and NOT in the `lambda` stage, and that is load-bearing:
+# anything in /opt/extensions/ is started as an external extension for EVERY
+# function built from that image. Put it in `lambda` and the adapter would
+# come up alongside the Runtime Interface Client on ExtractFunction,
+# SynthesizeFunction, StitchFunction and ApiFunction, with both polling the
+# Runtime API. Do not "simplify" this by moving the COPY up.
+FROM lambda AS lambda-stream
+
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
+
+# AWS_LWA_ASYNC_INIT is deliberately NOT set (default false). It exists to
+# let a slow-starting app return from Lambda's INIT phase before the app is
+# actually ready, avoiding an INIT timeout -- but the cost, observed on a
+# real deploy, is worse than advertised: the FIRST invocation on a cold
+# container can be handed to the platform before uvicorn's readiness check
+# passes and comes back as a client-facing 503, even though the app finishes
+# booting and answers that same request successfully a moment later
+# server-side (visible in CloudWatch as "POST ... 200 OK" right after
+# "app is not ready after 2000ms", while the browser saw 503/"Failed to
+# fetch"). This app's own init is ~3.6s, comfortably inside Lambda's default
+# 10s INIT timeout, so there's no reason to take that trade here: the
+# synchronous default makes Lambda wait for real readiness during INIT,
+# before ever routing a request to the app, at the cost of a slightly
+# longer cold start instead of an occasional dropped first message.
+ENV AWS_LWA_INVOKE_MODE=response_stream \
+    AWS_LWA_PORT=8080 \
+    AWS_LWA_READINESS_CHECK_PATH=/health \
+    PYTHONPATH=/var/task
+
+# The base image's ENTRYPOINT is the RIC. Clear it: with the adapter present,
+# the container's job is to be a web server, and the adapter owns the Runtime
+# API loop.
+ENTRYPOINT []
+CMD ["python3", "-m", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# --- default target -------------------------------------------------------
+#
+# `docker build` with no `--target` picks the LAST stage in the file. That
+# used to be `lambda` -- silently became `lambda-stream` the moment it was
+# appended above, and every function whose CDK call omitted `target=`
+# started building the wrong image (uvicorn serving `src.chat_app:app`, no
+# Runtime Interface Client) until it 500'd on every route including
+# `/health`. Every CDK call site now passes an explicit target; this
+# anonymous final stage is belt-and-suspenders so a bare `docker build .`
+# still does the intuitive thing too -- content-identical to `lambda`
+# (fully cached, zero extra cost), it exists only to be the last stage in
+# the file again.
+FROM lambda

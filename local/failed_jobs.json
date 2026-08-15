@@ -1,0 +1,4 @@
+{"id":94803698690,"name":"CI / Backend tests"}
+{"id":94803698763,"name":"CI / Local compose Playwright e2e"}
+{"id":94803698793,"name":"CI / Local compose smoke test"}
+{"id":94803698804,"name":"CI / Infra tests + synth"}

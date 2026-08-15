@@ -2,6 +2,17 @@ name: CI
 
 on:
   workflow_call:
+    inputs:
+      run_e2e:
+        description: >-
+          Run the full local-compose Playwright suite (with the playback
+          project -- docker up, browser+codec install, the heaviest job
+          here). deploy-pr.yml's own post-deploy Playwright step (chromium
+          only, against the real ephemeral stack) is unaffected by this and
+          always runs on a PR; this flag is only about the docker-compose
+          e2e-local job, which is expensive enough to reserve for main.
+        type: boolean
+        default: false
 
 jobs:
   test-backend:
@@ -96,6 +107,7 @@ jobs:
 
   local-smoke:
     name: Local compose smoke test
+    needs: [test-backend, test-frontend, test-infra]
     runs-on: ubuntu-latest
 
     steps:
@@ -129,6 +141,8 @@ jobs:
   # workflow, every PR runs it.
   e2e-local:
     name: Local compose Playwright e2e
+    needs: [test-backend, test-frontend, test-infra]
+    if: inputs.run_e2e
     runs-on: ubuntu-latest
 
     steps:

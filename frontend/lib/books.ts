@@ -251,3 +251,44 @@ export async function uploadToS3(url: string, form: FormData): Promise<void> {
     throw new ApiError(res.status, "Upload failed — try again.");
   }
 }
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  anchoredChunk: number;
+  createdAt: string;
+  positionMs: number | null;
+  model: string | null;
+  finishReason: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
+};
+
+export type ChatEnvelope = {
+  enabled: boolean;
+  reason: string | null;
+  model: string | null;
+  dailyLimit: number;
+  usedToday: number;
+};
+
+export type ChatListing = {
+  messages: ChatMessage[];
+  chat: ChatEnvelope;
+};
+
+export async function listChat(bookId: string): Promise<ChatListing> {
+  const res = await authFetch(apiUrl(`/books/${bookId}/chat`));
+  if (res.status === 404) throw new BookNotFoundError();
+  if (!res.ok) throw await failure(res, "Could not load chat history.");
+  return res.json();
+}
+
+export async function clearChat(bookId: string): Promise<{ deleted: number }> {
+  const res = await authFetch(apiUrl(`/books/${bookId}/chat`), { method: "DELETE" });
+  if (res.status === 404) throw new BookNotFoundError();
+  if (!res.ok) throw await failure(res, "Could not clear chat history.");
+  return res.json();
+}

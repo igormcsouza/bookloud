@@ -4,6 +4,9 @@ import { clearSession, getIdToken } from "@/lib/auth";
 export const apiUrl = (path: string): string =>
   `${(process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")}${path}`;
 
+export const chatUrl = (path: string): string =>
+  `${(process.env.NEXT_PUBLIC_CHAT_BASE_URL ?? "http://localhost:8001").replace(/\/$/, "")}${path}`;
+
 /**
  * fetch() against the backend API with the id token attached, when one
  * exists. On a 401 the token is stale/invalid: clear it and bounce to

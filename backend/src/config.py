@@ -72,5 +72,14 @@ class Settings(BaseSettings):
     # real AWS) everywhere else. Never set by CDK.
     s3_public_endpoint_url: str = ""
 
+    cognito_user_pool_id: str = ""
+    cognito_client_id: str = ""
+    cognito_endpoint_url: str | None = None
+    aws_region: str = "us-east-1"
+
+    openai_secret_name: str = ""
+    openai_model: str = "gpt-4.1-mini"
+    openai_max_output_tokens: int = 700
+    chat_daily_limit: int = 50
 
 settings = Settings()

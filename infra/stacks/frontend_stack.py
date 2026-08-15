@@ -33,6 +33,7 @@ class FrontendStack(cdk.Stack):
         construct_id: str,
         *,
         api_base_url: str,
+        chat_base_url: str,
         cognito_client_id: str,
         cognito_region: str,
         environment: str,
@@ -77,6 +78,7 @@ class FrontendStack(cdk.Stack):
             timeout=cdk.Duration.seconds(30),
             environment={
                 Config.ENV_API_BASE_URL: api_base_url,
+                Config.ENV_CHAT_BASE_URL: chat_base_url,
                 # Server-only, deliberately NOT NEXT_PUBLIC_* -- read at
                 # runtime by the Next.js BFF route handlers
                 # (frontend/lib/cognito.ts), never baked into the client

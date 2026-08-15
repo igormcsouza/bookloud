@@ -8,6 +8,8 @@ import ReadingPane from "@/components/ReadingPane";
 import { useBooks } from "@/components/BooksProvider";
 import { useBookStatus } from "@/hooks/useBookStatus";
 import { usePlayback } from "@/hooks/usePlayback";
+import { useReadingAnchor } from "@/hooks/useReadingAnchor";
+import ChatSidebar from "@/components/ChatSidebar";
 import {
   AlreadyRetryingError,
   getBookChunks,
@@ -139,41 +141,134 @@ export default function ReaderView({ bookId }: { bookId: string }) {
     missingCount: manifest?.missing.length,
   });
 
+  const anchorRef = useReadingAnchor(playback.state.chunkIndex, chunksTotal);
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenedOnceRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("bookloud.chatOpen");
+      if (stored !== null) {
+        setChatOpen(stored === "true");
+        chatOpenedOnceRef.current = true;
+      }
+    }
+  }, []);
+
+  const toggleChat = useCallback(() => {
+    setChatOpen((prev) => {
+      const next = !prev;
+      chatOpenedOnceRef.current = true;
+      try {
+        window.localStorage.setItem("bookloud.chatOpen", String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Alt+C, not a bare "c": `e.key` is still "c" when Ctrl is held for a
+      // Ctrl+C copy, so a bare-letter shortcut fires on every copy the user
+      // makes while nothing has focus -- closing chat out from under them.
+      if (e.key.toLowerCase() === "c" && e.altKey && !e.ctrlKey && !e.metaKey && e.target === document.body) {
+        toggleChat();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleChat]);
+
+  // auto-open once the first time playback starts
+  useEffect(() => {
+    if (playback.state.playing && !chatOpenedOnceRef.current) {
+      setChatOpen(true);
+      chatOpenedOnceRef.current = true;
+      try {
+        window.localStorage.setItem("bookloud.chatOpen", "true");
+      } catch {}
+    }
+  }, [playback.state.playing]);
+
   return (
     <main data-testid="reader" className="flex h-screen flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
-        {stalled ? (
-          <p role="status" data-testid="reader-stalled" className="mb-4 text-sm text-sage">
-            Still processing. Reload to keep watching.
-          </p>
-        ) : null}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex-1 overflow-y-auto px-8 py-6">
+          {stalled ? (
+            <p role="status" data-testid="reader-stalled" className="mb-4 text-sm text-sage">
+              Still processing. Reload to keep watching.
+            </p>
+          ) : null}
 
-        <AudioNotice
-          notice={notice}
-          onRetryAudio={onRetryAudio}
-          onReupload={onReupload}
-          retrying={retrying}
-          error={actionError}
-        />
+          <AudioNotice
+            notice={notice}
+            onRetryAudio={onRetryAudio}
+            onReupload={onReupload}
+            retrying={retrying}
+            error={actionError}
+          />
 
-        {/* §9 rule 1: if chunk text exists, it renders. There is no state in
-            which an error screen replaces the reading pane while text is
-            available. */}
-        {status?.status === "FAILED" && chunks.length === 0 ? null : (
-          <ReadingPane
-            chunks={chunks}
-            activeChunkIndex={playback.state.chunkIndex}
-            wordStart={playback.state.wordStart}
-            wordEnd={playback.state.wordEnd}
-            missingChunks={manifest?.missing ?? []}
-            estimatedTiming={playback.state.estimatedTiming}
+          {/* §9 rule 1: if chunk text exists, it renders. There is no state in
+              which an error screen replaces the reading pane while text is
+              available. */}
+          {status?.status === "FAILED" && chunks.length === 0 ? null : (
+            <ReadingPane
+              chunks={chunks}
+              activeChunkIndex={playback.state.chunkIndex}
+              wordStart={playback.state.wordStart}
+              wordEnd={playback.state.wordEnd}
+              missingChunks={manifest?.missing ?? []}
+              estimatedTiming={playback.state.estimatedTiming}
+              onSeekToChunk={player === "enabled" ? playback.seekToChunk : undefined}
+            />
+          )}
+        </div>
+        {chatOpen && (
+          <ChatSidebar
+            bookId={bookId}
+            anchorRef={anchorRef}
+            chunksTotal={chunksTotal}
             onSeekToChunk={player === "enabled" ? playback.seekToChunk : undefined}
+            onClose={toggleChat}
           />
         )}
       </div>
 
-      {player === "absent" ? null : (
-        <PlayerBar playback={playback} disabled={player === "disabled"} />
+      {player === "absent" ? (
+        // No PlayerBar means no toggle button reaches the user at all --
+        // every non-prod/no-audio environment (the common case: phase-4
+        // §0), and every book before it has audio in prod. Without this,
+        // closing the chat (via its own header button or Alt+C) would make
+        // it unreachable again. Hidden while chat is open: ChatSidebar's
+        // own header close button is the affordance then, and this button's
+        // fixed bottom-right position sits directly over the sidebar's
+        // composer otherwise.
+        !chatOpen && (
+          <button
+            type="button"
+            onClick={toggleChat}
+            title="Open chat (Alt+C)"
+            aria-pressed={chatOpen}
+            className="fixed bottom-4 right-4 flex items-center justify-center rounded-full bg-ink-800 p-3 text-sage shadow-lg transition-colors hover:bg-ink-700 hover:text-paper"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+              />
+            </svg>
+          </button>
+        )
+      ) : (
+        <PlayerBar
+          playback={playback}
+          disabled={player === "disabled"}
+          chatOpen={chatOpen}
+          onToggleChat={toggleChat}
+        />
       )}
     </main>
   );

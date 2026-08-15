@@ -50,6 +50,7 @@ class ApiStack(cdk.Stack):
         user_pool_client: cognito.IUserPoolClient,
         environment: str,
         git_sha: str,
+        openai_secret_name: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -64,7 +65,16 @@ class ApiStack(cdk.Stack):
         fn = lambda_.DockerImageFunction(
             self,
             "ApiFunction",
-            code=lambda_.DockerImageCode.from_image_asset(backend_dir),
+            # Explicit target: `backend/Dockerfile` gained a `lambda-stream`
+            # stage after `lambda` for phase 7's ChatFunction (FROM lambda AS
+            # lambda-stream), which silently changed which stage `docker
+            # build` picks when no --target is given -- it's the LAST stage
+            # in the file, not necessarily `lambda`. Every function that
+            # relied on that default (this one, and pipeline_stack.py's
+            # three) was building the wrong image (uvicorn/chat_app, no RIC)
+            # until this was made explicit -- caught by a real deploy
+            # returning 500 on every route including /health.
+            code=lambda_.DockerImageCode.from_image_asset(backend_dir, target="lambda"),
             memory_size=512,
             timeout=cdk.Duration.seconds(30),
             environment={
@@ -213,5 +223,81 @@ class ApiStack(cdk.Stack):
         self.http_api = http_api
         self.api_function = fn
 
+        # ApiFunction needs OPENAI_SECRET_NAME/CHAT_DAILY_LIMIT too -- it's
+        # what GET /books/{id}/chat uses to compute chat.enabled/dailyLimit
+        # (PLANS/phase-7.md §9.3) -- but deliberately gets NO secret grant
+        # (see below): it can test the name for emptiness, never read the
+        # value.
+        fn.add_environment(Config.ENV_OPENAI_SECRET_NAME, openai_secret_name)
+        fn.add_environment(Config.ENV_CHAT_DAILY_LIMIT, str(Config.CHAT_DAILY_LIMIT))
+
         cdk.CfnOutput(self, "ApiUrl", value=http_api.url or "")
         cdk.CfnOutput(self, "ApiFunctionName", value=fn.function_name)
+
+        chat_env = {
+            Config.ENV_ENVIRONMENT: environment,
+            Config.ENV_GIT_SHA: git_sha,
+            Config.ENV_TABLE_NAME: table.table_name,
+            Config.ENV_PDF_BUCKET: pdf_bucket.bucket_name,
+            Config.ENV_AUDIO_BUCKET: audio_bucket.bucket_name,
+            Config.ENV_MARKS_BUCKET: marks_bucket.bucket_name,
+            Config.ENV_COGNITO_USER_POOL_ID: user_pool.user_pool_id,
+            Config.ENV_COGNITO_CLIENT_ID: user_pool_client.user_pool_client_id,
+            Config.ENV_COGNITO_REGION: cdk.Stack.of(self).region,
+            Config.ENV_OPENAI_SECRET_NAME: openai_secret_name,  # "" unless -c
+            Config.ENV_OPENAI_MODEL: Config.DEFAULT_OPENAI_MODEL,
+            Config.ENV_OPENAI_MAX_OUTPUT_TOKENS: str(Config.OPENAI_MAX_OUTPUT_TOKENS),
+            Config.ENV_CHAT_DAILY_LIMIT: str(Config.CHAT_DAILY_LIMIT),
+            Config.ENV_LOG_LEVEL: "INFO",
+        }
+
+        self.chat_fn = lambda_.DockerImageFunction(
+            self, "ChatFunction",
+            code=lambda_.DockerImageCode.from_image_asset(
+                backend_dir, target="lambda-stream"
+            ),
+            # X86_64, same as every other function in this stack (no
+            # `architecture=` override -- that's the default). ARM_64 here
+            # sets `--platform linux/arm64` on the DockerImageAsset build,
+            # which needs QEMU/binfmt cross-arch emulation this account's CI
+            # runners don't have: `RUN uv export ...` in the shared `lambda`
+            # stage fails with "exec format error" on every build, because
+            # the runner can pull an arm64 `ghcr.io/astral-sh/uv` binary but
+            # cannot execute it. Reintroducing ARM_64 needs a
+            # docker/setup-qemu-action step in every workflow that builds
+            # this image first.
+            memory_size=512,        # I/O-bound: one DynamoDB Query pair + one HTTPS stream
+            timeout=cdk.Duration.seconds(120),
+            environment=chat_env,
+            # NO reserved_concurrent_executions -- same account-quota wall as
+            # every other function here (PLANS/phase-4.md §0's §6.3
+            # correction). infra/tests/test_synth.py asserts Match.absent()
+            # so re-adding it fails a unit test instead of a six-minute
+            # deploy.
+        )
+        table.grant_read_write_data(self.chat_fn)   # Query CHUNK#/CHAT#, UpdateItem quota, PutItem turns
+        # No S3 grant, no SQS grant -- asserted in test_synth.py, because the
+        # streaming function is the one with a public URL and its blast
+        # radius should be exactly "this user's books".
+
+        if openai_secret_name:
+            from aws_cdk import aws_secretsmanager
+            secret = aws_secretsmanager.Secret.from_secret_name_v2(self, "OpenAiSecret", openai_secret_name)
+            secret.grant_read(self.chat_fn)
+            # Deliberately NOT granted on `fn` (ApiFunction) -- it only needs
+            # the *name* to test for emptiness, never read access to the
+            # value (PLANS/phase-7.md §9.3, §13.3
+            # test_api_function_cannot_read_the_secret).
+
+        self.chat_url = self.chat_fn.add_function_url(
+            auth_type=lambda_.FunctionUrlAuthType.NONE,
+            invoke_mode=lambda_.InvokeMode.RESPONSE_STREAM,
+            cors=lambda_.FunctionUrlCorsOptions(
+                allowed_origins=["*"],
+                allowed_methods=[lambda_.HttpMethod.POST],
+                allowed_headers=["authorization", "content-type"],
+                max_age=cdk.Duration.hours(1),
+            ),
+        )
+
+        cdk.CfnOutput(self, "ChatUrl", value=self.chat_url.url)
