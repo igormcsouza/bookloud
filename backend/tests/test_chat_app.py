@@ -36,6 +36,48 @@ def test_chat_app_auth_required_for_chat(monkeypatch):
     assert response.status_code == 401
     assert response.json()["message"] == "UNAUTHENTICATED"
 
+    # Restore local state for every test after this one in the session --
+    # must happen with ENVIRONMENT actually unset, not merely "about to be
+    # unset once monkeypatch tears down after this function returns". The
+    # module reload itself is synchronous and reads os.environ right now, so
+    # reloading while monkeypatch's patch is still active leaves the module
+    # stuck on pr-0 for the rest of the session.
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    importlib.reload(config_module)
+    importlib.reload(chat_app_module)
+
+
+def test_cors_middleware_present_only_in_local(monkeypatch):
+    """§4.2's deliberate asymmetry: everywhere except local, the Function
+    URL's own native CORS config (api_stack.py's FunctionUrlCorsOptions)
+    already answers preflight without invoking the function and stamps
+    every real response. Mounting CORSMiddleware there too means BOTH
+    layers write an Access-Control-Allow-Origin header on a real POST
+    response (preflight OPTIONS is answered by the platform before the
+    Lambda ever runs, so it never showed there) -- browsers reject a
+    response with more than one value for that header outright, so every
+    deployed chat request failed with "Failed to fetch" despite the Lambda
+    completing successfully server-side. Caught live against a real deploy,
+    not by any test -- which is why this one exists now."""
+    from starlette.middleware.cors import CORSMiddleware
+
+    import src.config as config_module
+    import src.chat_app as chat_app_module
+
+    def middleware_classes(app):
+        return [m.cls for m in app.user_middleware]
+
+    # local (the suite's default): CORSMiddleware present -- there is no
+    # Function URL in front of uvicorn locally, so nothing else answers CORS.
+    assert CORSMiddleware in middleware_classes(chat_app_module.app)
+
+    # any deployed environment: CORSMiddleware absent.
+    monkeypatch.setenv("ENVIRONMENT", "pr-0")
+    importlib.reload(config_module)
+    importlib.reload(chat_app_module)
+    assert CORSMiddleware not in middleware_classes(chat_app_module.app)
+
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
     importlib.reload(config_module)
     importlib.reload(chat_app_module)
 

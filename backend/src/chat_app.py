@@ -16,14 +16,25 @@ if should_enable(settings.environment):
 else:
     app.add_middleware(FunctionUrlAuthMiddleware)
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS middleware -- local only. Everywhere else, the Function URL's own
+# native CORS config (api_stack.py's FunctionUrlCorsOptions) already answers
+# preflight without invoking the function and stamps every real response.
+# Adding this middleware unconditionally meant BOTH layers wrote an
+# Access-Control-Allow-Origin header on every POST response (unlike OPTIONS,
+# which the platform answers before the Lambda ever runs) -- browsers reject
+# a response with more than one value for that header outright, so every
+# deployed chat request failed with "Failed to fetch" despite the Lambda
+# itself completing successfully. Locally there is no Function URL in front
+# of uvicorn at all, so this middleware is the only thing that can answer
+# CORS there.
+if should_enable(settings.environment):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 app.include_router(health_router)
 app.include_router(chat_router)
