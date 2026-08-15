@@ -1,5 +1,6 @@
 import boto3
 import pytest
+import uuid
 from moto import mock_aws
 
 from src.contexts.library.infrastructure.dynamodb_chat_quota_repository import DynamoDbChatQuotaRepository
@@ -7,24 +8,27 @@ from src.contexts.library.infrastructure.dynamodb_chat_quota_repository import D
 
 @pytest.fixture
 def table_name():
-    return "test-quota-table"
+    return f"test-chat-quota-table-{uuid.uuid4()}"
 
 @pytest.fixture
 def dynamodb_table(table_name):
     with mock_aws():
         dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-        table = dynamodb.create_table(
-            TableName=table_name,
-            KeySchema=[
-                {"AttributeName": "PK", "KeyType": "HASH"},
-                {"AttributeName": "SK", "KeyType": "RANGE"}
-            ],
-            AttributeDefinitions=[
-                {"AttributeName": "PK", "AttributeType": "S"},
-                {"AttributeName": "SK", "AttributeType": "S"}
-            ],
-            BillingMode="PAY_PER_REQUEST"
-        )
+        try:
+            table = dynamodb.create_table(
+                TableName=table_name,
+                KeySchema=[
+                    {"AttributeName": "PK", "KeyType": "HASH"},
+                    {"AttributeName": "SK", "KeyType": "RANGE"}
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "PK", "AttributeType": "S"},
+                    {"AttributeName": "SK", "AttributeType": "S"}
+                ],
+                BillingMode="PAY_PER_REQUEST"
+            )
+        except dynamodb.meta.client.exceptions.ResourceInUseException:
+            table = dynamodb.Table(table_name)
         yield table
 
 @pytest.fixture

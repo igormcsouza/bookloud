@@ -31,8 +31,9 @@ class FakeChatRepo:
 
 @pytest.fixture
 def client():
+    from src.auth.dependencies import CurrentUser
     # Override dependencies for controller test
-    app.dependency_overrides[get_current_user] = lambda: "user1"
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(sub="user1", username="user1", email=None)
     app.dependency_overrides[get_ask_book_question] = lambda: FakeAskUseCase()
     app.dependency_overrides[get_chat_model] = lambda: FakeChatModel()
     

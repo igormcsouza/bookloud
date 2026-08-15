@@ -5,26 +5,31 @@ from moto import mock_aws
 from src.contexts.library.domain.chat import ChatMessage, ChatRole
 from src.contexts.library.infrastructure.dynamodb_chat_repository import DynamoDbChatRepository
 
+import uuid
+
 @pytest.fixture
 def table_name():
-    return "test-chat-table"
+    return f"test-chat-table-{uuid.uuid4()}"
 
 @pytest.fixture
 def dynamodb_table(table_name):
     with mock_aws():
         dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-        table = dynamodb.create_table(
-            TableName=table_name,
-            KeySchema=[
-                {"AttributeName": "PK", "KeyType": "HASH"},
-                {"AttributeName": "SK", "KeyType": "RANGE"}
-            ],
-            AttributeDefinitions=[
-                {"AttributeName": "PK", "AttributeType": "S"},
-                {"AttributeName": "SK", "AttributeType": "S"}
-            ],
-            BillingMode="PAY_PER_REQUEST"
-        )
+        try:
+            table = dynamodb.create_table(
+                TableName=table_name,
+                KeySchema=[
+                    {"AttributeName": "PK", "KeyType": "HASH"},
+                    {"AttributeName": "SK", "KeyType": "RANGE"}
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "PK", "AttributeType": "S"},
+                    {"AttributeName": "SK", "AttributeType": "S"}
+                ],
+                BillingMode="PAY_PER_REQUEST"
+            )
+        except dynamodb.meta.client.exceptions.ResourceInUseException:
+            table = dynamodb.Table(table_name)
         yield table
 
 @pytest.fixture

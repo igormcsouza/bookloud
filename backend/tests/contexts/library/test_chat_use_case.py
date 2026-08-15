@@ -49,10 +49,10 @@ class FakeQuotaRepo:
 
 class FakeIdGen:
     def __init__(self):
-        self.i = 0
-    def generate(self):
-        self.i += 1
-        return f"id{self.i}"
+        self.count = 0
+    def new_id(self):
+        self.count += 1
+        return f"msg_{self.count}"
 
 class FakeClock:
     def now(self):
