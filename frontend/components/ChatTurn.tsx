@@ -25,17 +25,17 @@ const ChatTurn = React.memo(function ChatTurn({ id, role, content, finishReason,
 
   return (
     <div className={`mb-4 flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[85%] rounded-lg px-4 py-2 ${isUser ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"}`}>
+      <div className={`max-w-[85%] rounded-lg px-4 py-2 ${isUser ? "bg-moss-500 text-ink-950" : "bg-ink-800 text-paper"}`}>
         <div className="text-sm">
           {renderContent(content)}
           {isStreaming && <span className="ml-1 animate-pulse">▋</span>}
         </div>
-        
+
         {!isUser && anchoredChunk != null && (
           <div className="mt-2 text-xs">
-            <button 
+            <button
               onClick={() => onSeek?.(anchoredChunk)}
-              className="text-indigo-600 hover:underline"
+              className="text-moss-300 hover:underline"
             >
               about section {anchoredChunk}
             </button>
@@ -43,17 +43,17 @@ const ChatTurn = React.memo(function ChatTurn({ id, role, content, finishReason,
         )}
 
         {finishReason === "ERROR" && (
-          <div className="mt-2 inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
+          <div className="mt-2 inline-flex items-center rounded-full bg-rose-500/20 px-2.5 py-0.5 text-xs font-medium text-rose-200">
             The answer stopped early. Ask again.
           </div>
         )}
         {finishReason === "TRUNCATED" && (
-          <div className="mt-2 inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
+          <div className="mt-2 inline-flex items-center rounded-full bg-moss-500/15 px-2.5 py-0.5 text-xs font-medium text-moss-200">
             Response interrupted.
           </div>
         )}
         {finishReason === "MAX_TOKENS" && (
-          <div className="mt-2 inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
+          <div className="mt-2 inline-flex items-center rounded-full bg-moss-500/15 px-2.5 py-0.5 text-xs font-medium text-moss-200">
             Answer cut off — ask a narrower question.
           </div>
         )}

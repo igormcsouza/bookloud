@@ -31,7 +31,7 @@ export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTo
   }, [messages, streamingText]);
 
   if (loading) {
-    return <div className="flex w-80 flex-col border-l border-gray-200 bg-white shadow-sm p-4 text-sm text-gray-500">Loading chat...</div>;
+    return <div className="flex w-80 flex-col border-l border-ink-800 bg-ink-950 p-4 text-sm text-sage">Loading chat...</div>;
   }
 
   let notice = null;
@@ -56,10 +56,14 @@ export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTo
   }
 
   return (
-    <div className="flex w-80 flex-col border-l border-gray-200 bg-white shadow-sm">
+    <div className="flex w-80 flex-col border-l border-ink-800 bg-ink-950">
       <div className="flex-1 overflow-y-auto p-4" ref={scrollRef}>
         {notice && (
-          <div className="mb-6 rounded-md bg-blue-50 p-3 text-sm text-blue-700">
+          <div
+            className={`mb-6 rounded-lg border px-4 py-3 text-sm ${
+              composerDisabled ? "border-moss-500/40 bg-ink-900 text-paper" : "border-ink-800 bg-ink-900 text-sage"
+            }`}
+          >
             {notice}
           </div>
         )}

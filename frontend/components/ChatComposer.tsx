@@ -27,10 +27,10 @@ export default function ChatComposer({ onSend, disabled, placeholder = "Ask a qu
   };
 
   return (
-    <div className="border-t border-gray-200 p-4">
+    <div className="border-t border-ink-800 p-4">
       <div className="relative">
         <textarea
-          className="w-full resize-none rounded-md border border-gray-300 p-3 pr-12 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 sm:text-sm"
+          className="w-full resize-none rounded-md border border-ink-800 bg-ink-900 p-3 pr-12 text-paper placeholder:text-sage focus:border-moss-400 focus:outline-none focus:ring-1 focus:ring-moss-400 disabled:opacity-40 sm:text-sm"
           rows={3}
           placeholder={placeholder}
           value={text}
@@ -42,7 +42,7 @@ export default function ChatComposer({ onSend, disabled, placeholder = "Ask a qu
         <button
           onClick={handleSend}
           disabled={disabled || text.trim().length === 0}
-          className="absolute bottom-3 right-3 rounded bg-indigo-600 p-1.5 text-white disabled:bg-gray-300"
+          className="absolute bottom-3 right-3 rounded bg-moss-400 p-1.5 text-ink-950 hover:bg-moss-300 disabled:cursor-not-allowed disabled:bg-ink-800 disabled:text-sage disabled:opacity-40"
           aria-label="Send"
         >
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

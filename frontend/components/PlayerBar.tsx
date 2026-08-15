@@ -106,7 +106,7 @@ export default function PlayerBar({ playback, disabled = false, chatOpen = false
           type="button"
           onClick={onToggleChat}
           className={`ml-2 flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-            chatOpen ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-ink-800 text-sage hover:bg-ink-700 hover:text-white"
+            chatOpen ? "bg-moss-400 text-ink-950 hover:bg-moss-300" : "bg-ink-800 text-sage hover:bg-ink-700 hover:text-white"
           }`}
           title="Toggle Chat (c)"
           aria-pressed={chatOpen}
