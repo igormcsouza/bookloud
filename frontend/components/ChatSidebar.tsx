@@ -8,15 +8,17 @@ interface ChatSidebarProps {
   anchorRef: React.MutableRefObject<number>;
   onSeekToChunk?: (chunkIndex: number) => void;
   chunksTotal: number;
+  onClose: () => void;
 }
 
-export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTotal }: ChatSidebarProps) {
+export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTotal, onClose }: ChatSidebarProps) {
   const {
     messages,
     chat,
     loading,
     isStreaming,
     streamingText,
+    streamingError,
     streamingFinishReason,
     streamingAnchorChunk,
     sendQuestion
@@ -30,8 +32,30 @@ export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTo
     }
   }, [messages, streamingText]);
 
+  const header = (
+    <div className="flex items-center justify-between border-b border-ink-800 px-4 py-3">
+      <span className="text-sm font-medium text-paper">Chat</span>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close chat"
+        title="Close chat (c)"
+        className="rounded p-1 text-sage hover:bg-ink-800 hover:text-paper"
+      >
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
+
   if (loading) {
-    return <div className="flex w-80 flex-col border-l border-ink-800 bg-ink-950 p-4 text-sm text-sage">Loading chat...</div>;
+    return (
+      <div className="flex w-80 flex-col border-l border-ink-800 bg-ink-950">
+        {header}
+        <div className="p-4 text-sm text-sage">Loading chat...</div>
+      </div>
+    );
   }
 
   let notice = null;
@@ -57,6 +81,7 @@ export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTo
 
   return (
     <div className="flex w-80 flex-col border-l border-ink-800 bg-ink-950">
+      {header}
       <div className="flex-1 overflow-y-auto p-4" ref={scrollRef}>
         {notice && (
           <div
@@ -90,6 +115,21 @@ export default function ChatSidebar({ bookId, anchorRef, onSeekToChunk, chunksTo
             isStreaming={true}
             onSeek={onSeekToChunk}
           />
+        )}
+
+        {!isStreaming && streamingError && (
+          // A request that failed before producing any persisted turn --
+          // most often the Lambda's cold-start window (AWS_LWA_ASYNC_INIT
+          // used to drop the first request on a cold container with a 503
+          // even though it succeeded server-side a moment later). Without
+          // this the streaming bubble above just vanishes with zero
+          // indication anything went wrong.
+          <div
+            role="alert"
+            className="mb-4 rounded-lg border border-rose-500/40 bg-ink-900 px-4 py-3 text-sm text-rose-200"
+          >
+            Couldn't get an answer ({streamingError.message || "network error"}). Try asking again.
+          </div>
         )}
       </div>
       

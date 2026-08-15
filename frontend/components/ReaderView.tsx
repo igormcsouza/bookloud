@@ -222,21 +222,46 @@ export default function ReaderView({ bookId }: { bookId: string }) {
           )}
         </div>
         {chatOpen && (
-          <ChatSidebar 
-            bookId={bookId} 
-            anchorRef={anchorRef} 
-            chunksTotal={chunksTotal} 
-            onSeekToChunk={player === "enabled" ? playback.seekToChunk : undefined} 
+          <ChatSidebar
+            bookId={bookId}
+            anchorRef={anchorRef}
+            chunksTotal={chunksTotal}
+            onSeekToChunk={player === "enabled" ? playback.seekToChunk : undefined}
+            onClose={toggleChat}
           />
         )}
       </div>
 
-      {player === "absent" ? null : (
-        <PlayerBar 
-          playback={playback} 
-          disabled={player === "disabled"} 
-          chatOpen={chatOpen} 
-          onToggleChat={toggleChat} 
+      {player === "absent" ? (
+        // No PlayerBar means no toggle button reaches the user at all --
+        // every non-prod/no-audio environment (the common case: phase-4
+        // §0), and every book before it has audio in prod. Without this,
+        // closing the chat (via its own header button or the `c` shortcut)
+        // would make it unreachable again.
+        <button
+          type="button"
+          onClick={toggleChat}
+          title="Toggle Chat (c)"
+          aria-pressed={chatOpen}
+          className={`fixed bottom-4 right-4 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors ${
+            chatOpen ? "bg-moss-400 text-ink-950 hover:bg-moss-300" : "bg-ink-800 text-sage hover:bg-ink-700 hover:text-paper"
+          }`}
+        >
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
+          </svg>
+        </button>
+      ) : (
+        <PlayerBar
+          playback={playback}
+          disabled={player === "disabled"}
+          chatOpen={chatOpen}
+          onToggleChat={toggleChat}
         />
       )}
     </main>
