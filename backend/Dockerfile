@@ -60,10 +60,23 @@ FROM lambda AS lambda-stream
 
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 
+# AWS_LWA_ASYNC_INIT is deliberately NOT set (default false). It exists to
+# let a slow-starting app return from Lambda's INIT phase before the app is
+# actually ready, avoiding an INIT timeout -- but the cost, observed on a
+# real deploy, is worse than advertised: the FIRST invocation on a cold
+# container can be handed to the platform before uvicorn's readiness check
+# passes and comes back as a client-facing 503, even though the app finishes
+# booting and answers that same request successfully a moment later
+# server-side (visible in CloudWatch as "POST ... 200 OK" right after
+# "app is not ready after 2000ms", while the browser saw 503/"Failed to
+# fetch"). This app's own init is ~3.6s, comfortably inside Lambda's default
+# 10s INIT timeout, so there's no reason to take that trade here: the
+# synchronous default makes Lambda wait for real readiness during INIT,
+# before ever routing a request to the app, at the cost of a slightly
+# longer cold start instead of an occasional dropped first message.
 ENV AWS_LWA_INVOKE_MODE=response_stream \
     AWS_LWA_PORT=8080 \
     AWS_LWA_READINESS_CHECK_PATH=/health \
-    AWS_LWA_ASYNC_INIT=true \
     PYTHONPATH=/var/task
 
 # The base image's ENTRYPOINT is the RIC. Clear it: with the adapter present,
