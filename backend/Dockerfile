@@ -1,9 +1,12 @@
 # Multi-target image for the Bookloud backend.
 #   `dev`    — plain uvicorn server with hot reload, used by docker-compose.
-#   `lambda` — Lambda container image (the default/final stage, so
-#              `DockerImageCode.from_image_asset` in CDK picks it up without
-#              an explicit `target=`). Behavior is driven entirely by
-#              environment variables in both targets.
+#   `lambda` — Lambda container image (the RIC-based one every function
+#              except ChatFunction runs). Every `DockerImageCode.
+#              from_image_asset` call in infra/ passes an explicit
+#              `target="lambda"` -- do not rely on "it's the default stage"
+#              again; see the anonymous final stage at the bottom of this
+#              file for why. Behavior is driven entirely by environment
+#              variables in both targets.
 #
 # Container image (not a zip) because phases 3-4 pull in PyMuPDF and
 # edge-tts, which blow past the Lambda zip layer size limits; establishing
@@ -22,7 +25,7 @@ COPY . .
 
 CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-# --- lambda (default/final stage) -------------------------------------
+# --- lambda -------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.12 AS lambda
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -68,3 +71,17 @@ ENV AWS_LWA_INVOKE_MODE=response_stream \
 # API loop.
 ENTRYPOINT []
 CMD ["python3", "-m", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# --- default target -------------------------------------------------------
+#
+# `docker build` with no `--target` picks the LAST stage in the file. That
+# used to be `lambda` -- silently became `lambda-stream` the moment it was
+# appended above, and every function whose CDK call omitted `target=`
+# started building the wrong image (uvicorn serving `src.chat_app:app`, no
+# Runtime Interface Client) until it 500'd on every route including
+# `/health`. Every CDK call site now passes an explicit target; this
+# anonymous final stage is belt-and-suspenders so a bare `docker build .`
+# still does the intuitive thing too -- content-identical to `lambda`
+# (fully cached, zero extra cost), it exists only to be the last stage in
+# the file again.
+FROM lambda

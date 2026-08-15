@@ -65,7 +65,16 @@ class ApiStack(cdk.Stack):
         fn = lambda_.DockerImageFunction(
             self,
             "ApiFunction",
-            code=lambda_.DockerImageCode.from_image_asset(backend_dir),
+            # Explicit target: `backend/Dockerfile` gained a `lambda-stream`
+            # stage after `lambda` for phase 7's ChatFunction (FROM lambda AS
+            # lambda-stream), which silently changed which stage `docker
+            # build` picks when no --target is given -- it's the LAST stage
+            # in the file, not necessarily `lambda`. Every function that
+            # relied on that default (this one, and pipeline_stack.py's
+            # three) was building the wrong image (uvicorn/chat_app, no RIC)
+            # until this was made explicit -- caught by a real deploy
+            # returning 500 on every route including /health.
+            code=lambda_.DockerImageCode.from_image_asset(backend_dir, target="lambda"),
             memory_size=512,
             timeout=cdk.Duration.seconds(30),
             environment={
