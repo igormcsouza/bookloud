@@ -999,7 +999,47 @@ def _check_chunks_synthesized_silently(chunks: list) -> None:
         )
 
 
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    """Splits an SSE body into ``(event, data)`` pairs. Good enough for a
+    trusted, fully-buffered response (this script reads the whole body, not
+    incrementally) -- the streaming behaviour itself is asserted by
+    e2e/chat.spec.ts's growing-textContent check (PLANS/phase-7.md §13.4),
+    which this stdlib-only script cannot do."""
+    frames: list[tuple[str, dict]] = []
+    for raw_frame in body.split("\n\n"):
+        event = None
+        data = None
+        for line in raw_frame.splitlines():
+            if line.startswith("event:"):
+                event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data = line[len("data:"):].strip()
+        if event is not None and data is not None:
+            frames.append((event, json.loads(data)))
+    return frames
+
+
+def _post_chat_question(
+    chat_url: str, id_token: str | None, book_id: str, question: str, anchored_chunk: int = 0
+) -> tuple[int, str]:
+    headers = {"Content-Type": "application/json"}
+    if id_token is not None:
+        headers["Authorization"] = f"Bearer {id_token}"
+    req = urllib.request.Request(
+        f"{chat_url.rstrip('/')}/books/{book_id}/chat",
+        method="POST",
+        headers=headers,
+        data=json.dumps({"question": question, "anchoredChunk": anchored_chunk}).encode("utf-8"),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8")
+
+
 def check_chat(
+    api_url: str,
     chat_url: str,
     cognito_endpoint: str,
     cognito_client_id: str,
@@ -1007,28 +1047,157 @@ def check_chat(
     password: str,
     book_id: str,
 ) -> None:
+    """PLANS/phase-7.md §12.2 -- runs in every environment this smoke test
+    reaches, because the stub is present in all of them."""
     id_token = _login(cognito_endpoint, cognito_client_id, username, password)
-    
-    url = f"{chat_url.rstrip('/')}/books/{book_id}/chat"
+
+    # 1. GET {api_url}/books/{id}/chat -> 200, no messages yet, chat disabled
+    # with the stub's reason (this smoke test never runs against prod with a
+    # real key -- deploy-prod.yml never calls this login-gated check at all,
+    # same posture as every real external service since phase 4 §0).
+    list_url = f"{api_url.rstrip('/')}/books/{book_id}/chat"
+    status, body = _authed_get(list_url, id_token, 15)
+    check(status == 200, f"expected 200 from GET {list_url}, got {status}: {body}")
+    data = json.loads(body)
+    check(data["messages"] == [], f"expected an empty transcript, got {data['messages']}")
+    check(data["chat"]["enabled"] is False, f"expected chat.enabled is False, got {data['chat']}")
+    check(
+        data["chat"]["reason"] == "NON_PROD",
+        f"expected chat.reason == 'NON_PROD', got {data['chat']['reason']!r}",
+    )
+    check(data["chat"]["dailyLimit"] == 50, f"expected dailyLimit == 50, got {data['chat']['dailyLimit']!r}")
+    print(f"OK  GET {list_url} -> {status} (enabled=False, reason=NON_PROD, dailyLimit=50)")
+
+    # 2. POST {chat_url}/books/{id}/chat with no Authorization -> 401. The
+    # single assertion that proves in-Lambda JWT verification is wired at
+    # all -- an unauthenticated POST to a NONE-auth Function URL reaching a
+    # 200 would be the worst bug this phase could ship.
+    status, _ = _post_chat_question(chat_url, None, book_id, "Smoke Test")
+    check(status == 401, f"expected 401 for unauthenticated POST to {chat_url}, got {status}")
+    print(f"OK  POST {chat_url}/books/{book_id}/chat (no token) -> {status}")
+
+    # 3. OPTIONS preflight -> 2xx with access-control-allow-origin present,
+    # and specifically NOT 401 (phase-6 §16's bug, measured not reasoned
+    # about).
+    preflight_url = f"{chat_url.rstrip('/')}/books/{book_id}/chat"
     req = urllib.request.Request(
-        url,
-        method="POST",
-        headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
-        data=json.dumps({"question": "Smoke Test", "anchoredChunk": 0}).encode("utf-8"),
+        preflight_url,
+        method="OPTIONS",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            status = resp.status
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        print(f"check_chat HTTPError: {e.code} {e.reason}")
-        print("Response body:", e.read().decode())
-        raise
-        
-    check(status == 200, f"expected 200 from POST /books/{book_id}/chat, got {status}")
-    check("event: meta" in body, "missing meta event in SSE stream")
-    check("event: done" in body, "missing done event in SSE stream")
-    print(f"OK  POST {url} -> {status} (SSE stream OK)")
+            preflight_status = resp.status
+            preflight_headers = dict(resp.headers)
+    except urllib.error.HTTPError as exc:
+        preflight_status = exc.code
+        preflight_headers = dict(exc.headers or {})
+    check(
+        200 <= preflight_status < 300,
+        f"expected a 2xx CORS preflight from {preflight_url}, got {preflight_status}",
+    )
+    check(
+        any(k.lower() == "access-control-allow-origin" for k in preflight_headers),
+        f"expected access-control-allow-origin on the preflight response, got headers {preflight_headers}",
+    )
+    print(f"OK  OPTIONS {preflight_url} -> {preflight_status} (CORS preflight answered without invoking the function)")
+
+    # 4. POST with a token belonging to another user's book id -> 404, never
+    # 403 (PLANS/phase-7.md §7.3's authorization test, at the deployed
+    # layer).
+    status, body = _post_chat_question(chat_url, id_token, "not-my-book-id", "Smoke Test")
+    check(status == 404, f"expected 404 for a foreign/missing book id, got {status}: {body}")
+    print(f"OK  POST {chat_url}/books/not-my-book-id/chat -> {status}")
+
+    # 5. POST with a valid token -> 200, text/event-stream, frame by frame.
+    status, chunks_body = _authed_get(f"{api_url.rstrip('/')}/books/{book_id}/chunks", id_token, 15)
+    check(status == 200, f"expected 200 from GET .../chunks, got {status}: {chunks_body}")
+    chunks = json.loads(chunks_body)
+    check(len(chunks) > 0, "expected at least one chunk to anchor the chat question on")
+    anchor_text = chunks[0]["text"]
+
+    status, body = _post_chat_question(chat_url, id_token, book_id, "What is this section about?", anchored_chunk=0)
+    check(status == 200, f"expected 200 from POST {chat_url}/books/{book_id}/chat, got {status}: {body}")
+    frames = _parse_sse(body)
+    check(len(frames) > 0, "expected at least one SSE frame")
+
+    first_event, first_data = frames[0]
+    check(first_event == "meta", f"expected the first frame to be 'meta', got {first_event!r}")
+    check(first_data["enabled"] is False, f"expected meta.enabled is False, got {first_data}")
+    check(first_data["model"] == "stub", f"expected meta.model == 'stub', got {first_data.get('model')!r}")
+    check(
+        first_data["anchorChunk"] == 0,
+        f"expected meta.anchorChunk == 0, got {first_data.get('anchorChunk')!r}",
+    )
+
+    delta_frames = [d for e, d in frames if e == "delta"]
+    check(
+        len(delta_frames) >= 3,
+        f"expected at least 3 delta frames (a real stream, not one blob), got {len(delta_frames)}",
+    )
+
+    last_event, last_data = frames[-1]
+    check(last_event == "done", f"expected the last frame to be 'done', got {last_event!r}")
+    check(
+        last_data["finishReason"] == "DISABLED",
+        f"expected done.finishReason == 'DISABLED', got {last_data.get('finishReason')!r}",
+    )
+
+    concatenated = "".join(d["text"] for d in delta_frames)
+    marker = anchor_text[:40]
+    check(
+        marker in concatenated,
+        f"expected the answer to contain the anchor chunk's opening text {marker!r}; got {concatenated!r}",
+    )
+    print(
+        f"OK  POST {chat_url}/books/{book_id}/chat -> {status} "
+        f"(meta -> {len(delta_frames)} deltas -> done, answer references book content)"
+    )
+
+    # 6. A second POST -> both turns appear in GET .../chat, ordered
+    # oldest-first, roles alternating.
+    status, body = _post_chat_question(chat_url, id_token, book_id, "A follow-up question?", anchored_chunk=0)
+    check(status == 200, f"expected 200 from the second POST, got {status}: {body}")
+
+    status, body = _authed_get(list_url, id_token, 15)
+    check(status == 200, f"expected 200 from GET {list_url}, got {status}: {body}")
+    messages = json.loads(body)["messages"]
+    check(len(messages) == 4, f"expected 4 messages after two questions, got {len(messages)}")
+    check(
+        [m["role"] for m in messages] == ["user", "assistant", "user", "assistant"],
+        f"expected alternating user/assistant roles, got {[m['role'] for m in messages]}",
+    )
+    check(
+        messages == sorted(messages, key=lambda m: m["createdAt"]),
+        "expected messages ordered oldest-first by createdAt",
+    )
+    print(f"OK  GET {list_url} -> {status} (4 messages, alternating roles, oldest-first)")
+
+    # 7. DELETE {api_url}/books/{id}/chat -> 200 {"deleted": 4}, then GET ->
+    # empty.
+    del_req = urllib.request.Request(
+        list_url, method="DELETE", headers={"Authorization": f"Bearer {id_token}"}
+    )
+    with urllib.request.urlopen(del_req, timeout=15) as resp:
+        del_status = resp.status
+        del_body = json.loads(resp.read().decode("utf-8"))
+    check(del_status == 200, f"expected 200 from DELETE {list_url}, got {del_status}")
+    check(
+        del_body.get("deleted") == 4,
+        f"expected {{'deleted': 4}} from DELETE {list_url}, got {del_body}",
+    )
+    status, body = _authed_get(list_url, id_token, 15)
+    check(json.loads(body)["messages"] == [], "expected an empty transcript after DELETE")
+    print(f"OK  DELETE {list_url} -> {del_status} ({del_body}); transcript now empty")
+
+    # 8. A 3,000-character question -> 422.
+    status, body = _post_chat_question(chat_url, id_token, book_id, "x" * 3000)
+    check(status == 422, f"expected 422 for an over-long question, got {status}: {body}")
+    print(f"OK  POST {chat_url}/books/{book_id}/chat (3000-char question) -> {status}")
 
 def check_signup_login_flow(api_url: str, cognito_endpoint: str, cognito_client_id: str) -> None:
     """SignUp a throwaway user, then log in and hit /me -- covers "signup" +
@@ -1124,6 +1293,7 @@ def main() -> int:
             )
             if args.chat_url:
                 check_chat(
+                    args.api_url,
                     args.chat_url,
                     cognito_endpoint,
                     args.cognito_client_id,
