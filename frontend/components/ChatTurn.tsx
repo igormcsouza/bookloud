@@ -27,8 +27,18 @@ const ChatTurn = React.memo(function ChatTurn({ id, role, content, finishReason,
     <div className={`mb-4 flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div className={`max-w-[85%] rounded-lg px-4 py-2 ${isUser ? "bg-moss-500 text-ink-950" : "bg-ink-800 text-paper"}`}>
         <div className="text-sm">
-          {renderContent(content)}
-          {isStreaming && <span className="ml-1 animate-pulse">▋</span>}
+          {isStreaming && content === "" ? (
+            <span className="inline-flex items-center gap-1 py-1" role="status" aria-label="Thinking">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-sage [animation-delay:-0.3s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-sage [animation-delay:-0.15s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-sage" />
+            </span>
+          ) : (
+            <>
+              {renderContent(content)}
+              {isStreaming && <span className="ml-1 animate-pulse">▋</span>}
+            </>
+          )}
         </div>
 
         {!isUser && anchoredChunk != null && (

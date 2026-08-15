@@ -115,11 +115,20 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
               // We don't append to messages here, we just set finish reason and let a refetch happen or we can construct the message.
               // Actually, the simplest is to fetch listChat again after done.
               setStreamingFinishReason(finishReason);
-              setIsStreaming(false);
-              listChat(bookId).then(data => {
-                setMessages(data.messages);
-                setChat(data.chat);
-              }).catch(console.error);
+              // isStreaming stays true until the refetched messages are
+              // actually in hand: flipping it false here would unmount the
+              // streaming bubble a render before the real completed message
+              // exists, producing a visible flash of nothing in between.
+              listChat(bookId)
+                .then((data) => {
+                  setMessages(data.messages);
+                  setChat(data.chat);
+                  setIsStreaming(false);
+                })
+                .catch((err) => {
+                  console.error(err);
+                  setIsStreaming(false);
+                });
             },
             onError: (code, message) => {
               setStreamingError({ code, message });

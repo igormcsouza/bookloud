@@ -123,6 +123,51 @@ describe("useChat", () => {
     await waitFor(() => expect(chatRef.current!.isStreaming).toBe(false));
   });
 
+  it("keeps isStreaming true through the post-done refetch, so the streaming bubble never unmounts before the real message replaces it", async () => {
+    let capturedHandlers: Handlers | null = null;
+    streamChatMock.mockImplementation((_id, _body, handlers) => {
+      capturedHandlers = handlers;
+      return Promise.resolve();
+    });
+
+    const chatRef: { current: ReturnType<typeof useChat> | null } = { current: null };
+    render(<Host chatRef={chatRef} onRender={() => {}} />);
+    await waitFor(() => expect(chatRef.current!.loading).toBe(false));
+
+    act(() => {
+      chatRef.current!.sendQuestion("Q1");
+    });
+
+    let resolveListChat!: (value: { messages: unknown[]; chat: typeof ENABLED_ENVELOPE }) => void;
+    listChatMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveListChat = resolve;
+      }),
+    );
+
+    act(() => {
+      capturedHandlers!.onDone("DISABLED");
+    });
+
+    // The refetch hasn't resolved yet -- isStreaming must still be true, or
+    // the streaming bubble unmounts a render before the real completed
+    // message exists, producing a visible flash of nothing in between.
+    expect(chatRef.current!.isStreaming).toBe(true);
+
+    await act(async () => {
+      resolveListChat({
+        messages: [
+          { id: "1", role: "user", content: "Q1", anchoredChunk: 0, createdAt: "t1", positionMs: null, model: null, finishReason: null, inputTokens: null, outputTokens: null, cachedInputTokens: null },
+          { id: "2", role: "assistant", content: "A1", anchoredChunk: 0, createdAt: "t2", positionMs: null, model: "stub", finishReason: "DISABLED", inputTokens: null, outputTokens: null, cachedInputTokens: null },
+        ],
+        chat: ENABLED_ENVELOPE,
+      });
+    });
+
+    expect(chatRef.current!.isStreaming).toBe(false);
+    expect(chatRef.current!.messages).toHaveLength(2);
+  });
+
   it("accumulates deltas into one assistant turn, flushing at most 3 renders over 60 deltas across 2 rAF frames", async () => {
     let capturedHandlers: Handlers | null = null;
     streamChatMock.mockImplementation((_id, _body, handlers) => {
