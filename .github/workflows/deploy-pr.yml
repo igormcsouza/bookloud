@@ -18,6 +18,12 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
+    with:
+      # The full docker-compose e2e suite (with the playback project) is
+      # main-only -- expensive to run on every commit, and this job already
+      # runs its own Playwright pass (chromium only) against the real
+      # ephemeral deploy below.
+      run_e2e: false
 
   deploy:
     name: Deploy PR Environment

@@ -20,6 +20,10 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
+    with:
+      # Merges to main are the one place the full docker-compose e2e suite
+      # (playback project included) runs -- not every PR commit.
+      run_e2e: true
 
   deploy:
     name: Deploy Production
