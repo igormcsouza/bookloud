@@ -96,6 +96,7 @@ jobs:
 
   local-smoke:
     name: Local compose smoke test
+    needs: [test-backend, test-frontend, test-infra]
     runs-on: ubuntu-latest
 
     steps:
@@ -129,6 +130,7 @@ jobs:
   # workflow, every PR runs it.
   e2e-local:
     name: Local compose Playwright e2e
+    needs: [test-backend, test-frontend, test-infra]
     runs-on: ubuntu-latest
 
     steps:
