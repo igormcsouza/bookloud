@@ -598,7 +598,7 @@ def test_stack_naming_convention(stack_cls, component, environment: str) -> None
 # --- ApiStack + full app wiring (requires Docker) ---------------------------
 
 
-def _synth_api_stack(environment: str):
+def _synth_api_stack(environment: str, *, openai_secret_name: str = "dummy_secret"):
     from stacks.api_stack import ApiStack
 
     app = cdk.App()
@@ -627,9 +627,30 @@ def _synth_api_stack(environment: str):
         user_pool_client=auth.user_pool_client,
         environment=environment,
         git_sha="test-sha",
-        openai_secret_name="dummy_secret",
+        openai_secret_name=openai_secret_name,
     )
     return Template.from_stack(api)
+
+
+def _function_role_logical_id(template, name_prefix: str) -> str:
+    lambdas = template.find_resources("AWS::Lambda::Function")
+    fn = next(res for name, res in lambdas.items() if name.startswith(name_prefix))
+    return fn["Properties"]["Role"]["Fn::GetAtt"][0]
+
+
+def _actions_for_role(template, role_logical_id: str) -> list[str]:
+    actions: list[str] = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        roles = policy["Properties"].get("Roles", [])
+        if not any(isinstance(r, dict) and r.get("Ref") == role_logical_id for r in roles):
+            continue
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+    return actions
 
 
 @pytest.mark.docker
@@ -856,14 +877,16 @@ def test_api_stack_function_shape(environment: str) -> None:
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_api_stack_chat_function(environment: str) -> None:
+    """PLANS/phase-7.md §9.3: 512 MB / 120 s -- I/O-bound (one DynamoDB
+    Query pair + one HTTPS stream to OpenAI), not the API function's 30 s."""
     from stacks.config import Config
-    
+
     template = _synth_api_stack(environment)
-    
+
     # 1. ChatFunction exists with specific memory, timeout, arch
     template.has_resource_properties("AWS::Lambda::Function", {
-        "MemorySize": 256,
-        "Timeout": 30,
+        "MemorySize": 512,
+        "Timeout": 120,
         "Architectures": ["arm64"],
         "Environment": {
             "Variables": Match.object_like({
@@ -873,14 +896,15 @@ def test_api_stack_chat_function(environment: str) -> None:
         }
     })
 
-    # 2. Function URL config
+    # 2. Function URL config -- CORS AllowHeaders scoped to what the browser
+    # actually sends (Authorization: Bearer + Content-Type), not "*".
     template.has_resource_properties("AWS::Lambda::Url", {
         "AuthType": "NONE",
         "InvokeMode": "RESPONSE_STREAM",
         "Cors": {
             "AllowOrigins": ["*"],
             "AllowMethods": ["POST"],
-            "AllowHeaders": ["*"]
+            "AllowHeaders": ["authorization", "content-type"],
         }
     })
 
@@ -898,6 +922,133 @@ def test_api_stack_chat_function(environment: str) -> None:
             ])
         }
     })
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_chat_function_env(environment: str) -> None:
+    """PLANS/phase-7.md §13.3: ChatFunction carries everything it needs to
+    verify a Cognito token itself and to build/gate an OpenAiChatModel."""
+    from stacks.config import Config
+
+    template = _synth_api_stack(environment)
+
+    template.has_resource_properties("AWS::Lambda::Function", {
+        "Architectures": ["arm64"],
+        "Environment": {
+            "Variables": Match.object_like({
+                Config.ENV_COGNITO_USER_POOL_ID: Match.any_value(),
+                Config.ENV_COGNITO_CLIENT_ID: Match.any_value(),
+                Config.ENV_COGNITO_REGION: Match.any_value(),
+                Config.ENV_OPENAI_SECRET_NAME: Match.any_value(),
+                Config.ENV_OPENAI_MODEL: "gpt-4.1-mini",
+                Config.ENV_CHAT_DAILY_LIMIT: "50",
+            })
+        },
+    })
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_stack_lambda_count(environment: str) -> None:
+    """A count assertion, not a presence one: Q4's concurrency-budget promise
+    (PLANS/phase-7.md §9.4) is exactly 2 Lambdas in ApiStack (Api + Chat), not
+    "at least 2"."""
+    template = _synth_api_stack(environment)
+
+    assert len(template.find_resources("AWS::Lambda::Function")) == 2
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ["dev", "pr-1", "prod"])
+def test_openai_secret_name_defaults_empty_in_every_environment(environment: str) -> None:
+    """The constraint-2 regression test, and the direct analogue of the
+    phase-4 OQ-A correction: OPENAI_SECRET_NAME is "" by default -- prod
+    included -- and with no name, zero GetSecretValue statements exist
+    anywhere in the stack (PLANS/phase-7.md §5.2, §13.3)."""
+    from stacks.config import Config
+
+    template = _synth_api_stack(environment, openai_secret_name="")
+
+    template.has_resource_properties("AWS::Lambda::Function", {
+        "Architectures": ["arm64"],
+        "Environment": {
+            "Variables": Match.object_like({Config.ENV_OPENAI_SECRET_NAME: ""}),
+        },
+    })
+
+    actions: list[str] = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+    assert "secretsmanager:GetSecretValue" not in actions
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_openai_secret_grant_appears_with_context_flag(environment: str) -> None:
+    """With the context flag, the env var is set AND exactly one
+    GetSecretValue grant appears, on ChatFunction only."""
+    template = _synth_api_stack(environment, openai_secret_name="bookloud/openai-api-key")
+
+    all_actions: list[str] = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                all_actions.extend(action)
+            elif isinstance(action, str):
+                all_actions.append(action)
+    assert all_actions.count("secretsmanager:GetSecretValue") == 1
+
+    chat_role = _function_role_logical_id(template, "ChatFunction")
+    assert "secretsmanager:GetSecretValue" in _actions_for_role(template, chat_role)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_api_function_cannot_read_the_secret(environment: str) -> None:
+    """Even with the context flag, ApiFunction's role has no
+    GetSecretValue statement -- it only tests OPENAI_SECRET_NAME for
+    emptiness, never reads the value (PLANS/phase-7.md §9.3)."""
+    template = _synth_api_stack(environment, openai_secret_name="bookloud/openai-api-key")
+
+    api_role = _function_role_logical_id(template, "ApiFunction")
+    assert "secretsmanager:GetSecretValue" not in _actions_for_role(template, api_role)
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_chat_function_has_no_s3_or_sqs_grants(environment: str) -> None:
+    """The function with a public URL touches the table and nothing else
+    (PLANS/phase-7.md §13.3)."""
+    template = _synth_api_stack(environment)
+
+    chat_role = _function_role_logical_id(template, "ChatFunction")
+    actions = _actions_for_role(template, chat_role)
+
+    assert not any(a.startswith("s3:") for a in actions if isinstance(a, str))
+    assert not any(a.startswith("sqs:") for a in actions if isinstance(a, str))
+
+
+@pytest.mark.docker
+def test_no_stack_template_contains_a_key_shaped_string() -> None:
+    """PLANS/phase-7.md §5.5 rule 7: every synthesized ApiStack template,
+    with and without the context flag, is searched for `sk-`-prefixed
+    values. The check that would have caught someone "temporarily"
+    hardcoding a key."""
+    import json
+
+    for environment in ("dev", "pr-1", "prod"):
+        for secret_name in ("", "bookloud/openai-api-key"):
+            template = _synth_api_stack(environment, openai_secret_name=secret_name)
+            text = json.dumps(template.to_json())
+            assert "sk-" not in text
+
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_frontend_chat_wiring(environment: str) -> None:
