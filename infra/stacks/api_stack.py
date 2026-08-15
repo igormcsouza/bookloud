@@ -247,7 +247,16 @@ class ApiStack(cdk.Stack):
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir, target="lambda-stream"
             ),
-            architecture=lambda_.Architecture.ARM_64,
+            # X86_64, same as every other function in this stack (no
+            # `architecture=` override -- that's the default). ARM_64 here
+            # sets `--platform linux/arm64` on the DockerImageAsset build,
+            # which needs QEMU/binfmt cross-arch emulation this account's CI
+            # runners don't have: `RUN uv export ...` in the shared `lambda`
+            # stage fails with "exec format error" on every build, because
+            # the runner can pull an arm64 `ghcr.io/astral-sh/uv` binary but
+            # cannot execute it. Reintroducing ARM_64 needs a
+            # docker/setup-qemu-action step in every workflow that builds
+            # this image first.
             memory_size=512,        # I/O-bound: one DynamoDB Query pair + one HTTPS stream
             timeout=cdk.Duration.seconds(120),
             environment=chat_env,

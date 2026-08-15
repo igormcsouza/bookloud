@@ -887,7 +887,6 @@ def test_api_stack_chat_function(environment: str) -> None:
     template.has_resource_properties("AWS::Lambda::Function", {
         "MemorySize": 512,
         "Timeout": 120,
-        "Architectures": ["arm64"],
         "Environment": {
             "Variables": Match.object_like({
                 Config.ENV_OPENAI_SECRET_NAME: "dummy_secret",
@@ -934,7 +933,6 @@ def test_chat_function_env(environment: str) -> None:
     template = _synth_api_stack(environment)
 
     template.has_resource_properties("AWS::Lambda::Function", {
-        "Architectures": ["arm64"],
         "Environment": {
             "Variables": Match.object_like({
                 Config.ENV_COGNITO_USER_POOL_ID: Match.any_value(),
@@ -971,7 +969,6 @@ def test_openai_secret_name_defaults_empty_in_every_environment(environment: str
     template = _synth_api_stack(environment, openai_secret_name="")
 
     template.has_resource_properties("AWS::Lambda::Function", {
-        "Architectures": ["arm64"],
         "Environment": {
             "Variables": Match.object_like({Config.ENV_OPENAI_SECRET_NAME: ""}),
         },
