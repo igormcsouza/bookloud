@@ -37,9 +37,11 @@ _REISSUABLE_STATUSES = (BookStatus.UPLOADED, BookStatus.FAILED)
 
 
 def _load_owned_book(book_repository: BookRepository, user_id: str, book_id: str) -> Book:
+    import logging
+    logger = logging.getLogger(__name__)
     book = book_repository.get(user_id, book_id)
     if book is None:
-        raise NotFoundError("Book not found")
+        raise NotFoundError(f"Book {book_id} for user {user_id} not found")
     return book
 
 

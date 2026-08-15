@@ -24,6 +24,7 @@ def get_verifier() -> CognitoJwtVerifier:
             user_pool_id=settings.cognito_user_pool_id,
             audience=settings.cognito_client_id,
             jwks_url=jwks_url,
+            verify_issuer=not bool(settings.cognito_endpoint_url),
         )
     return _verifier
 

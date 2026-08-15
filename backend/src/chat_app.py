@@ -7,8 +7,14 @@ from src.health.controllers import router as health_router
 
 app = FastAPI(title="Bookloud Chat API")
 
+from src.auth.local_dev import LocalAuthMiddleware, should_enable
+from src.config import settings
+
 # Add auth middleware
-app.add_middleware(FunctionUrlAuthMiddleware)
+if should_enable(settings.environment):
+    app.add_middleware(LocalAuthMiddleware)
+else:
+    app.add_middleware(FunctionUrlAuthMiddleware)
 
 # CORS middleware
 app.add_middleware(
@@ -21,3 +27,21 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(chat_router)
+
+from botocore.exceptions import ClientError
+from fastapi.responses import JSONResponse
+from fastapi import Request
+from src.shared_kernel.domain.errors import DomainError
+
+@app.exception_handler(ClientError)
+async def aws_error_handler(request: Request, exc: ClientError) -> JSONResponse:
+    import logging
+    logger = logging.getLogger("bookloud")
+    logger.error("AWS error on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=503, content={"detail": "Storage temporarily unavailable"}
+    )
+
+@app.exception_handler(DomainError)
+async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})

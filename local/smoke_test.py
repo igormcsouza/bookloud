@@ -1016,9 +1016,14 @@ def check_chat(
         headers={"Authorization": f"Bearer {id_token}", "Content-Type": "application/json"},
         data=json.dumps({"question": "Smoke Test", "anchoredChunk": 0}).encode("utf-8"),
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        status = resp.status
-        body = resp.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.status
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        print(f"check_chat HTTPError: {e.code} {e.reason}")
+        print("Response body:", e.read().decode())
+        raise
         
     check(status == 200, f"expected 200 from POST /books/{book_id}/chat, got {status}")
     check("event: meta" in body, "missing meta event in SSE stream")

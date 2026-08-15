@@ -100,8 +100,8 @@ services:
       - PDF_BUCKET=bookloud-local-pdfs
       - AUDIO_BUCKET=bookloud-local-audio
       - MARKS_BUCKET=bookloud-local-marks
-      - COGNITO_USER_POOL_ID=local_111111111
-      - COGNITO_CLIENT_ID=local_22222222222222222222222222
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID}
+      - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID}
       # cognito_local uses endpoint URL directly
       - COGNITO_ENDPOINT_URL=http://cognito-local:9229
       # S3_PUBLIC_ENDPOINT_URL might not be strictly needed for chat but good to have

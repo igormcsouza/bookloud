@@ -95,7 +95,7 @@ class AskBookQuestion:
 
         user_msg = ChatMessage(
             book_id=book.id,
-            message_id=self.id_generator.generate(),
+            message_id=self.id_generator.new_id(),
             user_id=user_id,
             role=ChatRole.USER,
             content=context.question,
@@ -116,7 +116,7 @@ class AskBookQuestion:
 
         assistant_msg = ChatMessage(
             book_id=book.id,
-            message_id=self.id_generator.generate(),
+            message_id=self.id_generator.new_id(),
             user_id=user_id,
             role=ChatRole.ASSISTANT,
             content="",  # to be populated by stream

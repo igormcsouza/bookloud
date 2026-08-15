@@ -9,7 +9,7 @@ from src.contexts.library.domain.chat import ChatModel, FinishReason
 from src.contexts.library.interface.dependencies import get_chat_model
 from src.contexts.library.interface.schemas import sse_frame
 from src.shared_kernel.domain.errors import ChatStreamError
-from src.auth.dependencies import get_current_user
+from src.auth.dependencies import get_current_user, CurrentUser
 
 # Note: In phase-7, we must wire the dependencies. AskBookQuestion isn't added yet, we will import a builder from dependencies
 from src.contexts.library.interface.dependencies import get_ask_book_question, get_chat_repository
@@ -27,14 +27,14 @@ chat_router = APIRouter(tags=["chat"])
 async def ask_question(
     book_id: str,
     body: ChatQuestionBody,
-    user_id: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
     model: ChatModel = Depends(get_chat_model),
     use_case: AskBookQuestion = Depends(get_ask_book_question),
     chat_repository = Depends(get_chat_repository),
 ):
     # Execute the use case, which checks quota, loads book, and resolves context
     result = use_case.execute(
-        user_id=user_id,
+        user_id=current_user.sub,
         book_id=book_id,
         question=body.question,
         anchor_chunk=body.anchoredChunk,

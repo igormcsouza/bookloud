@@ -20,6 +20,7 @@ class CognitoJwtVerifier:
         user_pool_id: str,
         audience: str,
         jwks_url: str | None = None,
+        verify_issuer: bool = True,
         fetch: Callable[[str], bytes] | None = None
     ) -> None:
         self._region = region
@@ -27,6 +28,7 @@ class CognitoJwtVerifier:
         self._audience = audience
         self._issuer = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}"
         self._jwks_url = jwks_url or f"{self._issuer}/.well-known/jwks.json"
+        self._verify_issuer = verify_issuer
         self._fetch = fetch or self._default_fetch
         
         self._jwks: dict | None = None
@@ -75,13 +77,15 @@ class CognitoJwtVerifier:
         try:
             public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
             
+            options = {"verify_exp": True, "leeway": 0, "verify_iss": self._verify_issuer}
+            
             claims = jwt.decode(
                 token,
                 public_key,
                 algorithms=["RS256"],
                 audience=self._audience,
-                issuer=self._issuer,
-                options={"verify_exp": True, "leeway": 0},
+                issuer=self._issuer if self._verify_issuer else None,
+                options=options,
             )
             
             if claims.get("token_use") != "id":
