@@ -42,12 +42,29 @@ COPY src ./src
 
 CMD ["lambda_function.handler"]
 
-# --- lambda-stream ----------------------------------------------------
+# --- lambda-stream (response streaming; PLANS/phase-7.md §9.2) --------------
+#
+# FROM lambda, so this is the SAME dependency set and the SAME src/ -- the
+# pushed delta is one small layer, not a second full image.
+#
+# The adapter is HERE and NOT in the `lambda` stage, and that is load-bearing:
+# anything in /opt/extensions/ is started as an external extension for EVERY
+# function built from that image. Put it in `lambda` and the adapter would
+# come up alongside the Runtime Interface Client on ExtractFunction,
+# SynthesizeFunction, StitchFunction and ApiFunction, with both polling the
+# Runtime API. Do not "simplify" this by moving the COPY up.
 FROM lambda AS lambda-stream
 
-COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /opt/extensions/lambda-adapter /opt/extensions/lambda-adapter
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
 
-ENV PORT=8000
-ENV AWS_LWA_INVOKE_MODE=response_stream
+ENV AWS_LWA_INVOKE_MODE=response_stream \
+    AWS_LWA_PORT=8080 \
+    AWS_LWA_READINESS_CHECK_PATH=/health \
+    AWS_LWA_ASYNC_INIT=true \
+    PYTHONPATH=/var/task
 
-CMD ["python", "-m", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8000"]
+# The base image's ENTRYPOINT is the RIC. Clear it: with the adapter present,
+# the container's job is to be a web server, and the adapter owns the Runtime
+# API loop.
+ENTRYPOINT []
+CMD ["python3", "-m", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8080"]
