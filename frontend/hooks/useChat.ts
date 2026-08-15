@@ -43,14 +43,11 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
-      
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
 
       // Optimistically add user message
       const tempId = `temp-${Date.now()}`;
       const anchorChunk = anchorRef.current;
-      
+
       const userMsg: ChatMessage = {
         id: tempId,
         role: "user",
@@ -71,7 +68,7 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
       setStreamingError(null);
       setStreamingFinishReason(null);
       setStreamingAnchorChunk(anchorChunk); // updated by meta if different
-      
+
       bufferRef.current = "";
 
       const body: AskRequest = {
@@ -80,12 +77,19 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
         positionMs: null // TODO if needed
       };
 
-      try {
-        await streamChat(
+      // Set once any byte of the response has arrived, so a retry never
+      // fires after the user has already seen part of an answer.
+      let receivedAnyBytes = false;
+
+      const attempt = () => {
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+        return streamChat(
           bookId,
           body,
           {
             onMeta: (meta) => {
+              receivedAnyBytes = true;
               setStreamingAnchorChunk(meta.anchorChunk);
               setChat((prev) => {
                 if (!prev) return prev;
@@ -98,6 +102,7 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
               });
             },
             onDelta: (text) => {
+              receivedAnyBytes = true;
               bufferRef.current += text;
               if (frameRef.current === null) {
                 frameRef.current = requestAnimationFrame(() => {
@@ -122,12 +127,39 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
           },
           abortController.signal
         );
+      };
+
+      try {
+        await attempt();
       } catch (err: any) {
-        if (err.name !== "AbortError") {
-          console.error("streamChat failed", err);
-          setIsStreaming(false);
-          setStreamingError({ code: err.code || "ERR", message: err.message });
+        if (err.name === "AbortError") return;
+
+        if (!receivedAnyBytes) {
+          // A request that failed before a single byte arrived -- observed
+          // in practice as the Function URL's streamed response
+          // occasionally resetting the connection even though the Lambda
+          // invocation itself completed successfully server-side (nothing
+          // an app-level fix can reach; PLANS/phase-7.md §12.3 flags
+          // response-streaming reliability as unverifiable by any
+          // automated check). One silent retry, mirroring the backend's own
+          // retry-once-before-first-token policy for OpenAI: safe because
+          // nothing has been shown on screen yet, so a retry can never
+          // duplicate visible text.
+          try {
+            await attempt();
+            return;
+          } catch (retryErr: any) {
+            if (retryErr.name === "AbortError") return;
+            console.error("streamChat failed after retry", retryErr);
+            setIsStreaming(false);
+            setStreamingError({ code: retryErr.code || "ERR", message: retryErr.message });
+            return;
+          }
         }
+
+        console.error("streamChat failed", err);
+        setIsStreaming(false);
+        setStreamingError({ code: err.code || "ERR", message: err.message });
       }
     },
     [bookId, anchorRef]

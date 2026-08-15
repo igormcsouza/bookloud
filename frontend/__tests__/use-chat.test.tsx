@@ -212,4 +212,49 @@ describe("useChat", () => {
 
     expect(capturedSignal!.aborted).toBe(true);
   });
+
+  it("retries once, silently, when a request fails before any byte arrives", async () => {
+    let callCount = 0;
+    streamChatMock.mockImplementation((_id, _body, handlers: Handlers) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return Promise.reject(Object.assign(new Error("Failed to fetch"), { name: "TypeError" }));
+      }
+      handlers.onMeta({ model: "stub", enabled: true, reason: null, anchorChunk: 0, windowChunks: [0], messageId: "m1" });
+      handlers.onDelta("ok");
+      handlers.onDone("END_TURN");
+      return Promise.resolve();
+    });
+
+    const chatRef: { current: ReturnType<typeof useChat> | null } = { current: null };
+    render(<Host chatRef={chatRef} onRender={() => {}} />);
+    await waitFor(() => expect(chatRef.current!.loading).toBe(false));
+
+    listChatMock.mockResolvedValue({ messages: [], chat: ENABLED_ENVELOPE });
+
+    await act(async () => {
+      await chatRef.current!.sendQuestion("Q1");
+    });
+
+    expect(streamChatMock).toHaveBeenCalledTimes(2);
+    expect(chatRef.current!.streamingError).toBeNull();
+  });
+
+  it("does not retry once a byte has already arrived, and surfaces the error", async () => {
+    streamChatMock.mockImplementation((_id, _body, handlers: Handlers) => {
+      handlers.onDelta("partial");
+      return Promise.reject(Object.assign(new Error("Failed to fetch"), { name: "TypeError" }));
+    });
+
+    const chatRef: { current: ReturnType<typeof useChat> | null } = { current: null };
+    render(<Host chatRef={chatRef} onRender={() => {}} />);
+    await waitFor(() => expect(chatRef.current!.loading).toBe(false));
+
+    await act(async () => {
+      await chatRef.current!.sendQuestion("Q1");
+    });
+
+    expect(streamChatMock).toHaveBeenCalledTimes(1);
+    expect(chatRef.current!.streamingError).toEqual({ code: "ERR", message: "Failed to fetch" });
+  });
 });
