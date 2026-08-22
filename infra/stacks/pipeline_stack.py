@@ -490,16 +490,27 @@ class PipelineStack(cdk.Stack):
         engine-name/exception-text changes in the rest of the log line can
         never break the filter.
         """
-        # Imported *by name*, not `synthesize_fn.log_group` -- that property
+        # Created explicitly (not `synthesize_fn.log_group`, and not
+        # `LogGroup.from_log_group_name` either) at the Lambda's conventional
+        # `/aws/lambda/<function-name>` name. `synthesize_fn.log_group`
         # provisions a `LogRetention` custom-resource Lambda the first time
-        # it's touched (it exists to let CDK manage retention on a log group
-        # it does not own the lifecycle of), which would silently add a
-        # sixth Lambda + role to this stack for a property we only need to
-        # point a metric filter at. The Lambda service always creates
-        # `/aws/lambda/<function-name>` itself, so importing by that
-        # deterministic name needs no custom resource.
-        log_group = logs.LogGroup.from_log_group_name(
-            self, "SynthesizeLogGroupRef", f"/aws/lambda/{synthesize_fn.function_name}"
+        # it's touched -- a sixth Lambda + role in this stack for a property
+        # we only need to point a metric filter at. Importing *by name* was
+        # tried first and fails on a genuinely fresh stack: the log group
+        # doesn't exist until the Lambda's first invocation, and
+        # `CreateMetricFilter` against a not-yet-existent log group is a
+        # hard deploy-time failure (`ResourceNotFoundException`), not a
+        # synth-time one -- `cdk synth`/infra tests never invoke the Lambda,
+        # so this only surfaces on a real first deploy. Declaring our own
+        # `LogGroup` construct at that same name sidesteps both problems: the
+        # Lambda service writes into whatever log group already exists under
+        # its conventional name, so this one just needs to exist first.
+        log_group = logs.LogGroup(
+            self,
+            "SynthesizeLogGroup",
+            log_group_name=f"/aws/lambda/{synthesize_fn.function_name}",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
         )
         metric_filter = logs.MetricFilter(
             self,
