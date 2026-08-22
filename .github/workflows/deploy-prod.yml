@@ -25,27 +25,43 @@ jobs:
       # (playback project included) runs -- not every PR commit.
       run_e2e: true
 
-  deploy:
-    name: Deploy Production
+  # Phase 8 (IMPLEMENTATION_PLAN.md): "on merge to main, unit tests -> e2e
+  # against a staging/prod-like ephemeral stack -> CDK deploy to prod". This
+  # job deploys a genuinely ephemeral `Bookloud*-staging` stack set (same CDK
+  # code, same OpenNext build, same Cognito/API Gateway/CloudFront wiring as
+  # prod) and runs the Playwright chromium project against it. `staging` is
+  # not "prod", so get_speech_synthesizer()/get_chat_model() gate to their
+  # stubs exactly like a pr-N environment does -- degraded.spec.ts's
+  # PARTIAL/NO_AUDIO assertions are meaningful here, and nothing here touches
+  # real TTS quota or the real Cognito pool.
+  staging:
+    name: Staging (ephemeral e2e gate)
     needs: ci
+    uses: ./.github/workflows/deploy-stack.yml
+    with:
+      env_name: staging
+      environment_name: development
+      seed_users: true
+      run_e2e: true
+    secrets: inherit
+
+  # Always attempted once `staging` has run (success or failure) so a failed
+  # e2e gate never strands a live staging stack. Mirrors destroy-pr.yml:
+  # plain CloudFormation deletes in reverse dependency order, with the same
+  # bounded DELETE_FAILED retry for the known-transient
+  # AWS::ApiGatewayV2::Authorizer InternalFailure on delete (see
+  # destroy-pr.yml for the full incident writeup).
+  destroy-staging:
+    name: Destroy staging
+    needs: staging
+    if: always()
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ steps.frontend-url.outputs.url }}
+    timeout-minutes: 60
+    environment: development
     env:
-      ENV_NAME: prod
+      ENV_NAME: staging
 
-    # Byte-for-byte the same step sequence as deploy-pr.yml's deploy job,
-    # with ENV_NAME=prod, minus the PR-comment step. No Playwright e2e yet --
-    # per IMPLEMENTATION_PLAN.md there is no UI flow to test until phase 8;
-    # the smoke test is the gate. Kept structurally identical to
-    # deploy-pr.yml on purpose so phase 8 can factor both into one reusable
-    # deploy.yml without a rewrite -- do not factor it now, the duplication
-    # is deliberate and cheap at this size.
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -53,111 +69,95 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('infra/requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: Install CDK CLI
-        run: npm install -g aws-cdk
-
-      - name: Install CDK Python dependencies
-        working-directory: infra
-        run: pip install -r requirements.txt
-
-      - name: Bootstrap CDK
-        working-directory: infra
-        run: cdk bootstrap "aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}"
-
-      - name: Deploy Storage, Auth, Pipeline, Api
-        id: deploy-backend
-        working-directory: infra
+      - name: Delete stacks (reverse dependency order)
         run: |
-          cdk deploy \
-            "BookloudStorage-${ENV_NAME}" "BookloudAuth-${ENV_NAME}" \
-            "BookloudPipeline-${ENV_NAME}" "BookloudApi-${ENV_NAME}" \
-            --exclusively \
-            --require-approval never \
-            -c environment="${ENV_NAME}" \
-            -c git_sha="${GITHUB_SHA}" \
-            --outputs-file cdk-backend-outputs.json
+          set -euo pipefail
 
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          with open("cdk-backend-outputs.json") as f:
-              outputs = json.load(f)
-          api = outputs.get("BookloudApi-prod", {})
-          print(f"api_url={api.get('ApiUrl', '').rstrip('/')}")
-          print(f"chat_url={api.get('ChatUrl', '').rstrip('/')}")
-          PY
+          BACKOFFS=(60 180 300)
+          RETRY_BUDGET_SECONDS=900
+          RETRY_SPENT=0
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
+          stack_status() {
+            aws cloudformation describe-stacks --stack-name "$1" \
+              --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "GONE"
+          }
 
-      - name: Build frontend (OpenNext)
-        working-directory: frontend
-        env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ steps.deploy-backend.outputs.api_url }}
-          NEXT_PUBLIC_CHAT_BASE_URL: ${{ steps.deploy-backend.outputs.chat_url }}
-        run: npx open-next build
+          delete_with_retry() {
+            local STACK="$1" ATTEMPT=0 STATUS
+            while :; do
+              aws cloudformation delete-stack --stack-name "$STACK"
+              if aws cloudformation wait stack-delete-complete --stack-name "$STACK"; then
+                echo "$STACK deleted."
+                return 0
+              fi
 
-      - name: Verify OpenNext output
-        working-directory: frontend
-        run: |
-          if [ ! -d ".open-next/server-functions/default" ]; then
-            echo "ERROR: OpenNext did not produce .open-next/server-functions/default/"
-            echo "Contents of .open-next/ (if it exists):"
-            ls -la .open-next/ 2>/dev/null || echo "  .open-next/ does not exist"
-            exit 1
-          fi
-          echo "OpenNext output OK: $(du -sh .open-next/server-functions/default | cut -f1) in server-functions/default/"
+              STATUS=$(stack_status "$STACK")
+              if [ "$STATUS" = "GONE" ]; then
+                echo "$STACK is gone."
+                return 0
+              fi
+              if [ "$STATUS" != "DELETE_FAILED" ]; then
+                echo "::error::$STACK is in $STATUS, not DELETE_FAILED - not retrying." >&2
+                aws cloudformation describe-stack-events --stack-name "$STACK" \
+                  --max-items 20 --output table >&2 || true
+                return 1
+              fi
 
-      - name: Deploy Frontend
-        working-directory: infra
-        run: |
-          rm -rf cdk.out
-          cdk deploy \
-            "BookloudFrontend-${ENV_NAME}" \
-            --exclusively \
-            --require-approval never \
-            -c environment="${ENV_NAME}" \
-            -c git_sha="${GITHUB_SHA}" \
-            --outputs-file cdk-frontend-outputs.json
+              if [ "$ATTEMPT" -ge "${#BACKOFFS[@]}" ]; then
+                echo "::error::$STACK is still DELETE_FAILED after ${#BACKOFFS[@]} retries." >&2
+                echo "::error::This is the KNOWN TRANSIENT AWS::ApiGatewayV2::Authorizer 'InternalFailure' on delete (see destroy-pr.yml). The stack is STILL STANDING and is leaking resources." >&2
+                echo "::error::WHAT TO DO: re-run this job later (Actions -> Deploy to Production -> Re-run jobs). If it still fails after several hours, delete BookloudApi-${ENV_NAME} by hand with elevated credentials." >&2
+                aws cloudformation describe-stack-events --stack-name "$STACK" \
+                  --max-items 20 --output table >&2 || true
+                return 1
+              fi
 
-      - name: Extract frontend URL
-        id: frontend-url
-        working-directory: infra
-        run: |
-          FRONTEND_URL=$(python3 - <<'PY'
-          import json
-          with open("cdk-frontend-outputs.json") as f:
-              outputs = json.load(f)
-          stack = outputs.get("BookloudFrontend-prod", {})
-          print(stack.get("FrontendUrl", "").rstrip("/"))
-          PY
-          )
-          echo "url=${FRONTEND_URL}" >> "$GITHUB_OUTPUT"
+              local SLEEP="${BACKOFFS[$ATTEMPT]}"
+              if [ "$((RETRY_SPENT + SLEEP))" -gt "$RETRY_BUDGET_SECONDS" ]; then
+                echo "::error::$STACK is DELETE_FAILED and the ${RETRY_BUDGET_SECONDS}s retry budget for this job is exhausted." >&2
+                echo "::error::This is the KNOWN TRANSIENT AWS::ApiGatewayV2::Authorizer 'InternalFailure' on delete. The stack is STILL STANDING. Re-run this job later." >&2
+                return 1
+              fi
+              RETRY_SPENT=$((RETRY_SPENT + SLEEP))
+              ATTEMPT=$((ATTEMPT + 1))
+              echo "$STACK is DELETE_FAILED (the known transient authorizer InternalFailure)."
+              echo "Retry $ATTEMPT/${#BACKOFFS[@]} in ${SLEEP}s (${RETRY_SPENT}s of ${RETRY_BUDGET_SECONDS}s budget used)..."
+              sleep "$SLEEP"
+            done
+          }
 
-      - name: Smoke test prod
-        run: |
-          python3 local/smoke_test.py \
-            --api-url "${{ steps.deploy-backend.outputs.api_url }}" \
-            --chat-url "${{ steps.deploy-backend.outputs.chat_url }}" \
-            --frontend-url "${{ steps.frontend-url.outputs.url }}" \
-            --expect-commit "${{ github.sha }}" \
-            --expect-environment prod
+          for STACK in "BookloudFrontend-${ENV_NAME}" \
+                       "BookloudApi-${ENV_NAME}" \
+                       "BookloudPipeline-${ENV_NAME}" \
+                       "BookloudAuth-${ENV_NAME}" \
+                       "BookloudStorage-${ENV_NAME}"; do
+            if ERR=$(aws cloudformation describe-stacks --stack-name "$STACK" 2>&1 1>/dev/null); then
+              echo "Deleting $STACK..."
+              delete_with_retry "$STACK"
+            elif echo "$ERR" | grep -q "does not exist"; then
+              echo "$STACK does not exist - skipping."
+            else
+              echo "ERROR describing $STACK: $ERR" >&2
+              exit 1
+            fi
+          done
+
+  # Byte-for-byte the same deploy-stack.yml call as `staging` above, minus
+  # user seeding and e2e: prod already got its e2e gate against the staging
+  # stack, and per IMPLEMENTATION_PLAN.md real TTS engines are prod-only, so
+  # there is deliberately no reason to run login-gated checks or Playwright
+  # against the real Cognito pool here. Gated on `staging` succeeding --
+  # `needs: staging` alone isn't enough since a failed dependency still lets
+  # a job with `if: always()` run, but this job has no `if:`, so the default
+  # (only run if every need succeeded) applies and a failed e2e gate blocks
+  # the prod deploy outright.
+  deploy:
+    name: Deploy Production
+    needs: [ci, staging]
+    uses: ./.github/workflows/deploy-stack.yml
+    with:
+      env_name: prod
+      environment_name: production
+      seed_users: false
+      run_e2e: false
+    secrets: inherit
