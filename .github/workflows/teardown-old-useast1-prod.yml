@@ -1,0 +1,117 @@
+name: "One-off: Teardown old us-east-1 prod"
+
+# Temporary, manually-triggered workflow to delete the pre-region-split prod
+# stacks left behind in us-east-1 after issue #8 moved prod to sa-east-1.
+# CloudFront OriginAccessControl names are account-global (not per-region),
+# so the old us-east-1 BookloudFrontend-prod stack's OAC collides with the
+# new sa-east-1 stack's attempt to create one with the same derived name --
+# this must run before a sa-east-1 prod deploy can succeed.
+#
+# Confirmed disposable: no important data in the old us-east-1 stacks.
+# Delete this workflow file once it has run successfully.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "delete-us-east-1-prod" to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  destroy:
+    name: Destroy old us-east-1 prod stacks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      ENV_NAME: prod
+
+    steps:
+      - name: Verify confirmation input
+        run: |
+          if [ "${{ inputs.confirm }}" != "delete-us-east-1-prod" ]; then
+            echo "::error::confirm input did not match 'delete-us-east-1-prod' -- aborting."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (us-east-1)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Same bounded DELETE_FAILED retry as destroy-pr.yml (known transient
+      # AWS::ApiGatewayV2::Authorizer InternalFailure on delete).
+      - name: Delete stacks (reverse dependency order)
+        run: |
+          set -euo pipefail
+
+          BACKOFFS=(60 180 300)
+          RETRY_BUDGET_SECONDS=900
+          RETRY_SPENT=0
+
+          stack_status() {
+            aws cloudformation describe-stacks --stack-name "$1" \
+              --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "GONE"
+          }
+
+          delete_with_retry() {
+            local STACK="$1" ATTEMPT=0 STATUS
+            while :; do
+              aws cloudformation delete-stack --stack-name "$STACK"
+              if aws cloudformation wait stack-delete-complete --stack-name "$STACK"; then
+                echo "$STACK deleted."
+                return 0
+              fi
+
+              STATUS=$(stack_status "$STACK")
+              if [ "$STATUS" = "GONE" ]; then
+                echo "$STACK is gone."
+                return 0
+              fi
+              if [ "$STATUS" != "DELETE_FAILED" ]; then
+                echo "::error::$STACK is in $STATUS, not DELETE_FAILED - not retrying." >&2
+                aws cloudformation describe-stack-events --stack-name "$STACK" \
+                  --max-items 20 --output table >&2 || true
+                return 1
+              fi
+
+              if [ "$ATTEMPT" -ge "${#BACKOFFS[@]}" ]; then
+                echo "::error::$STACK is still DELETE_FAILED after ${#BACKOFFS[@]} retries." >&2
+                aws cloudformation describe-stack-events --stack-name "$STACK" \
+                  --max-items 20 --output table >&2 || true
+                return 1
+              fi
+
+              local SLEEP="${BACKOFFS[$ATTEMPT]}"
+              if [ "$((RETRY_SPENT + SLEEP))" -gt "$RETRY_BUDGET_SECONDS" ]; then
+                echo "::error::$STACK is DELETE_FAILED and the ${RETRY_BUDGET_SECONDS}s retry budget is exhausted." >&2
+                return 1
+              fi
+              RETRY_SPENT=$((RETRY_SPENT + SLEEP))
+              ATTEMPT=$((ATTEMPT + 1))
+              echo "$STACK is DELETE_FAILED. Retry $ATTEMPT/${#BACKOFFS[@]} in ${SLEEP}s..."
+              sleep "$SLEEP"
+            done
+          }
+
+          for STACK in "BookloudFrontend-${ENV_NAME}" \
+                       "BookloudApi-${ENV_NAME}" \
+                       "BookloudPipeline-${ENV_NAME}" \
+                       "BookloudAuth-${ENV_NAME}" \
+                       "BookloudStorage-${ENV_NAME}"; do
+            if ERR=$(aws cloudformation describe-stacks --stack-name "$STACK" 2>&1 1>/dev/null); then
+              echo "Deleting $STACK..."
+              delete_with_retry "$STACK"
+            elif echo "$ERR" | grep -q "does not exist"; then
+              echo "$STACK does not exist - skipping."
+            else
+              echo "ERROR describing $STACK: $ERR" >&2
+              exit 1
+            fi
+          done
