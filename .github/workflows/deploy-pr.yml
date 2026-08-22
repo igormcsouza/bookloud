@@ -39,6 +39,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # PR environments deliberately stay on the shared AWS_REGION secret
+      # (us-east-1), separate from prod's AWS_REGION_PROD (sa-east-1) --
+      # issue #8. us-east-1 is where ephemeral stacks won't compete with
+      # prod (or the other projects sharing that account's sa-east-1 Lambda
+      # concurrency quota) for concurrency, and it's cheaper for stacks that
+      # get created and destroyed on every push.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
