@@ -115,3 +115,59 @@ jobs:
               exit 1
             fi
           done
+
+      # storage_stack.py/frontend_stack.py/auth_stack.py all set
+      # RemovalPolicy.RETAIN for prod (deliberately, to survive an accidental
+      # stack delete) -- deleting the CFN stacks above orphans these
+      # resources rather than removing them. Confirmed disposable: no
+      # important data. Named explicitly (not discovered by a `bookloud*`
+      # prefix scan) so this can never accidentally touch the *new*
+      # sa-east-1 prod resources or the live *-staging resources from an
+      # in-flight deploy-prod run.
+      - name: Delete orphaned RETAIN resources (old us-east-1 prod only)
+        run: |
+          set -euo pipefail
+
+          for BUCKET in \
+            bookloudfrontend-prod-frontendassets13c50fea-noe4rggsijip \
+            bookloudstorage-prod-audiobucket96beecba-9w4jwbszsgta \
+            bookloudstorage-prod-marksbucketb19e1b3c-2nma4wtocotx \
+            bookloudstorage-prod-pdfbucketfa9e115a-gal41rlq6aj7; do
+            if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+              REGION=$(aws s3api get-bucket-location --bucket "$BUCKET" --query LocationConstraint --output text)
+              REGION=${REGION/None/us-east-1}
+              if [ "$REGION" != "us-east-1" ]; then
+                echo "::error::$BUCKET is in $REGION, not us-east-1 -- refusing to touch it (safety check)." >&2
+                exit 1
+              fi
+              echo "Emptying and deleting $BUCKET ..."
+              aws s3 rm "s3://$BUCKET" --recursive
+              aws s3api delete-bucket --bucket "$BUCKET"
+              echo "$BUCKET deleted."
+            else
+              echo "$BUCKET does not exist - skipping."
+            fi
+          done
+
+          if aws dynamodb describe-table --table-name bookloud-prod --region us-east-1 >/dev/null 2>&1; then
+            echo "Deleting DynamoDB table bookloud-prod ..."
+            aws dynamodb delete-table --table-name bookloud-prod --region us-east-1 >/dev/null
+            aws dynamodb wait table-not-exists --table-name bookloud-prod --region us-east-1
+            echo "bookloud-prod table deleted."
+          else
+            echo "bookloud-prod table does not exist - skipping."
+          fi
+
+          POOL_ID=us-east-1_dmrLjAH1h
+          if aws cognito-idp describe-user-pool --user-pool-id "$POOL_ID" --region us-east-1 >/dev/null 2>&1; then
+            NAME=$(aws cognito-idp describe-user-pool --user-pool-id "$POOL_ID" --region us-east-1 --query 'UserPool.Name' --output text)
+            if [ "$NAME" != "bookloud-prod" ]; then
+              echo "::error::$POOL_ID is named '$NAME', not 'bookloud-prod' -- refusing to delete (safety check)." >&2
+              exit 1
+            fi
+            echo "Deleting Cognito user pool $POOL_ID ($NAME) ..."
+            aws cognito-idp delete-user-pool --user-pool-id "$POOL_ID" --region us-east-1
+            echo "$POOL_ID deleted."
+          else
+            echo "$POOL_ID does not exist - skipping."
+          fi
