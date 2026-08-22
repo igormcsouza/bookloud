@@ -25,10 +25,11 @@ on:
         type: string
       aws_region:
         description: >-
-          AWS region to deploy into. Callers pass the actual region string
-          (not a secret name) so this reusable workflow stays region-agnostic
-          -- prod passes secrets.AWS_REGION_PROD (sa-east-1), PR/staging pass
-          secrets.AWS_REGION (us-east-1). Issue #8.
+          AWS region to deploy into, as a literal string (e.g. "us-east-1").
+          `with:` on a `uses:` reusable-workflow call cannot read the secrets
+          context, so callers pass the region directly instead of a secrets
+          lookup -- prod passes "sa-east-1", PR/staging pass "us-east-1".
+          Issue #8.
         required: true
         type: string
       environment_name:

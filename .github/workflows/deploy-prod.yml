@@ -40,7 +40,11 @@ jobs:
     uses: ./.github/workflows/deploy-stack.yml
     with:
       env_name: staging
-      aws_region: ${{ secrets.AWS_REGION }}
+      # `with:` on a reusable-workflow call can't read the secrets context
+      # (actionlint/GitHub reject it outright) -- region isn't sensitive, so
+      # pass it literally. staging is ephemeral like PR envs: stays off
+      # prod's sa-east-1 quota, issue #8.
+      aws_region: "us-east-1"
       environment_name: development
       seed_users: true
       run_e2e: true
@@ -165,7 +169,11 @@ jobs:
     uses: ./.github/workflows/deploy-stack.yml
     with:
       env_name: prod
-      aws_region: ${{ secrets.AWS_REGION_PROD }}
+      # Literal, not secrets.AWS_REGION_PROD -- `with:` on a reusable-workflow
+      # call can't read the secrets context. Prod runs in its own region,
+      # sa-east-1 (closer to the only user, off the shared us-east-1 Lambda
+      # concurrency budget ephemeral PR/staging stacks compete on) -- issue #8.
+      aws_region: "sa-east-1"
       environment_name: production
       seed_users: false
       run_e2e: false

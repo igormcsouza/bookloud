@@ -34,7 +34,7 @@ jobs:
     uses: ./.github/workflows/deploy-stack.yml
     with:
       env_name: pr-${{ github.event.pull_request.number }}
-      aws_region: ${{ secrets.AWS_REGION }}
+      aws_region: "us-east-1"  # PR/staging: keep off prod's sa-east-1 quota, issue #8
       environment_name: development
       seed_users: true
       run_e2e: true
