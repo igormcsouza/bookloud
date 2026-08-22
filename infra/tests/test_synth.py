@@ -33,6 +33,48 @@ def _synth(stack_cls, environment: str, **kwargs) -> Template:
     return Template.from_stack(stack)
 
 
+# --- Region split (issue #8) ---------------------------------------------
+#
+# infra/app.py doesn't branch region on `environment` in code -- every stack
+# just takes whatever `cdk.Environment(region=...)` it's constructed with,
+# which in the real pipelines comes from CDK_DEFAULT_REGION as resolved by
+# the CDK CLI from whichever AWS credentials configure-aws-credentials set
+# up (AWS_REGION_PROD/sa-east-1 in deploy-prod.yml, AWS_REGION/us-east-1 in
+# deploy-pr.yml). These tests exercise that mechanism directly: a stack
+# constructed with an explicit `env=` for each region must synthesize with
+# that region on `Stack.region`, and any resource that mirrors the stack's
+# own region into a runtime env var (e.g. FrontendStack's COGNITO_REGION,
+# wired from `cdk.Stack.of(self).region` in api_stack.py) must follow it too.
+@pytest.mark.parametrize(
+    ("environment", "region"),
+    [("prod", "sa-east-1"), ("pr-99", "us-east-1")],
+)
+def test_stack_region_follows_env(environment: str, region: str) -> None:
+    app = cdk.App()
+    stack = StorageStack(
+        app,
+        f"TestStorageRegion-{environment}",
+        environment=environment,
+        env=cdk.Environment(account="111111111111", region=region),
+    )
+    assert stack.region == region
+
+
+@pytest.mark.parametrize(
+    ("environment", "region"),
+    [("prod", "sa-east-1"), ("pr-99", "us-east-1")],
+)
+def test_auth_stack_region_follows_env(environment: str, region: str) -> None:
+    app = cdk.App()
+    stack = AuthStack(
+        app,
+        f"TestAuthRegion-{environment}",
+        environment=environment,
+        env=cdk.Environment(account="111111111111", region=region),
+    )
+    assert stack.region == region
+
+
 # --- StorageStack --------------------------------------------------------
 
 

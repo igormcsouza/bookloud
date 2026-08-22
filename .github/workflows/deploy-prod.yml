@@ -46,12 +46,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Prod deliberately runs in its own region (AWS_REGION_PROD, sa-east-1)
+      # rather than the shared AWS_REGION secret (us-east-1) that PR
+      # environments use -- issue #8. sa-east-1 is closer to the only user
+      # and keeps prod off the shared us-east-1 Lambda concurrency budget
+      # that ephemeral PR stacks (and other unrelated projects) compete on.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION_PROD }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -81,7 +86,7 @@ jobs:
 
       - name: Bootstrap CDK
         working-directory: infra
-        run: cdk bootstrap "aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}"
+        run: cdk bootstrap "aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION_PROD }}"
 
       - name: Deploy Storage, Auth, Pipeline, Api
         id: deploy-backend
