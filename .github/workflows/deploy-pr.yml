@@ -20,268 +20,42 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       # The full docker-compose e2e suite (with the playback project) is
-      # main-only -- expensive to run on every commit, and this job already
-      # runs its own Playwright pass (chromium only) against the real
-      # ephemeral deploy below.
+      # main-only -- expensive to run on every commit, and this PR's `deploy`
+      # job below already runs its own Playwright pass (chromium only)
+      # against the real ephemeral deploy.
       run_e2e: false
 
+  # Phase 8 (IMPLEMENTATION_PLAN.md): the deploy-and-smoke-test-and-e2e
+  # sequence now lives in deploy-stack.yml so deploy-prod.yml's staging gate
+  # can reuse it byte-for-byte instead of drifting from this one.
   deploy:
     name: Deploy PR Environment
     needs: ci
-    runs-on: ubuntu-latest
-    environment:
-      name: development
-      url: ${{ steps.frontend-url.outputs.url }}
-    env:
-      ENV_NAME: pr-${{ github.event.pull_request.number }}
+    uses: ./.github/workflows/deploy-stack.yml
+    with:
+      env_name: pr-${{ github.event.pull_request.number }}
+      aws_region: ${{ secrets.AWS_REGION }}
+      environment_name: development
+      seed_users: true
+      run_e2e: true
+    secrets: inherit
 
+  comment:
+    name: Comment on PR
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      # PR environments deliberately stay on the shared AWS_REGION secret
-      # (us-east-1), separate from prod's AWS_REGION_PROD (sa-east-1) --
-      # issue #8. us-east-1 is where ephemeral stacks won't compete with
-      # prod (or the other projects sharing that account's sa-east-1 Lambda
-      # concurrency quota) for concurrency, and it's cheaper for stacks that
-      # get created and destroyed on every push.
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('infra/requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: Install CDK CLI
-        run: npm install -g aws-cdk
-
-      - name: Install CDK Python dependencies
-        working-directory: infra
-        run: pip install -r requirements.txt
-
-      - name: Bootstrap CDK
-        working-directory: infra
-        run: cdk bootstrap "aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}"
-
-      # --exclusively is load-bearing: without it, naming BookloudApi-* would
-      # drag its dependencies in with whatever context the *next* command
-      # supplies.
-      - name: Deploy Storage, Auth, Pipeline, Api
-        id: deploy-backend
-        working-directory: infra
-        run: |
-          cdk deploy \
-            "BookloudStorage-${ENV_NAME}" "BookloudAuth-${ENV_NAME}" \
-            "BookloudPipeline-${ENV_NAME}" "BookloudApi-${ENV_NAME}" \
-            --exclusively \
-            --require-approval never \
-            -c environment="${ENV_NAME}" \
-            -c git_sha="${GITHUB_SHA}" \
-            --outputs-file cdk-backend-outputs.json
-
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os
-          with open("cdk-backend-outputs.json") as f:
-              outputs = json.load(f)
-          env_name = os.environ["ENV_NAME"]
-          api = outputs.get(f"BookloudApi-{env_name}", {})
-          auth = outputs.get(f"BookloudAuth-{env_name}", {})
-          print(f"api_url={api.get('ApiUrl', '').rstrip('/')}")
-          print(f"chat_url={api.get('ChatUrl', '').rstrip('/')}")
-          print(f"user_pool_id={auth.get('UserPoolId', '')}")
-          print(f"user_pool_client_id={auth.get('UserPoolClientId', '')}")
-          PY
-
-      # Self-signup is disabled on the pool (admin-only provisioning, see
-      # PLANS/phase-1.md §11) -- Cognito itself rejects SignUp, so the smoke
-      # test can't create its own users. Seed two throwaway ones the way an
-      # admin actually would: a normal permanent-password login, and a
-      # temp-password one to exercise the NEW_PASSWORD_REQUIRED challenge.
-      # Both live only in this PR's pool and vanish with it on teardown.
-      - name: Seed smoke-test users
-        id: seed-users
-        env:
-          USER_POOL_ID: ${{ steps.deploy-backend.outputs.user_pool_id }}
-        run: |
-          LOGIN_USER="smoke-login-${GITHUB_RUN_ID}"
-          LOGIN_PASS="Smoke-$(openssl rand -hex 8)!A1"
-          NEWUSER="smoke-newuser-${GITHUB_RUN_ID}"
-          NEWUSER_TEMP_PASS="Temp-$(openssl rand -hex 8)!A1"
-
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
-            --message-action SUPPRESS >/dev/null
-          aws cognito-idp admin-set-user-password \
-            --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
-            --password "$LOGIN_PASS" --permanent >/dev/null
-
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
-            --message-action SUPPRESS >/dev/null
-          aws cognito-idp admin-set-user-password \
-            --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
-            --password "$NEWUSER_TEMP_PASS" >/dev/null
-
-          # Fixed-credential user for manually poking at the PR frontend
-          # without digging through AWS -- reviewer login only, not used by
-          # the smoke test. Fine to be predictable: pool is throwaway and
-          # dies with the PR.
-          #
-          # Unlike the two smoke users above, this username is FIXED, so it
-          # survives into every later push to the same PR (the pool outlives
-          # individual runs; only teardown deletes it). Creation must
-          # therefore tolerate "already exists" -- but only that. Any other
-          # AdminCreateUser error still fails the job loudly, same principle
-          # as the teardown fix in phase 1: never blanket-ignore an AWS error.
-          # admin-set-user-password below runs unconditionally either way, so
-          # a pre-existing admin still ends up with the advertised password.
-          if ! create_err=$(aws cognito-idp admin-create-user \
-                --user-pool-id "$USER_POOL_ID" --username "admin" \
-                --message-action SUPPRESS 2>&1 >/dev/null); then
-            case "$create_err" in
-              *UsernameExistsException*)
-                echo "admin user already exists in this PR's pool -- resetting its password" ;;
-              *)
-                echo "$create_err" >&2; exit 1 ;;
-            esac
-          fi
-          aws cognito-idp admin-set-user-password \
-            --user-pool-id "$USER_POOL_ID" --username "admin" \
-            --password "password" --permanent >/dev/null
-
-          {
-            echo "login_username=${LOGIN_USER}"
-            echo "login_password=${LOGIN_PASS}"
-            echo "newuser_username=${NEWUSER}"
-            echo "newuser_temp_password=${NEWUSER_TEMP_PASS}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build frontend (OpenNext)
-        working-directory: frontend
-        env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ steps.deploy-backend.outputs.api_url }}
-          NEXT_PUBLIC_CHAT_BASE_URL: ${{ steps.deploy-backend.outputs.chat_url }}
-        run: npx open-next build
-
-      - name: Verify OpenNext output
-        working-directory: frontend
-        run: |
-          if [ ! -d ".open-next/server-functions/default" ]; then
-            echo "ERROR: OpenNext did not produce .open-next/server-functions/default/"
-            echo "Contents of .open-next/ (if it exists):"
-            ls -la .open-next/ 2>/dev/null || echo "  .open-next/ does not exist"
-            exit 1
-          fi
-          echo "OpenNext output OK: $(du -sh .open-next/server-functions/default | cut -f1) in server-functions/default/"
-
-      - name: Deploy Frontend
-        id: deploy-frontend
-        working-directory: infra
-        run: |
-          rm -rf cdk.out
-          cdk deploy \
-            "BookloudFrontend-${ENV_NAME}" \
-            --exclusively \
-            --require-approval never \
-            -c environment="${ENV_NAME}" \
-            -c git_sha="${GITHUB_SHA}" \
-            --outputs-file cdk-frontend-outputs.json
-
-      - name: Extract frontend URL
-        id: frontend-url
-        working-directory: infra
-        run: |
-          FRONTEND_URL=$(python3 - <<'PY'
-          import json, os
-          with open("cdk-frontend-outputs.json") as f:
-              outputs = json.load(f)
-          env_name = os.environ["ENV_NAME"]
-          stack = outputs.get(f"BookloudFrontend-{env_name}", {})
-          print(stack.get("FrontendUrl", "").rstrip("/"))
-          PY
-          )
-          echo "url=${FRONTEND_URL}" >> "$GITHUB_OUTPUT"
-
-      - name: Smoke test the ephemeral deploy
-        run: |
-          python3 local/smoke_test.py \
-            --api-url "${{ steps.deploy-backend.outputs.api_url }}" \
-            --chat-url "${{ steps.deploy-backend.outputs.chat_url }}" \
-            --frontend-url "${{ steps.frontend-url.outputs.url }}" \
-            --expect-commit "${{ github.sha }}" \
-            --expect-environment "${{ env.ENV_NAME }}" \
-            --cognito-client-id "${{ steps.deploy-backend.outputs.user_pool_client_id }}" \
-            --cognito-region "${{ secrets.AWS_REGION }}" \
-            --login-username "${{ steps.seed-users.outputs.login_username }}" \
-            --login-password "${{ steps.seed-users.outputs.login_password }}" \
-            --newuser-username "${{ steps.seed-users.outputs.newuser_username }}" \
-            --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}"
-
-      # PLANS/phase-6.md OQ-2. Strictly this is phase 8's line item ("wire the
-      # Playwright e2e suite into both the per-PR ephemeral pipeline and the
-      # main-branch CD pipeline"), but the `e2e-local` job cannot exercise
-      # CloudFront, the SSR Lambda, API Gateway's Cognito authorizer or real
-      # S3 -- and `degraded.spec.ts` is only *meaningful* against an
-      # environment whose books are genuinely PARTIAL/NO_AUDIO, which compose
-      # (with SYNTHESIS_STUB_MODE=silent) is not. Two minutes on a pipeline
-      # that already deploys five stacks, versus leaving the deployed UI
-      # untested by any browser for a whole phase. Phase 8 then hardens and
-      # extends this rather than starting from zero.
-      #
-      # `E2E_AUDIO` is deliberately UNSET: this runs the `chromium` project
-      # only, which asserts nothing whatsoever about audio. There is none here
-      # to assert about.
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright e2e against the ephemeral deploy
-        working-directory: frontend
-        env:
-          E2E_BASE_URL: ${{ steps.frontend-url.outputs.url }}
-          E2E_USERNAME: ${{ steps.seed-users.outputs.login_username }}
-          E2E_PASSWORD: ${{ steps.seed-users.outputs.login_password }}
-        run: npx playwright test --project=chromium
-
-      - name: Upload the Playwright trace on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-pr-${{ github.event.pull_request.number }}
-          path: |
-            frontend/test-results
-            frontend/playwright-report
-          retention-days: 7
 
       - name: Comment on PR with deployment URLs
         uses: actions/github-script@v9
         with:
           script: |
-            const apiUrl      = '${{ steps.deploy-backend.outputs.api_url }}';
-            const frontendUrl = '${{ steps.frontend-url.outputs.url }}';
+            const apiUrl      = '${{ needs.deploy.outputs.api_url }}';
+            const frontendUrl = '${{ needs.deploy.outputs.frontend_url }}';
             const envName     = 'pr-${{ github.event.pull_request.number }}';
             const sha         = context.sha.slice(0, 7);
 

@@ -1,5 +1,14 @@
-"""``aws_cdk.assertions`` coverage over every stack, for `environment="pr-99"`
-and `environment="prod"`. Runs with no AWS credentials.
+"""``aws_cdk.assertions`` coverage over every stack, for `environment="pr-99"`,
+`environment="staging"` and `environment="prod"`. Runs with no AWS
+credentials.
+
+`"staging"` was added in phase 8 (`IMPLEMENTATION_PLAN.md`): `deploy-prod.yml`
+now deploys an ephemeral `Bookloud*-staging` stack set as its e2e gate before
+touching `-prod`. It is a non-prod environment name exactly like `pr-99` (only
+`environment == "prod"` flips `is_prod()`), so it is expected to behave
+identically to `pr-99` everywhere below -- this just proves that generalizing
+beyond `pr-<number>` names didn't quietly break anything that assumed the
+`pr-` prefix.
 
 Note: ``DockerImageCode.from_image_asset`` (used by ApiStack, and therefore
 by the full `infra/app.py` wiring) requires a working Docker daemon at synth
@@ -19,7 +28,7 @@ from stacks.frontend_stack import FrontendStack
 from stacks.pipeline_stack import PipelineStack
 from stacks.storage_stack import StorageStack
 
-ENVIRONMENTS = ["pr-99", "prod"]
+ENVIRONMENTS = ["pr-99", "staging", "prod"]
 
 
 def _synth(stack_cls, environment: str, **kwargs) -> Template:
