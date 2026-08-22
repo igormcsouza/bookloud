@@ -327,16 +327,9 @@ class SynthesizeChunk:
         self._stitch_queue.enqueue_book(user_id=command.user_id, book_id=command.book_id)
 
     def _republish_stitch_if_complete(self, command: SynthesizeChunkCommand) -> bool:
-        book = self._book_repository.get(command.user_id, command.book_id)
-        # BookStatus.EXTRACTED only: a book already STITCHING/READY/PARTIAL
-        # has either been picked up or finished, and re-publishing would
-        # queue pointless work behind the stitcher's conditional claim.
-        if book is None or book.status is not BookStatus.EXTRACTED:
-            return False
-        if book.chunks_total == 0 or book.chunks_done < book.chunks_total:
-            return False
-        self._stitch_queue.enqueue_book(user_id=command.user_id, book_id=command.book_id)
-        return True
+        return republish_stitch_if_complete(
+            self._book_repository, self._stitch_queue, user_id=command.user_id, book_id=command.book_id
+        )
 
 
 def _validate_text(text: str) -> UnsynthesizableText | None:
@@ -345,3 +338,27 @@ def _validate_text(text: str) -> UnsynthesizableText | None:
     if len(text) > MAX_SYNTHESIS_CHARS:
         return UnsynthesizableText(SynthesisFailure.TEXT_TOO_LONG, "chunk text exceeds MAX_SYNTHESIS_CHARS")
     return None
+
+
+def republish_stitch_if_complete(
+    book_repository: BookRepository, stitch_queue: StitchQueue, *, user_id: str, book_id: str
+) -> bool:
+    """Shared by ``SynthesizeChunk``'s own ``STITCH_REQUEUED`` branch (a
+    redelivered already-``DONE`` chunk message) and, since phase 8, by
+    ``application/sweeping.py``'s ``SweepDlq`` (PLANS/phase-5.md §4.3's named
+    residual hole: if ``enqueue_book`` fails on every one of the completing
+    chunk's attempts, the message DLQs instead of being redelivered, and only
+    the DLQ sweeper ever sees it again). Pulled out to a module-level
+    function -- not a method -- specifically so both call sites share one
+    implementation instead of two copies drifting apart.
+    """
+    book = book_repository.get(user_id, book_id)
+    # BookStatus.EXTRACTED only: a book already STITCHING/READY/PARTIAL has
+    # either been picked up or finished, and re-publishing would queue
+    # pointless work behind the stitcher's conditional claim.
+    if book is None or book.status is not BookStatus.EXTRACTED:
+        return False
+    if book.chunks_total == 0 or book.chunks_done < book.chunks_total:
+        return False
+    stitch_queue.enqueue_book(user_id=user_id, book_id=book_id)
+    return True

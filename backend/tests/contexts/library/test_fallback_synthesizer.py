@@ -48,6 +48,10 @@ def test_primary_raises_fallback_result_returned_and_warning_logged(caplog: pyte
     assert primary.calls == ["hello"]
     assert fallback.calls == ["hello"]
     assert any("falling back" in record.message for record in caplog.records)
+    # PLANS/phase-8 (deferred phase-4 OQ-E): the literal token a CloudWatch
+    # Logs metric filter matches (pipeline_stack.py) -- a real regression
+    # guard, not incidental phrasing.
+    assert any("TTS_FALLBACK_TRIGGERED" in record.message for record in caplog.records)
 
 
 def test_unsynthesizable_text_from_primary_reraised_without_touching_fallback() -> None:

@@ -170,10 +170,10 @@ def test_pipeline_stack_synthesizes(environment: str) -> None:
     # extract + synthesize + stitch, each with a DLQ.
     template.resource_count_is("AWS::SQS::Queue", 6)
     # The extract Lambda + the synthesize Lambda + the stitch Lambda + the
-    # (auto-created, inline-Python, no-Docker) BucketNotificationsHandler
-    # singleton that an *imported* bucket's add_event_notification
-    # synthesizes.
-    template.resource_count_is("AWS::Lambda::Function", 4)
+    # phase-8 DLQ-sweeper Lambda + the (auto-created, inline-Python,
+    # no-Docker) BucketNotificationsHandler singleton that an *imported*
+    # bucket's add_event_notification synthesizes.
+    template.resource_count_is("AWS::Lambda::Function", 5)
 
 
 @pytest.mark.docker
@@ -254,7 +254,9 @@ def test_pipeline_stack_queue_policy_allows_s3_to_send(environment: str) -> None
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_extract_lambda_event_source_mapping(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
-    template.resource_count_is("AWS::Lambda::EventSourceMapping", 3)
+    # extract + synthesize + stitch queues, plus the phase-8 sweeper's two
+    # (extract DLQ, synthesize DLQ).
+    template.resource_count_is("AWS::Lambda::EventSourceMapping", 5)
     template.has_resource_properties("AWS::Lambda::EventSourceMapping", {"BatchSize": 1})
 
 
@@ -431,9 +433,12 @@ def test_pipeline_stack_extract_lambda_role_grants(environment: str) -> None:
 def test_pipeline_stack_synthesize_lambda_and_fan_out_grants(environment: str) -> None:
     """Regression guard on the synthesize Lambda's audio/marks `grant_put`
     calls, on the fan-out producer grant
-    (`synthesize_queue.grant_send_messages(extract_fn)`), and on phase 5's
-    fan-in twin (`stitch_queue.grant_send_messages(synthesize_fn)`) -- the
-    two easy-to-forget grants, since both point the "wrong" direction."""
+    (`synthesize_queue.grant_send_messages(extract_fn)`), on phase 5's
+    fan-in twin (`stitch_queue.grant_send_messages(synthesize_fn)`), and on
+    phase 8's third producer grant
+    (`stitch_queue.grant_send_messages(sweeper_fn)`) -- all three point the
+    "wrong" direction (a Lambda granted send access to a queue it isn't
+    itself subscribed to)."""
     template = _synth_pipeline_stack(environment)
 
     policies = template.find_resources("AWS::IAM::Policy")
@@ -451,14 +456,186 @@ def test_pipeline_stack_synthesize_lambda_and_fan_out_grants(environment: str) -
 
     assert "s3:PutObject" in actions
     assert "sqs:SendMessage" in actions
-    # TWO producer grants, asserted by count so losing either one fails:
-    # extract -> synthesize_queue, and synthesize -> stitch_queue.
-    assert send_message_statements == 2
+    # THREE producer grants, asserted by count so losing any one fails:
+    # extract -> synthesize_queue, synthesize -> stitch_queue, and the phase-8
+    # DLQ sweeper -> stitch_queue.
+    assert send_message_statements == 3
     # The stitch Lambda is the first function that READS audio_bucket -- the
     # synthesize Lambda deliberately only has grant_put.
     assert "s3:GetObject*" in actions or "s3:GetObject" in actions
     # grant_put covers the multipart upload's Abort permission.
     assert any(a.startswith("s3:Abort") for a in actions)
+
+
+# --- Phase 8: DLQ sweeper Lambda ----------------------------------------
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_dlq_sweeper_function_shape(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {
+            "ImageConfig": {"Command": ["src.contexts.library.interface.dlq_sweep_handler.handler"]},
+            "Timeout": 30,
+            "MemorySize": 256,
+        },
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_dlq_sweeper_env_vars(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    functions = template.find_resources(
+        "AWS::Lambda::Function",
+        {
+            "Properties": {
+                "ImageConfig": {"Command": ["src.contexts.library.interface.dlq_sweep_handler.handler"]}
+            }
+        },
+    )
+    (props,) = [r["Properties"] for r in functions.values()]
+    variables = props["Environment"]["Variables"]
+    assert "TABLE_NAME" in variables
+    assert "STITCH_QUEUE_URL" in variables
+    # The sweeper never calls a TTS engine, extracts a PDF, or touches
+    # audio/marks -- none of that configuration belongs on it.
+    assert "GOOGLE_TTS_SECRET_NAME" not in variables
+    assert "AUDIO_BUCKET" not in variables
+    assert "PDF_BUCKET" not in variables
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_dlq_sweeper_event_sources_are_extract_and_synthesize_dlqs_only(
+    environment: str,
+) -> None:
+    """The sweeper is fed by the extract and synthesize DLQs, never the
+    stitch DLQ (interface/dlq_sweep_handler.py's module docstring)."""
+    template = _synth_pipeline_stack(environment)
+    mappings = template.find_resources("AWS::Lambda::EventSourceMapping")
+
+    dlqs = template.find_resources(
+        "AWS::SQS::Queue", {"Properties": {"QueueName": Match.string_like_regexp(r"^bookloud-.*-dlq$")}}
+    )
+    dlq_logical_ids_by_name = {
+        props["Properties"]["QueueName"]: logical_id for logical_id, props in dlqs.items()
+    }
+    extract_dlq_id = dlq_logical_ids_by_name[f"bookloud-{environment}-extract-dlq"]
+    synthesize_dlq_id = dlq_logical_ids_by_name[f"bookloud-{environment}-synthesize-dlq"]
+    stitch_dlq_id = dlq_logical_ids_by_name[f"bookloud-{environment}-stitch-dlq"]
+
+    referenced_dlq_ids = set()
+    for mapping in mappings.values():
+        source_arn = mapping["Properties"]["EventSourceArn"]
+        if isinstance(source_arn, dict) and "Fn::GetAtt" in source_arn:
+            referenced_dlq_ids.add(source_arn["Fn::GetAtt"][0])
+
+    assert extract_dlq_id in referenced_dlq_ids
+    assert synthesize_dlq_id in referenced_dlq_ids
+    assert stitch_dlq_id not in referenced_dlq_ids
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_dlq_sweeper_grants(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+
+    policies = template.find_resources("AWS::IAM::Policy")
+    actions: list[str] = []
+    for policy in policies.values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            if isinstance(action, list):
+                actions.extend(action)
+            elif isinstance(action, str):
+                actions.append(action)
+
+    assert "dynamodb:UpdateItem" in actions
+    assert "dynamodb:GetItem" in actions
+    assert "sqs:SendMessage" in actions
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_extract_and_synthesize_dlqs_have_a_visibility_timeout_for_the_sweeper(
+    environment: str,
+) -> None:
+    """6x the sweeper Lambda's 30s timeout -- the same rule every
+    consumer/queue pair in this stack follows, now applied to the two DLQs
+    that gained a consumer in phase 8."""
+    template = _synth_pipeline_stack(environment)
+    for name in ("extract", "synthesize"):
+        dlqs = template.find_resources(
+            "AWS::SQS::Queue",
+            {"Properties": {"QueueName": Match.string_like_regexp(f"^bookloud-.*-{name}-dlq$")}},
+        )
+        (props,) = [r["Properties"] for r in dlqs.values()]
+        assert props["VisibilityTimeout"] == 180
+
+    # stitch-dlq has no consumer, so it keeps the SQS default (30s) rather
+    # than being sized off a Lambda that never reads it.
+    stitch_dlqs = template.find_resources(
+        "AWS::SQS::Queue", {"Properties": {"QueueName": Match.string_like_regexp("^bookloud-.*-stitch-dlq$")}}
+    )
+    (stitch_props,) = [r["Properties"] for r in stitch_dlqs.values()]
+    assert stitch_props.get("VisibilityTimeout", 30) == 30
+
+
+# --- Phase 8: CloudWatch alarms ------------------------------------------
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_dlq_depth_alarms_exist_for_all_three_queues(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    alarms = template.find_resources("AWS::CloudWatch::Alarm")
+    alarm_names = {a["Properties"]["AlarmName"] for a in alarms.values()}
+
+    for kind in ("extract", "synthesize", "stitch"):
+        assert f"bookloud-{environment}-{kind}-dlq-depth" in alarm_names
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_dlq_depth_alarm_shape(environment: str) -> None:
+    template = _synth_pipeline_stack(environment)
+    alarms = template.find_resources(
+        "AWS::CloudWatch::Alarm", {"Properties": {"AlarmName": f"bookloud-{environment}-extract-dlq-depth"}}
+    )
+    (props,) = [a["Properties"] for a in alarms.values()]
+    assert props["MetricName"] == "ApproximateNumberOfMessagesVisible"
+    assert props["Namespace"] == "AWS/SQS"
+    assert props["Threshold"] == 1
+    assert props["EvaluationPeriods"] == 1
+    assert props["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
+    assert props["TreatMissingData"] == "notBreaching"
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_tts_fallback_metric_filter_and_alarm(environment: str) -> None:
+    """PLANS/phase-4.md OQ-E: a metric filter over the synthesize Lambda's
+    log group matching the fallback-synthesizer's literal warning token,
+    feeding an alarm."""
+    template = _synth_pipeline_stack(environment)
+
+    filters = template.find_resources("AWS::Logs::MetricFilter")
+    assert len(filters) == 1
+    (filter_props,) = [f["Properties"] for f in filters.values()]
+    assert "TTS_FALLBACK_TRIGGERED" in filter_props["FilterPattern"]
+    assert filter_props["MetricTransformations"][0]["MetricNamespace"] == "Bookloud"
+
+    alarms = template.find_resources(
+        "AWS::CloudWatch::Alarm", {"Properties": {"AlarmName": f"bookloud-{environment}-tts-fallback-triggered"}}
+    )
+    assert len(alarms) == 1
+    (alarm_props,) = [a["Properties"] for a in alarms.values()]
+    assert alarm_props["Threshold"] == 1
+    assert alarm_props["EvaluationPeriods"] == 1
+    assert alarm_props["TreatMissingData"] == "notBreaching"
 
 
 @pytest.mark.docker

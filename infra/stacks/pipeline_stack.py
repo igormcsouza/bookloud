@@ -1,9 +1,11 @@
 import os
 
 import aws_cdk as cdk
+from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_secretsmanager as secretsmanager
@@ -48,6 +50,10 @@ class PipelineStack(cdk.Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        # Populated by _queue_with_dlq, keyed by logical id ("Extract",
+        # "Synthesize", "Stitch") -- see that method's comment.
+        self.dlqs: dict[str, sqs.Queue] = {}
+
         self.extract_queue = self._queue_with_dlq(
             "Extract",
             queue_name("extract", environment),
@@ -57,6 +63,10 @@ class PipelineStack(cdk.Stack):
             # EXTRACTING claim would catch that, but the queue should be
             # correct on its own.
             visibility_timeout=cdk.Duration.minutes(12),
+            # 6x the DLQ sweeper Lambda's 30s timeout (PLANS/phase-3.md
+            # OQ-4) -- the same rule as every consumer/queue pair in this
+            # stack, applied to the DLQ itself now that it has a consumer.
+            dlq_visibility_timeout=cdk.Duration.minutes(3),
         )
         self.synthesize_queue = self._queue_with_dlq(
             "Synthesize",
@@ -71,6 +81,8 @@ class PipelineStack(cdk.Stack):
             # lockstep with backend/src/config.py's
             # synthesize_max_receive_count (§8.3).
             max_receive_count=Config.SYNTHESIZE_MAX_RECEIVE_COUNT,
+            # Same DLQ-sweeper reasoning as extract_queue's DLQ above.
+            dlq_visibility_timeout=cdk.Duration.minutes(3),
         )
 
         self.stitch_queue = self._queue_with_dlq(
@@ -83,6 +95,9 @@ class PipelineStack(cdk.Stack):
             # but the queue should be right on its own.
             visibility_timeout=cdk.Duration.minutes(90),
             max_receive_count=Config.STITCH_MAX_RECEIVE_COUNT,
+            # Default 30s -- deliberately NOT consumed by the DLQ sweeper
+            # (see interface/dlq_sweep_handler.py's module docstring), so
+            # there is no consumer timeout to size this off of.
         )
 
         cdk.CfnOutput(self, "ExtractQueueUrl", value=self.extract_queue.queue_url)
@@ -107,6 +122,9 @@ class PipelineStack(cdk.Stack):
             git_sha=git_sha,
             environment=environment,
         )
+        self._add_dlq_sweeper_lambda(table=table, git_sha=git_sha, environment=environment)
+        self._add_dlq_depth_alarms(environment=environment)
+        self._add_tts_fallback_alarm(synthesize_fn=synthesize_fn, environment=environment)
 
         # The fan-out producer grant -- the extract Lambda publishes to
         # synthesize_queue as the last step of ExtractBook.execute (PLANS/
@@ -362,16 +380,178 @@ class PipelineStack(cdk.Stack):
         cdk.CfnOutput(self, "StitchFunctionName", value=stitch_fn.function_name)
         return stitch_fn
 
+    def _add_dlq_sweeper_lambda(
+        self, *, table: dynamodb.Table, git_sha: str, environment: str
+    ) -> lambda_.DockerImageFunction:
+        """Phase 8 (``IMPLEMENTATION_PLAN.md``; deferred from PLANS/phase-3.md
+        OQ-4, extended by PLANS/phase-5.md §4.3/OQ-4): fed by the extract and
+        synthesize DLQs (never the stitch DLQ -- see
+        ``interface/dlq_sweep_handler.py``'s module docstring for why).
+        """
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend"))
+
+        # Fifth function, same image -- DockerImageAsset's hash comes from
+        # the source dir + build args + platform, NOT from `cmd`. One ECR
+        # image, five Lambdas, five ImageConfig.Commands.
+        sweeper_fn = lambda_.DockerImageFunction(
+            self,
+            "DlqSweeperFunction",
+            code=lambda_.DockerImageCode.from_image_asset(
+                backend_dir,
+                target="lambda",  # explicit: see api_stack.py's ApiFunction comment
+                cmd=["src.contexts.library.interface.dlq_sweep_handler.handler"],
+            ),
+            # Neither CPU- nor memory-bound: one GetItem/UpdateItem round
+            # trip (plus, rarely, one SendMessage) per DLQ message. The
+            # Lambda default floor is enough.
+            memory_size=256,
+            # Comfortably above the p99 for a handful of DynamoDB calls;
+            # short enough that the 3-minute DLQ visibility timeout above
+            # (6x this) stays a small number.
+            timeout=cdk.Duration.seconds(30),
+            environment={
+                Config.ENV_ENVIRONMENT: environment,
+                Config.ENV_GIT_SHA: git_sha,
+                Config.ENV_TABLE_NAME: table.table_name,
+                Config.ENV_STITCH_QUEUE_URL: self.stitch_queue.queue_url,
+                Config.ENV_LOG_LEVEL: "INFO",
+            },
+        )
+
+        # GetItem/Query (book + chunk) + UpdateItem (the FAILED/chunk-FAILED
+        # writes and the counter increment) -- the same grant every other
+        # pipeline Lambda in this stack gets.
+        table.grant_read_write_data(sweeper_fn)
+        # The sweeper's own STITCH_REQUEUED re-publish
+        # (application/sweeping.py) -- the third producer grant onto this
+        # queue, alongside the synthesize Lambda's own fan-in publish below.
+        self.stitch_queue.grant_send_messages(sweeper_fn)
+
+        # batch_size=1 on both -- one poison DLQ message must never block
+        # another book's/chunk's recovery, and neither of these paths is a
+        # rate-limited external call, so no ScalingConfig/max_concurrency is
+        # needed (unlike the extract/synthesize/stitch Lambdas, all of which
+        # throttle against a real external constraint).
+        sweeper_fn.add_event_source(
+            lambda_event_sources.SqsEventSource(self.dlqs["Extract"], batch_size=1)
+        )
+        sweeper_fn.add_event_source(
+            lambda_event_sources.SqsEventSource(self.dlqs["Synthesize"], batch_size=1)
+        )
+
+        self.dlq_sweeper_function = sweeper_fn
+        cdk.CfnOutput(self, "DlqSweeperFunctionName", value=sweeper_fn.function_name)
+        return sweeper_fn
+
+    def _add_dlq_depth_alarms(self, *, environment: str) -> None:
+        """CloudWatch alarm on DLQ depth for all three pipeline queues
+        (``IMPLEMENTATION_PLAN.md`` phase 8; deferred from PLANS/phase-3.md
+        OQ-4, extended to synthesize/stitch by PLANS/phase-5.md's mention of
+        the same phase-8 item). A steady-state DLQ is empty -- any message
+        visible for a full evaluation period is itself the signal, extract/
+        synthesize now additionally trigger the sweeper above, and stitch has
+        no consumer at all (an alarm is the only notice for that one).
+
+        ``treat_missing_data=NOT_BREACHING``: SQS only emits
+        ApproximateNumberOfMessagesVisible datapoints when the queue *has*
+        activity, so an idle DLQ (the overwhelmingly common case) would
+        otherwise report NO_DATA -- alarm actions on INSUFFICIENT_DATA are
+        not what "the DLQ has something in it" means.
+        """
+        for logical_id in ("Extract", "Synthesize", "Stitch"):
+            dlq = self.dlqs[logical_id]
+            cloudwatch.Alarm(
+                self,
+                f"{logical_id}DlqDepthAlarm",
+                alarm_name=f"bookloud-{environment}-{logical_id.lower()}-dlq-depth",
+                alarm_description=(
+                    f"One or more messages stranded in the {logical_id.lower()} DLQ -- "
+                    "see PLANS/phase-3.md OQ-4 / PLANS/phase-5.md §4.3 for the recovery story."
+                ),
+                metric=dlq.metric_approximate_number_of_messages_visible(period=cdk.Duration.minutes(5)),
+                threshold=1,
+                evaluation_periods=1,
+                comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+                treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+            )
+
+    def _add_tts_fallback_alarm(
+        self, *, synthesize_fn: lambda_.DockerImageFunction, environment: str
+    ) -> None:
+        """Metric filter + alarm on the synthesizer fallback warning
+        (``IMPLEMENTATION_PLAN.md`` phase 8; deferred from PLANS/phase-4.md
+        OQ-E): Google TTS silently becoming the primary engine should be
+        noticed, not discovered on a bill.
+
+        ``"TTS_FALLBACK_TRIGGERED"`` is a literal-string contract with
+        ``infrastructure/fallback_synthesizer.py``'s warning log -- see that
+        module's docstring. Matched with ``FilterPattern.any_term`` (a plain
+        substring match over unstructured Lambda text logs, not JSON), so
+        engine-name/exception-text changes in the rest of the log line can
+        never break the filter.
+        """
+        # Imported *by name*, not `synthesize_fn.log_group` -- that property
+        # provisions a `LogRetention` custom-resource Lambda the first time
+        # it's touched (it exists to let CDK manage retention on a log group
+        # it does not own the lifecycle of), which would silently add a
+        # sixth Lambda + role to this stack for a property we only need to
+        # point a metric filter at. The Lambda service always creates
+        # `/aws/lambda/<function-name>` itself, so importing by that
+        # deterministic name needs no custom resource.
+        log_group = logs.LogGroup.from_log_group_name(
+            self, "SynthesizeLogGroupRef", f"/aws/lambda/{synthesize_fn.function_name}"
+        )
+        metric_filter = logs.MetricFilter(
+            self,
+            "TtsFallbackMetricFilter",
+            log_group=log_group,
+            filter_pattern=logs.FilterPattern.any_term("TTS_FALLBACK_TRIGGERED"),
+            metric_namespace="Bookloud",
+            metric_name=f"TtsFallbackTriggered-{environment}",
+            metric_value="1",
+            default_value=0,
+        )
+        cloudwatch.Alarm(
+            self,
+            "TtsFallbackAlarm",
+            alarm_name=f"bookloud-{environment}-tts-fallback-triggered",
+            alarm_description=(
+                "edge-tts failed and Google TTS covered for it at least once -- "
+                "PLANS/phase-4.md OQ-E's free-tier-burn risk."
+            ),
+            metric=metric_filter.metric(
+                statistic="sum",
+                period=cdk.Duration.hours(1),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+
     def _queue_with_dlq(
-        self, logical_id: str, name: str, *, visibility_timeout: cdk.Duration, max_receive_count: int = 3
+        self,
+        logical_id: str,
+        name: str,
+        *,
+        visibility_timeout: cdk.Duration,
+        max_receive_count: int = 3,
+        dlq_visibility_timeout: cdk.Duration = cdk.Duration.seconds(30),
     ) -> sqs.Queue:
         dlq = sqs.Queue(
             self,
             f"{logical_id}Dlq",
             queue_name=f"{name}-dlq",
+            # Default (30s, SQS's own default) everywhere except the
+            # extract/synthesize DLQs, which are also consumed by the phase-8
+            # sweeper Lambda (PLANS/phase-3.md OQ-4, PLANS/phase-5.md §4.3) --
+            # those pass a longer value sized off that Lambda's own timeout,
+            # the same "6x the consumer's timeout" rule every other queue in
+            # this stack follows.
+            visibility_timeout=dlq_visibility_timeout,
             retention_period=cdk.Duration.days(4),
         )
-        return sqs.Queue(
+        queue = sqs.Queue(
             self,
             logical_id,
             queue_name=name,
@@ -379,3 +559,9 @@ class PipelineStack(cdk.Stack):
             retention_period=cdk.Duration.days(4),
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=max_receive_count, queue=dlq),
         )
+        # Stashed by logical id (e.g. self.dlqs["Extract"]) so
+        # __init__/_add_dlq_sweeper_lambda/_add_dlq_alarms can reach every
+        # DLQ without re-deriving it from the parent queue -- `sqs.Queue` has
+        # no public getter back to the DLQ it was constructed with.
+        self.dlqs[logical_id] = dlq
+        return queue
