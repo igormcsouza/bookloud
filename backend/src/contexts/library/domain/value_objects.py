@@ -109,6 +109,14 @@ class ExtractionFailure(StrEnum):
     NO_TEXT_LAYER = "NO_TEXT_LAYER"
     TOO_LARGE = "TOO_LARGE"
     UNKNOWN = "UNKNOWN"
+    # Phase 8 (PLANS/phase-3.md OQ-4): the extract Lambda's transient-failure
+    # path (application/extraction.py) always releases the claim back to
+    # UPLOADED before re-raising, with no last-attempt conversion of its own
+    # -- unlike SynthesizeChunk. So a book whose extract message exhausts the
+    # queue's retry budget and DLQs is left in UPLOADED/EXTRACTING forever,
+    # with nothing else to notice. Set only by the DLQ sweeper
+    # (application/sweeping.py), never by ExtractBook itself.
+    DLQ_EXHAUSTED = "DLQ_EXHAUSTED"
 
 
 class SynthesisFailure(StrEnum):
