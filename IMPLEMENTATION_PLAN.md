@@ -112,9 +112,9 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - Tests: context resolution unit tests, Playwright — ask a question, verify response references book content
 
 ### Phase 8 — CD hardening
-- Wire the Playwright e2e suite (from phases 6-7) into both the per-PR ephemeral pipeline and the main-branch CD pipeline — the pipeline itself already existed since Phase 0, this phase just adds the real e2e gate now that there's a full flow to test
-- CD: on merge to main, unit tests → e2e against a staging/prod-like ephemeral stack → CDK deploy to prod
-- Rollback plan documented (CDK stack rollback / previous Lambda version alias)
+- [x] Wire the Playwright e2e suite (from phases 6-7) into both the per-PR ephemeral pipeline and the main-branch CD pipeline — the pipeline itself already existed since Phase 0, this phase just adds the real e2e gate now that there's a full flow to test. **Implemented:** deploy-pr.yml and deploy-prod.yml's shared deploy-and-smoke-test-and-e2e sequence factored into a reusable `.github/workflows/deploy-stack.yml`; deploy-prod.yml gained a `staging` job (ephemeral `Bookloud*-staging` stack, Playwright chromium) between `ci` and `deploy`, plus a `destroy-staging` teardown.
+- [x] CD: on merge to main, unit tests → e2e against a staging/prod-like ephemeral stack → CDK deploy to prod. **Implemented** as above; `deploy` (prod) is gated on `staging` succeeding.
+- [x] Rollback plan documented (CDK stack rollback / previous Lambda version alias). **Implemented:** `docs/rollback.md`.
 - Observability items deliberately deferred here by earlier phases:
   - [x] CloudWatch alarm on extract/synthesize/stitch DLQ depth, plus a DLQ-consuming Lambda that marks stranded books `FAILED` instead of leaving them stuck (deferred from phase 3, `PLANS/phase-3.md` OQ-4). **Extended by phase 5 (`PLANS/phase-5.md` §4.3/OQ-4):** the same Lambda must also **re-publish a stitch message for any book whose counters are complete but which is still `EXTRACTED`**. That is phase 5's one residual hole — if `enqueue_book` fails on every attempt of the completing chunk's message, the chunk message DLQs and the book sits at 100% forever with nothing to notice. Phase 5's `STITCH_REQUEUED` re-entrancy branch covers every case except the exhausted-retry-budget one, and consolidating recovery here beats inventing a second sweeper. **Implemented:** `backend/src/contexts/library/application/sweeping.py` (`SweepDlq`), `backend/src/contexts/library/interface/dlq_sweep_handler.py`, wired in `infra/stacks/pipeline_stack.py` (`_add_dlq_sweeper_lambda`/`_add_dlq_depth_alarms`). The sweeper consumes the extract and synthesize DLQs only — the stitch DLQ gets an alarm but no consumer (see `dlq_sweep_handler.py`'s docstring for why).
   - [x] Metric filter + alarm on the synthesizer fallback warning, so Google TTS silently becoming the primary engine (and burning the free tier) is noticed rather than discovered on a bill (deferred from phase 4, `PLANS/phase-4.md` OQ-E). **Implemented:** `backend/src/contexts/library/infrastructure/fallback_synthesizer.py` now logs a literal `TTS_FALLBACK_TRIGGERED` token; `infra/stacks/pipeline_stack.py`'s `_add_tts_fallback_alarm` adds the matching CloudWatch Logs metric filter + alarm.
@@ -129,4 +129,4 @@ Every later phase's PR automatically gets a real ephemeral deploy for free, grow
 - [x] Phase 5 — Stitching & status polling
 - [x] Phase 6 — Reader UI
 - [x] Phase 7 — Chat sidebar
-- [ ] Phase 8 — CD hardening
+- [x] Phase 8 — CD hardening
