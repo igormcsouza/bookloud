@@ -1,0 +1,877 @@
+<title>Bookloud Android Screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Karla:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg: #F2EEE4;
+    --surface: #FBF8F1;
+    --surface-raised: #FFFFFF;
+    --text: #221F1A;
+    --text-muted: #7A7266;
+    --text-faint: #A79E8E;
+    --border: #E1D8C4;
+    --bezel: #E9E2D2;
+    --island: rgba(10, 8, 4, 0.92);
+
+    --accent: #B87424;
+    --accent-ink: #FFF8EC;
+    --accent-wash: #F3E3CB;
+
+    --teal: #2F7C6A;
+    --teal-wash: #DCEEE8;
+    --steel: #5C6E90;
+    --steel-wash: #E4E8F0;
+    --brick: #A2452F;
+    --brick-wash: #F1DCD3;
+
+    --shadow-lg: 0 1px 2px rgba(40,32,12,.08), 0 30px 60px -20px rgba(40,32,12,.35);
+    --shadow-sm: 0 1px 2px rgba(40,32,12,.06), 0 10px 22px -10px rgba(40,32,12,.18);
+
+    --radius-lg: 28px;
+    --radius-md: 16px;
+    --radius-sm: 10px;
+
+    --font-display: 'Fraunces', Georgia, 'Iowan Old Style', serif;
+    --font-body: 'Karla', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171F;
+      --surface: #1C202A;
+      --surface-raised: #232838;
+      --text: #ECE7DA;
+      --text-muted: #9C948A;
+      --text-faint: #6C6459;
+      --border: #2C3140;
+      --bezel: #2A2E3A;
+      --island: rgba(0,0,0,0.85);
+
+      --accent: #E3A83B;
+      --accent-ink: #201404;
+      --accent-wash: #34290F;
+
+      --teal: #6FC2AC;
+      --teal-wash: #1B2E2A;
+      --steel: #94A9D6;
+      --steel-wash: #232C42;
+      --brick: #E28468;
+      --brick-wash: #34211B;
+
+      --shadow-lg: 0 1px 2px rgba(0,0,0,.4), 0 30px 60px -20px rgba(0,0,0,.6);
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.35), 0 10px 22px -10px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171F;
+    --surface: #1C202A;
+    --surface-raised: #232838;
+    --text: #ECE7DA;
+    --text-muted: #9C948A;
+    --text-faint: #6C6459;
+    --border: #2C3140;
+    --bezel: #2A2E3A;
+    --island: rgba(0,0,0,0.85);
+
+    --accent: #E3A83B;
+    --accent-ink: #201404;
+    --accent-wash: #34290F;
+
+    --teal: #6FC2AC;
+    --teal-wash: #1B2E2A;
+    --steel: #94A9D6;
+    --steel-wash: #232C42;
+    --brick: #E28468;
+    --brick-wash: #34211B;
+
+    --shadow-lg: 0 1px 2px rgba(0,0,0,.4), 0 30px 60px -20px rgba(0,0,0,.6);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.35), 0 10px 22px -10px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  button { font-family: inherit; cursor: pointer; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 56px) 96px; }
+
+  /* ---------- header ---------- */
+  .intro { padding: clamp(40px, 7vw, 76px) 0 clamp(28px, 4vw, 40px); max-width: 780px; }
+  .eyebrow {
+    font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--accent); margin: 0 0 14px;
+  }
+  .intro h1 {
+    font-family: var(--font-display); font-weight: 600; font-size: clamp(32px, 5vw, 46px);
+    line-height: 1.08; letter-spacing: -0.015em; margin: 0 0 16px; text-wrap: balance;
+  }
+  .intro h1 em { font-style: italic; color: var(--accent); }
+  .intro p { font-size: 16px; color: var(--text-muted); max-width: 62ch; margin: 0 0 8px; }
+  .intro .meta { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); margin-top: 18px; }
+  .intro .meta a { color: var(--text-muted); text-decoration-color: var(--border); }
+
+  /* ---------- token strip ---------- */
+  .tokens {
+    display: flex; gap: 28px; align-items: center; flex-wrap: wrap;
+    padding: 18px 22px; margin-bottom: clamp(32px, 5vw, 56px);
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  }
+  .token-group { display: flex; align-items: center; gap: 8px; }
+  .token-group .glabel {
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-faint); margin-right: 4px;
+  }
+  .swatch { width: 20px; height: 20px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.08); flex: none; }
+  .token-face { font-size: 13px; }
+  .token-face.display { font-family: var(--font-display); font-weight: 600; }
+  .token-face.body { font-family: var(--font-body); }
+  .token-face.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .token-divider { width: 1px; align-self: stretch; background: var(--border); }
+
+  /* ---------- device stage ---------- */
+  .stage-head { text-align: center; margin-bottom: 22px; }
+  .stage-head h2 {
+    font-family: var(--font-display); font-weight: 600; font-size: clamp(22px, 3vw, 27px);
+    margin: 0 0 6px; letter-spacing: -0.01em;
+  }
+  .stage-head p { font-size: 14px; color: var(--text-muted); margin: 0; }
+
+  .tabs {
+    display: flex; justify-content: center; flex-wrap: wrap; gap: 6px;
+    margin: 0 auto 28px; max-width: 560px;
+  }
+  .tab {
+    font-family: var(--font-body); font-weight: 600; font-size: 12.5px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    padding: 8px 14px; border-radius: 999px; transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .tab:hover:not([aria-selected="true"]) { border-color: var(--accent); color: var(--text); }
+
+  .device-stage { display: flex; flex-direction: column; align-items: center; }
+
+  .phone-shell {
+    width: min(430px, 88vw); aspect-ratio: 430 / 932;
+    background: linear-gradient(160deg, var(--bezel), color-mix(in srgb, var(--bezel) 80%, black 6%));
+    border-radius: 64px; padding: 14px; box-shadow: var(--shadow-lg);
+    position: relative;
+  }
+  .phone-buttons::before, .phone-buttons::after { content: ""; }
+  .phone-screen {
+    position: relative; width: 100%; height: 100%; background: var(--bg);
+    border-radius: 50px; overflow: hidden; display: flex; flex-direction: column;
+  }
+  .island {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    width: 112px; height: 33px; border-radius: 20px; background: var(--island); z-index: 30;
+  }
+  .status-row {
+    flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 30px 4px; font-family: var(--font-mono); font-size: 15px; color: var(--text);
+  }
+  .status-row .app-title { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .status-icons { display: flex; align-items: center; gap: 5px; }
+  .sig-bars { display: flex; align-items: flex-end; gap: 2px; height: 10px; }
+  .sig-bars i { display: block; width: 3px; background: var(--text); border-radius: 1px; }
+  .sig-bars i:nth-child(1) { height: 4px; } .sig-bars i:nth-child(2) { height: 6px; }
+  .sig-bars i:nth-child(3) { height: 8px; } .sig-bars i:nth-child(4) { height: 10px; }
+  .wifi-glyph { width: 14px; height: 10px; position: relative; }
+  .wifi-glyph::before {
+    content: ""; position: absolute; inset: 0; border: 2px solid var(--text); border-bottom: none;
+    border-radius: 10px 10px 0 0; clip-path: polygon(0 0,100% 0,100% 60%,50% 100%,0 60%);
+  }
+  .batt-glyph { width: 22px; height: 11px; border: 1.4px solid var(--text); border-radius: 3px; position: relative; padding: 1.5px; }
+  .batt-glyph::after { content: ""; position: absolute; top: 1.5px; bottom: 1.5px; left: 1.5px; width: 70%; background: var(--text); border-radius: 1px; }
+  .batt-glyph::before { content: ""; position: absolute; right: -3px; top: 3px; width: 2px; height: 5px; background: var(--text); border-radius: 0 1px 1px 0; }
+
+  .viewport { position: relative; flex: 1; min-height: 0; }
+  .panel {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none; transition: opacity 220ms ease;
+    padding: 6px 26px 22px;
+  }
+  .panel.active { opacity: 1; pointer-events: auto; }
+
+  .home-indicator {
+    position: absolute; bottom: 9px; left: 50%; transform: translateX(-50%);
+    width: 140px; height: 5px; border-radius: 3px; background: var(--text); opacity: 0.28; z-index: 30;
+  }
+
+  /* ---------- shared UI atoms ---------- */
+  .h1 { font-family: var(--font-display); font-weight: 600; font-size: 27px; letter-spacing: -0.01em; margin: 10px 0 3px; }
+  .sub { font-size: 14px; color: var(--text-muted); margin: 0 0 16px; }
+  .field {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 14px 16px; font-size: 14px; color: var(--text-faint); margin-bottom: 10px;
+  }
+  .field:focus-within, .field.focused { border-color: var(--accent); }
+  .btn-primary {
+    background: var(--accent); color: var(--accent-ink); text-align: center; border: none;
+    border-radius: 999px; padding: 14px; font-size: 15px; font-weight: 700; margin-top: 6px;
+    transition: transform 100ms ease, filter 150ms ease;
+  }
+  .btn-primary:active { transform: scale(0.97); }
+  .btn-primary:disabled { filter: saturate(0.6) brightness(1.08); }
+  .btn-ghost {
+    background: transparent; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 999px; padding: 9px 16px; font-size: 13px; font-weight: 700;
+  }
+  .hint { font-size: 12.5px; color: var(--text-faint); text-align: center; margin-top: 14px; line-height: 1.5; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 9px; border-radius: 999px;
+  }
+  .chip-ready { background: var(--teal-wash); color: var(--teal); }
+  .chip-processing { background: var(--steel-wash); color: var(--steel); }
+  .chip-attn { background: var(--brick-wash); color: var(--brick); }
+
+  /* ---------- sign in / new password ---------- */
+  .auth-panel { justify-content: center; align-items: stretch; gap: 6px; }
+  .wordmark { font-family: var(--font-display); font-weight: 600; font-size: 30px; text-align: center; }
+  .auth-label { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); text-align: center; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 22px; }
+  .auth-fields { display: flex; flex-direction: column; }
+
+  /* ---------- library ---------- */
+  .lib-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .lib-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; overflow-y: auto; padding-bottom: 8px; }
+  .book-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 13px; display: flex; gap: 12px; }
+  .book-cover { width: 46px; height: 62px; border-radius: 7px; flex: none; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 600; font-size: 21px; }
+  .book-info { flex: 1; min-width: 0; }
+  .book-title { font-size: 14.5px; font-weight: 700; line-height: 1.25; }
+  .book-author { font-size: 12px; color: var(--text-muted); margin: 2px 0 8px; }
+  .progress-mini { height: 5px; border-radius: 3px; background: var(--border); margin-top: 6px; overflow: hidden; }
+  .progress-mini > div { height: 100%; background: var(--accent); border-radius: 3px; transition: width 300ms ease; }
+  .book-note { font-size: 11.5px; color: var(--text-muted); margin-top: 5px; }
+  .retry-link { font-size: 12px; font-weight: 700; color: var(--brick); margin-top: 6px; display: inline-block; background: none; border: none; padding: 0; text-decoration: underline; }
+  .reupload-link { font-size: 12px; font-weight: 700; color: var(--brick); margin-top: 6px; display: inline-block; background: none; border: none; padding: 0; text-decoration: underline; }
+  .fab {
+    position: absolute; right: 22px; bottom: 26px; width: 58px; height: 58px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-ink); border: none; display: flex; align-items: center;
+    justify-content: center; font-size: 26px; box-shadow: var(--shadow-sm); z-index: 20;
+    transition: transform 120ms ease;
+  }
+  .fab:active { transform: scale(0.93); }
+  .toast {
+    position: absolute; left: 26px; right: 26px; bottom: 26px; background: var(--text); color: var(--bg);
+    border-radius: var(--radius-sm); padding: 12px 16px; font-size: 13px; text-align: center;
+    opacity: 0; transform: translateY(8px); transition: opacity 200ms ease, transform 200ms ease; z-index: 25; pointer-events: none;
+  }
+  .toast.show { opacity: 0.96; transform: translateY(0); }
+
+  /* ---------- add a book ---------- */
+  .stepper { display: flex; flex-direction: column; gap: 18px; margin-top: 22px; }
+  .step { display: flex; gap: 13px; align-items: flex-start; }
+  .step-dot { width: 26px; height: 26px; border-radius: 50%; flex: none; margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+  .step-dot.done { background: var(--teal); color: var(--surface); }
+  .step-dot.active { background: var(--accent-wash); color: var(--accent); border: 2px solid var(--accent); }
+  .step-dot.pending { background: transparent; border: 2px solid var(--border); }
+  .step-label { font-size: 14.5px; font-weight: 600; }
+  .step.pending .step-label, .step.pending .step-sub { color: var(--text-faint); }
+  .step-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .step-progress { height: 5px; border-radius: 3px; background: var(--border); margin-top: 7px; width: 160px; overflow: hidden; }
+  .step-progress > div { height: 100%; background: var(--accent); border-radius: 3px; }
+  .open-book-btn { margin-top: 26px; opacity: 0; transform: translateY(6px); transition: opacity 300ms ease, transform 300ms ease; pointer-events: none; }
+  .open-book-btn.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+  /* ---------- reader ---------- */
+  .reader-top { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 4px; gap: 10px; }
+  .reader-chapter { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-muted); }
+  .reader-text { font-family: var(--font-display); font-size: 21px; line-height: 1.72; flex: 1; margin: 4px 0 14px; overflow-y: auto; }
+  .word { transition: background-color 120ms ease, color 120ms ease; padding: 0 1px; border-radius: 4px; }
+  .word.said { color: var(--text-muted); }
+  .word.now { background: var(--accent-wash); color: var(--accent); }
+  .mini-player { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 13px 16px 15px; flex: none; position: relative; margin-bottom: 6px; }
+  .mini-time-row { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+  .mini-track { height: 4px; background: var(--border); border-radius: 2px; margin-bottom: 14px; overflow: hidden; }
+  .mini-track > div { height: 100%; width: 41%; background: var(--accent); }
+  .mini-controls { display: flex; align-items: center; justify-content: center; gap: 26px; }
+  .mini-controls button { background: none; border: none; color: var(--text-muted); font-family: var(--font-mono); font-size: 12.5px; padding: 4px; }
+  .mini-controls .play { width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; font-size: 16px; border: none; }
+  .speed-chip { position: absolute; top: -14px; right: 16px; font-family: var(--font-mono); font-size: 11px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; box-shadow: var(--shadow-sm); }
+  .ask-fab {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    background: var(--teal-wash); color: var(--teal); border: none;
+    border-radius: 999px; padding: 7px 13px 7px 11px; font-family: var(--font-body); font-weight: 700; font-size: 11.5px;
+    transition: transform 120ms ease, background 120ms ease;
+  }
+  .ask-fab:active { transform: scale(0.95); }
+  .ask-fab .ask-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
+
+  /* ---------- chat sheet ---------- */
+  .chat-scrim { position: absolute; inset: 0; background: rgba(20, 16, 6, 0.32); opacity: 0; pointer-events: none; transition: opacity 220ms ease; z-index: 40; }
+  .chat-scrim.open { opacity: 1; pointer-events: auto; }
+  .chat-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; background: var(--surface-raised);
+    border-radius: 22px 22px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,0.16); z-index: 41;
+    display: flex; flex-direction: column; max-height: 78%; transform: translateY(100%);
+    transition: transform 260ms cubic-bezier(.2,.8,.2,1);
+  }
+  .chat-sheet.open { transform: translateY(0); }
+  .sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 10px auto 4px; }
+  .sheet-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 12px; border-bottom: 1px solid var(--border); }
+  .sheet-header .sheet-title { font-size: 13.5px; font-weight: 700; }
+  .sheet-header .cite-chip { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
+  .sheet-close { background: none; border: none; color: var(--text-muted); font-size: 18px; line-height: 1; padding: 4px; }
+  .sheet-messages { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .bubble { border-radius: 14px; padding: 10px 13px; font-size: 13px; line-height: 1.5; max-width: 86%; }
+  .bubble.user { align-self: flex-end; background: var(--accent-wash); color: var(--text); }
+  .bubble.ai { align-self: flex-start; background: var(--teal-wash); color: var(--text); }
+  .bubble.ai .cite-chip { margin-top: 8px; display: inline-block; font-family: var(--font-mono); font-size: 9.5px; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; }
+  .caret { display: inline-block; width: 2px; height: 12px; background: var(--teal); margin-left: 2px; vertical-align: middle; animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .sheet-composer { display: flex; gap: 8px; align-items: flex-end; padding: 12px 18px 18px; border-top: 1px solid var(--border); }
+  .sheet-composer textarea {
+    flex: 1; resize: none; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-sm);
+    padding: 10px 12px; font-family: var(--font-body); font-size: 13px; color: var(--text); min-height: 20px; max-height: 60px;
+  }
+  .sheet-composer textarea:focus { outline: none; border-color: var(--accent); }
+  .sheet-send { width: 38px; height: 38px; border-radius: 50%; border: none; background: var(--accent); color: var(--accent-ink); flex: none; font-size: 15px; }
+  .sheet-send:disabled { opacity: 0.4; }
+
+  /* ---------- reference gallery ---------- */
+  .ref-section { margin-top: clamp(56px, 8vw, 88px); padding-top: clamp(32px, 5vw, 48px); border-top: 1px solid var(--border); }
+  .ref-section h2 { font-family: var(--font-display); font-weight: 600; font-size: clamp(21px, 2.6vw, 25px); margin: 0 0 6px; letter-spacing: -0.01em; }
+  .ref-section .section-sub { color: var(--text-muted); font-size: 14px; max-width: 60ch; margin: 0 0 28px; }
+  .ref-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .ref-card { display: flex; flex-direction: column; gap: 12px; }
+  .ref-device { aspect-ratio: 430/560; background: var(--bezel); border-radius: 26px; padding: 7px; box-shadow: var(--shadow-sm); }
+  .ref-screen { width: 100%; height: 100%; background: var(--bg); border-radius: 20px; overflow: hidden; padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .ref-caption .tag { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); display: block; margin-bottom: 3px; }
+  .ref-caption h3 { font-size: 13.5px; font-weight: 700; margin: 0 0 3px; }
+  .ref-caption p { font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.45; }
+  .notice-box { border-radius: 12px; padding: 9px 10px; font-size: 10.5px; line-height: 1.4; }
+  .notice-info { background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); }
+  .notice-warn { background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--text); }
+
+  footer { border-top: 1px solid var(--border); margin-top: clamp(56px, 8vw, 88px); padding: 26px 0 8px; }
+  footer p { font-size: 12.5px; color: var(--text-faint); margin: 0 0 6px; line-height: 1.6; }
+
+  @media (max-width: 880px) {
+    .ref-grid { grid-template-columns: repeat(2, 1fr); }
+    .tokens { gap: 18px; }
+    .token-divider { display: none; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="intro">
+    <p class="eyebrow">Design reference · Issue #10</p>
+    <h1>Every screen the Android app needs, drawn from what the <em>backend</em> already does.</h1>
+    <p>
+      No new API, no new state &mdash; this maps directly onto the existing book lifecycle
+      (<code>UPLOADED → EXTRACTING → EXTRACTED → STITCHING → READY / PARTIAL / FAILED</code>),
+      the chunk-scoped chat, and the presigned upload flow. Same visual language as the issue #10
+      pitch, built out screen by screen with the states a real library actually produces.
+    </p>
+    <p class="meta">Interactive mock · sized to iPhone 17 Pro Max (430×932pt) · for <a href="https://github.com/igormcsouza/bookloud/issues/10" target="_blank" rel="noopener">github.com/igormcsouza/bookloud#10</a></p>
+  </header>
+
+  <section class="tokens" aria-label="Design tokens">
+    <div class="token-group">
+      <span class="glabel">Voice</span>
+      <span class="swatch" style="background:#B87424"></span>
+      <span class="swatch" style="background:#2F7C6A"></span>
+      <span class="swatch" style="background:#5C6E90"></span>
+      <span class="swatch" style="background:#A2452F"></span>
+    </div>
+    <div class="token-divider"></div>
+    <div class="token-group"><span class="token-face display">Fraunces</span></div>
+    <div class="token-group"><span class="token-face body">Karla</span></div>
+    <div class="token-group"><span class="token-face mono">IBM Plex Mono</span></div>
+    <div class="token-divider"></div>
+    <div class="token-group"><span class="glabel">Radius</span><span class="token-face mono">10 / 16 / 28</span></div>
+  </section>
+
+  <section class="device-stage" aria-label="Interactive screen mock">
+    <div class="stage-head">
+      <h2>Walk the loop</h2>
+      <p>Library → add a book → listen &amp; read → ask about it. Tap through, or press play.</p>
+    </div>
+
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-panel="signin" aria-selected="true">Sign in</button>
+      <button class="tab" role="tab" data-panel="newpass" aria-selected="false">New password</button>
+      <button class="tab" role="tab" data-panel="library" aria-selected="false">Library</button>
+      <button class="tab" role="tab" data-panel="addbook" aria-selected="false">Add a book</button>
+      <button class="tab" role="tab" data-panel="reader" aria-selected="false">Now playing</button>
+    </div>
+
+    <div class="phone-shell">
+      <div class="phone-screen">
+        <div class="island"></div>
+        <div class="status-row">
+          <span>9:41</span>
+          <span class="app-title" id="statusTitle">&nbsp;</span>
+          <span class="status-icons">
+            <span class="sig-bars"><i></i><i></i><i></i><i></i></span>
+            <span class="wifi-glyph"></span>
+            <span class="batt-glyph"></span>
+          </span>
+        </div>
+
+        <div class="viewport" id="viewport">
+
+          <!-- SIGN IN -->
+          <div class="panel auth-panel active" data-panel="signin">
+            <div class="wordmark">bookloud</div>
+            <div class="auth-label">Sign in</div>
+            <div class="auth-fields">
+              <div class="field">Username</div>
+              <div class="field">Password</div>
+              <button class="btn-primary" id="signInBtn">Sign in</button>
+            </div>
+            <p class="hint">Don't have an account? Ask whoever set this up for you &mdash; sign-up stays admin-provisioned only.</p>
+          </div>
+
+          <!-- NEW PASSWORD -->
+          <div class="panel auth-panel" data-panel="newpass">
+            <div class="wordmark" style="font-size:22px;">Choose a new password</div>
+            <p class="hint" style="margin-top:6px;margin-bottom:20px;">Your account was created with a temporary password. Set a real one to continue.</p>
+            <div class="auth-fields">
+              <div class="field">New password</div>
+              <div class="field">Confirm new password</div>
+              <button class="btn-primary">Set password</button>
+            </div>
+          </div>
+
+          <!-- LIBRARY -->
+          <div class="panel" data-panel="library">
+            <div class="lib-head">
+              <div>
+                <h1 class="h1" style="margin-top:14px;">Your books</h1>
+                <p class="sub">4 books · 1 needs a look</p>
+              </div>
+            </div>
+            <div class="lib-list">
+
+              <div class="book-card">
+                <div class="book-cover" style="background:var(--teal-wash);color:var(--teal);">M</div>
+                <div class="book-info">
+                  <div class="book-title">Meditations</div>
+                  <div class="book-author">Marcus Aurelius</div>
+                  <span class="chip chip-ready">Ready · 4h 12m</span>
+                </div>
+              </div>
+
+              <div class="book-card">
+                <div class="book-cover" style="background:var(--steel-wash);color:var(--steel);">P</div>
+                <div class="book-info">
+                  <div class="book-title">The Pragmatic Programmer</div>
+                  <div class="book-author">Hunt &amp; Thomas</div>
+                  <span class="chip chip-processing">Recording voice · 142/300</span>
+                  <div class="progress-mini"><div style="width:47%"></div></div>
+                </div>
+              </div>
+
+              <div class="book-card">
+                <div class="book-cover" style="background:var(--brick-wash);color:var(--brick);">Z</div>
+                <div class="book-info">
+                  <div class="book-title">Zen &amp; the Art of Motorcycle Maintenance</div>
+                  <div class="book-author">Robert Pirsig</div>
+                  <span class="chip chip-attn">Needs attention</span>
+                  <div class="book-note">3 sections couldn't be read aloud &mdash; playback still works, just skips them.</div>
+                  <button class="retry-link" id="retryBtn">Retry those sections →</button>
+                </div>
+              </div>
+
+              <div class="book-card">
+                <div class="book-cover" style="background:var(--brick-wash);color:var(--brick);">A</div>
+                <div class="book-info">
+                  <div class="book-title">Antifragile</div>
+                  <div class="book-author">Nassim N. Taleb</div>
+                  <span class="chip chip-attn">Couldn't read this PDF</span>
+                  <button class="reupload-link">Re-upload →</button>
+                </div>
+              </div>
+
+            </div>
+            <button class="fab" id="uploadFab" aria-label="Upload a PDF">+</button>
+            <div class="toast" id="uploadToast">Uploading…</div>
+          </div>
+
+          <!-- ADD A BOOK -->
+          <div class="panel" data-panel="addbook">
+            <h1 class="h1" style="font-size:23px;line-height:1.2;">The Pragmatic<br>Programmer</h1>
+            <p class="sub">Hunt &amp; Thomas · 412 pages</p>
+            <div class="stepper" id="stepper">
+              <div class="step" data-step="0">
+                <div class="step-dot done">✓</div>
+                <div><div class="step-label">Uploaded</div><div class="step-sub">412 pages received</div></div>
+              </div>
+              <div class="step" data-step="1">
+                <div class="step-dot done">✓</div>
+                <div><div class="step-label">Read the pages</div><div class="step-sub">300 sections found</div></div>
+              </div>
+              <div class="step" data-step="2">
+                <div class="step-dot active">●</div>
+                <div>
+                  <div class="step-label">Recording the voice</div>
+                  <div class="step-sub" id="voiceSub">142 of 300 sections</div>
+                  <div class="step-progress"><div id="voiceProgress" style="width:47%"></div></div>
+                </div>
+              </div>
+              <div class="step pending" data-step="3">
+                <div class="step-dot pending"></div>
+                <div><div class="step-label">Stitching the audiobook</div></div>
+              </div>
+              <div class="step pending" data-step="4">
+                <div class="step-dot pending"></div>
+                <div><div class="step-label">Ready to open</div></div>
+              </div>
+            </div>
+            <button class="btn-primary open-book-btn" id="openBookBtn">Open book</button>
+          </div>
+
+          <!-- READER / NOW PLAYING -->
+          <div class="panel" data-panel="reader">
+            <div class="reader-top">
+              <div class="reader-chapter">Book VI</div>
+              <button class="ask-fab" id="askFab" aria-label="Ask about this page"><span class="ask-dot"></span>Ask</button>
+            </div>
+            <p class="reader-text" id="readerText" aria-live="polite"></p>
+            <div class="mini-player">
+              <button class="speed-chip" id="speedChip">1.25×</button>
+              <div class="mini-time-row"><span id="posTime">1:42:07</span><span>4:12:00</span></div>
+              <div class="mini-track"><div></div></div>
+              <div class="mini-controls">
+                <button aria-label="Back 15 seconds">⏮ 15</button>
+                <button class="play" id="playBtn" aria-label="Play">▶</button>
+                <button aria-label="Forward 15 seconds">15 ⏭</button>
+              </div>
+            </div>
+
+            <div class="chat-scrim" id="chatScrim"></div>
+            <div class="chat-sheet" id="chatSheet" role="dialog" aria-label="Ask about this page">
+              <div class="sheet-handle"></div>
+              <div class="sheet-header">
+                <span class="sheet-title">Ask about this page</span>
+                <span style="display:flex;align-items:center;gap:8px;">
+                  <span class="cite-chip">Book VI</span>
+                  <button class="sheet-close" id="sheetClose" aria-label="Close chat">✕</button>
+                </span>
+              </div>
+              <div class="sheet-messages" id="sheetMessages">
+                <div class="bubble user">What does he mean by "unlike him"?</div>
+                <div class="bubble ai">
+                  He's saying the real answer to someone's cruelty isn't repeating it back &mdash; it's simply refusing to become the thing that hurt you.
+                  <span class="cite-chip">Meditations · Book VI</span>
+                </div>
+              </div>
+              <div class="sheet-composer">
+                <textarea id="chatInput" rows="1" placeholder="Ask a question…" maxlength="2000"></textarea>
+                <button class="sheet-send" id="chatSend" aria-label="Send" disabled>↑</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <div class="home-indicator"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ref-section" aria-label="Additional backend states">
+    <h2>The states that aren't the happy path</h2>
+    <p class="section-sub">§9's rendering table has more rows than a five-tab demo can loop through &mdash; these are the ones worth seeing on their own.</p>
+    <div class="ref-grid">
+
+      <div class="ref-card">
+        <div class="ref-device"><div class="ref-screen">
+          <h1 class="h1" style="font-size:16px;margin:6px 0 2px;">Your books</h1>
+          <p class="sub" style="font-size:10px;margin:0 0 10px;">0 books</p>
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 6px;">
+            <p style="font-size:11px;color:var(--text-muted);margin:0;">No books yet. Upload a PDF to have it read aloud, word by word.</p>
+          </div>
+        </div></div>
+        <div class="ref-caption">
+          <span class="tag">Library · empty</span>
+          <h3>First run</h3>
+          <p>The FAB is the only affordance &mdash; nothing to triage yet.</p>
+        </div>
+      </div>
+
+      <div class="ref-card">
+        <div class="ref-device"><div class="ref-screen">
+          <h1 class="h1" style="font-size:16px;margin:6px 0 8px;">Zen &amp; the Art…</h1>
+          <div class="notice-box notice-warn">
+            98 of 300 sections have no audio — playback skips them.
+            <div style="margin-top:6px;"><span class="reupload-link" style="font-size:10px;">Try audio again</span></div>
+          </div>
+          <p style="font-family:var(--font-display);font-size:12px;line-height:1.6;color:var(--text-muted);margin-top:8px;">The player stays enabled on a <code style="font-size:10px;">PARTIAL</code> book &mdash; skipping a few paragraphs beats refusing to play at all.</p>
+        </div></div>
+        <div class="ref-caption">
+          <span class="tag">Reader · partial audio</span>
+          <h3>Some sections, not all</h3>
+          <p>One TTS engine failing doesn't take down the whole book.</p>
+        </div>
+      </div>
+
+      <div class="ref-card">
+        <div class="ref-device"><div class="ref-screen">
+          <h1 class="h1" style="font-size:16px;margin:6px 0 8px;">Ask about this page</h1>
+          <div class="notice-box notice-warn">You've reached today's question limit (20). It resets at midnight UTC.</div>
+          <div style="margin-top:auto;">
+            <div class="field" style="font-size:10px;padding:9px 11px;opacity:0.5;">Daily limit reached</div>
+          </div>
+        </div></div>
+        <div class="ref-caption">
+          <span class="tag">Chat · quota reached</span>
+          <h3>A ceiling, stated plainly</h3>
+          <p>The composer disables instead of failing silently on send.</p>
+        </div>
+      </div>
+
+      <div class="ref-card">
+        <div class="ref-device"><div class="ref-screen">
+          <h1 class="h1" style="font-size:16px;margin:6px 0 8px;">Letters from a Stoic</h1>
+          <div class="notice-box notice-info">Text-to-speech is turned off in this environment. You can still read the book.</div>
+          <p class="reader-chapter" style="margin-top:10px;">Letter I</p>
+          <p style="font-family:var(--font-display);font-size:12.5px;line-height:1.6;margin-top:2px;">Set aside a certain number of days, during which you shall be content with the scantiest and cheapest fare…</p>
+        </div></div>
+        <div class="ref-caption">
+          <span class="tag">Reader · no player</span>
+          <h3>Reading never waits on audio</h3>
+          <p>Text renders the moment extraction lands &mdash; long before synthesis finishes, or even runs.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer>
+    <p>Same backend, same auth (Cognito, admin-provisioned users only), same endpoints &mdash; <code>/books</code>, <code>/books/{id}/status</code>, <code>/books/{id}/audio</code>, <code>/books/{id}/manifest</code>, <code>/books/{id}/chunks/{n}/marks</code>, <code>/books/{id}/resynthesize</code>, <code>/books/{id}/chat</code>. Nothing here implies an API change.</p>
+    <p>Word-level highlight sync above runs on a short illustrative loop, not the reader's actual <code>marks</code> timing &mdash; the real Expo build drives it from <code>usePlayback</code>'s clock, same as the web reader.</p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var tabs = document.querySelectorAll('.tab');
+  var panels = document.querySelectorAll('.panel');
+  var statusTitle = document.getElementById('statusTitle');
+  var titles = { signin: ' ', newpass: ' ', library: 'Bookloud', addbook: 'Adding a book', reader: 'Meditations' };
+
+  function activate(name) {
+    tabs.forEach(function (t) { t.setAttribute('aria-selected', t.dataset.panel === name ? 'true' : 'false'); });
+    panels.forEach(function (p) { p.classList.toggle('active', p.dataset.panel === name); });
+    statusTitle.textContent = titles[name] || ' ';
+    if (name === 'addbook') startStepper();
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { activate(t.dataset.panel); }); });
+
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- Library: upload -> add a book handoff ---------- */
+  var uploadFab = document.getElementById('uploadFab');
+  var uploadToast = document.getElementById('uploadToast');
+  uploadFab.addEventListener('click', function () {
+    uploadFab.disabled = true;
+    uploadToast.textContent = 'Uploading…';
+    uploadToast.classList.add('show');
+    setTimeout(function () {
+      uploadToast.textContent = 'Uploaded — extracting text…';
+      setTimeout(function () {
+        uploadToast.classList.remove('show');
+        uploadFab.disabled = false;
+        activate('addbook');
+      }, 700);
+    }, 650);
+  });
+
+  var retryBtn = document.getElementById('retryBtn');
+  retryBtn.addEventListener('click', function () {
+    var original = retryBtn.textContent;
+    retryBtn.textContent = 'Retrying…';
+    retryBtn.disabled = true;
+    setTimeout(function () { retryBtn.textContent = 'Queued — check back shortly'; }, 700);
+  });
+
+  /* ---------- Add a book: stepper simulation ---------- */
+  var stepperStarted = false;
+  var voiceSub = document.getElementById('voiceSub');
+  var voiceProgress = document.getElementById('voiceProgress');
+  var openBookBtn = document.getElementById('openBookBtn');
+  var stepEls = document.querySelectorAll('#stepper .step');
+
+  function setStepState(index, state) {
+    var el = stepEls[index];
+    el.classList.remove('pending');
+    var dot = el.querySelector('.step-dot');
+    dot.classList.remove('done', 'active', 'pending');
+    if (state === 'done') { dot.classList.add('done'); dot.textContent = '✓'; }
+    else if (state === 'active') { dot.classList.add('active'); dot.textContent = '●'; }
+  }
+
+  function startStepper() {
+    if (stepperStarted) return;
+    stepperStarted = true;
+    if (reduceMotion) {
+      setStepState(2, 'done'); voiceSub.textContent = '300 of 300 sections';
+      voiceProgress.style.width = '100%';
+      setStepState(3, 'done'); setStepState(4, 'done');
+      openBookBtn.classList.add('show');
+      return;
+    }
+    var done = 142, total = 300;
+    var tick = setInterval(function () {
+      done = Math.min(total, done + 3 + Math.floor(Math.random() * 6));
+      voiceSub.textContent = done + ' of ' + total + ' sections';
+      voiceProgress.style.width = Math.round((done / total) * 100) + '%';
+      if (done >= total) {
+        clearInterval(tick);
+        setStepState(2, 'done');
+        setStepState(3, 'active');
+        setTimeout(function () {
+          setStepState(3, 'done');
+          setStepState(4, 'done');
+          openBookBtn.classList.add('show');
+        }, 1400);
+      }
+    }, 420);
+  }
+  openBookBtn.addEventListener('click', function () { activate('reader'); });
+
+  /* ---------- Reader: word-sync + play/pause + speed ---------- */
+  var readerText = document.getElementById('readerText');
+  var playBtn = document.getElementById('playBtn');
+  var speedChip = document.getElementById('speedChip');
+  var speeds = ['1×', '1.25×', '1.5×', '2×'];
+  var speedIdx = 1;
+  speedChip.addEventListener('click', function () {
+    speedIdx = (speedIdx + 1) % speeds.length;
+    speedChip.textContent = speeds[speedIdx];
+  });
+
+  var words = [
+    ['The', 130], ['best', 230], ['revenge', 330], ['is', 150], ['to', 130],
+    ['be', 150], ['unlike', 310], ['him', 190], ['who', 170], ['performed', 390],
+    ['the', 130], ['injury', 340], ['—', 160], ['to', 120], ['answer', 260],
+    ['cruelty', 340], ['not', 170], ['with', 150], ['cruelty', 320], ['returned,', 300],
+    ['but', 160], ['with', 150], ['the', 130], ['plain', 260], ['refusal', 330],
+    ['to', 130], ['become', 300], ['it.', 260]
+  ];
+  var spans = words.map(function (w) {
+    var s = document.createElement('span');
+    s.className = 'word';
+    s.textContent = w[0];
+    readerText.appendChild(s);
+    readerText.appendChild(document.createTextNode(' '));
+    return s;
+  });
+  var total = words.reduce(function (sum, w) { return sum + w[1]; }, 0);
+  var playing = false, elapsed = 0, idx = 0, cursor = words[0][1], last = null;
+
+  function paintReduced() {
+    var stopAt = Math.floor(words.length * 0.35);
+    spans.forEach(function (s, i) {
+      s.classList.remove('said', 'now');
+      if (i < stopAt) s.classList.add('said');
+      else if (i === stopAt) s.classList.add('now');
+    });
+  }
+
+  function step(ts) {
+    if (!playing) { last = null; requestAnimationFrame(step); return; }
+    if (last === null) last = ts;
+    var dt = ts - last; last = ts;
+    elapsed += dt;
+    if (elapsed >= total) { elapsed = 0; idx = 0; cursor = words[0][1]; }
+    while (idx < words.length - 1 && elapsed >= cursor) { idx++; cursor += words[idx][1]; }
+    spans.forEach(function (s, i) {
+      s.classList.toggle('said', i < idx);
+      s.classList.toggle('now', i === idx);
+    });
+    requestAnimationFrame(step);
+  }
+
+  if (reduceMotion) { paintReduced(); }
+  else { spans[0].classList.add('now'); requestAnimationFrame(step); }
+
+  playBtn.addEventListener('click', function () {
+    playing = !playing;
+    playBtn.textContent = playing ? '❚❚' : '▶';
+    playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  });
+
+  /* ---------- Chat sheet ---------- */
+  var askFab = document.getElementById('askFab');
+  var chatSheet = document.getElementById('chatSheet');
+  var chatScrim = document.getElementById('chatScrim');
+  var sheetClose = document.getElementById('sheetClose');
+  var sheetMessages = document.getElementById('sheetMessages');
+  var chatInput = document.getElementById('chatInput');
+  var chatSend = document.getElementById('chatSend');
+
+  function openSheet() { chatSheet.classList.add('open'); chatScrim.classList.add('open'); }
+  function closeSheet() { chatSheet.classList.remove('open'); chatScrim.classList.remove('open'); }
+  askFab.addEventListener('click', openSheet);
+  sheetClose.addEventListener('click', closeSheet);
+  chatScrim.addEventListener('click', closeSheet);
+
+  chatInput.addEventListener('input', function () {
+    chatSend.disabled = chatInput.value.trim().length === 0;
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(60, chatInput.scrollHeight) + 'px';
+  });
+  chatInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  chatSend.addEventListener('click', sendMessage);
+
+  var replies = [
+    'Marcus is drawing a line between the wrong done to you and the choice of what you do next — the two don’t have to match.',
+    'It comes back to Stoic ethics: your response is the one thing that stays entirely in your control, regardless of the provocation.',
+    'He’s not arguing for passivity — just that mirroring cruelty is its own kind of defeat.'
+  ];
+  var replyIdx = 0;
+
+  function sendMessage() {
+    var text = chatInput.value.trim();
+    if (!text) return;
+    var userBubble = document.createElement('div');
+    userBubble.className = 'bubble user';
+    userBubble.textContent = text;
+    sheetMessages.appendChild(userBubble);
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    chatSend.disabled = true;
+    sheetMessages.scrollTop = sheetMessages.scrollHeight;
+
+    var aiBubble = document.createElement('div');
+    aiBubble.className = 'bubble ai';
+    var caret = document.createElement('span');
+    caret.className = 'caret';
+    aiBubble.appendChild(caret);
+    sheetMessages.appendChild(aiBubble);
+    sheetMessages.scrollTop = sheetMessages.scrollHeight;
+
+    setTimeout(function () {
+      var reply = replies[replyIdx % replies.length];
+      replyIdx++;
+      aiBubble.textContent = reply;
+      var cite = document.createElement('span');
+      cite.className = 'cite-chip';
+      cite.textContent = 'Meditations · Book VI';
+      aiBubble.appendChild(cite);
+      sheetMessages.scrollTop = sheetMessages.scrollHeight;
+    }, 900);
+  }
+})();
+</script>
