@@ -84,9 +84,16 @@ function AuthGate() {
     );
   }
 
+  // "/" itself is intentionally not a real screen in either group -- it's
+  // covered by app/index.tsx purely so expo-router has a file to match the
+  // app's initial URL against (an unmatched initial route bypasses this
+  // component entirely and shows expo-router's own not-found page, which
+  // has no idea about auth state). Once matched, it's just another path to
+  // redirect out of, same as landing in the wrong auth group.
   const inAuthGroup = pathname.startsWith("/sign-in");
+  const isRoot = pathname === "/";
   if (!authed && !inAuthGroup) return <Redirect href="/sign-in" />;
-  if (authed && inAuthGroup) return <Redirect href="/library" />;
+  if (authed && (inAuthGroup || isRoot)) return <Redirect href="/library" />;
   return <AppStack />;
 }
 
