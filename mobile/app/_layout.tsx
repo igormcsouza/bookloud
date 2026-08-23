@@ -6,7 +6,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { View, useColorScheme } from "react-native";
+import { ActivityIndicator, Text, View, useColorScheme } from "react-native";
 import { useFonts, Fraunces_500Medium, Fraunces_600SemiBold, Fraunces_700Bold } from "@expo-google-fonts/fraunces";
 import { Karla_400Regular, Karla_500Medium, Karla_600SemiBold, Karla_700Bold } from "@expo-google-fonts/karla";
 import { IBMPlexMono_400Regular, IBMPlexMono_500Medium, IBMPlexMono_600SemiBold } from "@expo-google-fonts/ibm-plex-mono";
@@ -14,6 +14,7 @@ import { getIdToken } from "@/lib/auth";
 import { onSessionExpired } from "@/lib/authEvents";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+const AUTH_CHECK_TIMEOUT_MS = 4000;
 
 function AppStack() {
   return (
@@ -50,6 +51,13 @@ function AuthGate() {
   // sign-in, or a freshly-signed-out user back into the app.
   useEffect(() => {
     let cancelled = false;
+    const timeout = setTimeout(() => {
+      if (cancelled) return;
+      console.warn("Auth check timed out; falling back to sign-in.");
+      setAuthed(false);
+      setChecking(false);
+    }, AUTH_CHECK_TIMEOUT_MS);
+
     (async () => {
       try {
         const token = await getIdToken();
@@ -59,14 +67,23 @@ function AuthGate() {
         if (!cancelled) setAuthed(false);
       } finally {
         if (!cancelled) setChecking(false);
+        clearTimeout(timeout);
       }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
     };
   }, [pathname]);
 
-  if (checking) return null;
+  if (checking) {
+    return (
+      <View className="flex-1 items-center justify-center bg-bg dark:bg-dbg">
+        <ActivityIndicator color="#B87424" />
+        <Text className="mt-3 text-[13px] text-ink-muted dark:text-dink-muted">Loading Bookloud…</Text>
+      </View>
+    );
+  }
 
   const inAuthGroup = pathname.startsWith("/sign-in");
   if (!authed && !inAuthGroup) return <Redirect href="/sign-in" />;
