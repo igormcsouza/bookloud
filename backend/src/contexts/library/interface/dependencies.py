@@ -158,17 +158,30 @@ def get_stitch_queue() -> StitchQueue:
 
 def get_speech_synthesizer() -> SpeechSynthesizer:
     """PLANS/phase-4.md §0: the environment gate is checked FIRST and
-    UNCONDITIONALLY -- local dev and every ephemeral PR stack never get a
-    real engine, no exceptions, no opt-in flag. A `google_tts_secret_name`
-    accidentally set on a PR stack still can't turn on real calls outside
-    prod, because FallbackSynthesizer/GoogleTtsSynthesizer are simply never
-    constructed for non-prod environments.
+    UNCONDITIONALLY -- every ephemeral PR/CI stack never gets a real engine,
+    no exceptions, no opt-in flag. A `google_tts_secret_name` accidentally
+    set on a PR stack still can't turn on real calls outside prod, because
+    FallbackSynthesizer/GoogleTtsSynthesizer are simply never constructed for
+    non-prod environments.
 
     ``SYNTHESIS_STUB_MODE=silent`` (PLANS/phase-5.md OQ-1) picks a *local,
     network-free* generator instead of the raise-only stub. It is checked
     strictly INSIDE the non-prod branch, so it cannot weaken the gate above:
     it changes which offline stand-in runs, never whether an external service
-    is reachable."""
+    is reachable.
+
+    ``SYNTHESIS_STUB_MODE=edge_tts`` is the one deliberate, narrow exception
+    to "no non-prod environment ever calls a live endpoint" -- and it is
+    gated on ``environment == "local"`` *exactly*, not merely `!= "prod"`,
+    so a PR/CI stack can never reach it even if the env var were somehow set
+    there: those are automated and must stay fully deterministic (Q21). A
+    developer manually running `docker-compose` locally, choosing to flip
+    this on before a one-off listening test, is not that. edge-tts needs no
+    API key/credentials, so this carries no quota/cost risk -- only the
+    general flakiness of an unofficial, unsupported endpoint, which is
+    acceptable for a manual opt-in but never for an automated gate."""
+    if settings.environment == "local" and settings.synthesis_stub_mode == "edge_tts":
+        return EdgeTtsSynthesizer(voice=settings.edge_tts_voice)
     if settings.environment != "prod":
         if settings.synthesis_stub_mode == "silent":
             return SilentSynthesizer()
