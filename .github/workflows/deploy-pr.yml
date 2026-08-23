@@ -37,7 +37,13 @@ jobs:
     name: Comment on PR
     needs: deploy
     runs-on: ubuntu-latest
+    # Job-level `permissions:` REPLACES the workflow-level block entirely,
+    # not merges with it -- omitting `contents: read` here leaves the
+    # GITHUB_TOKEN with no repo-read scope at all, and actions/checkout
+    # fails with a misleading "repository not found" rather than a
+    # permissions error.
     permissions:
+      contents: read
       pull-requests: write
     steps:
       - name: Checkout
