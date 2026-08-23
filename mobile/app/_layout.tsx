@@ -1,0 +1,110 @@
+import "@/global.css";
+import { useCallback, useEffect, useState } from "react";
+import { Redirect, Stack, usePathname, useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { View, useColorScheme } from "react-native";
+import { useFonts, Fraunces_500Medium, Fraunces_600SemiBold, Fraunces_700Bold } from "@expo-google-fonts/fraunces";
+import { Karla_400Regular, Karla_500Medium, Karla_600SemiBold, Karla_700Bold } from "@expo-google-fonts/karla";
+import { IBMPlexMono_400Regular, IBMPlexMono_500Medium, IBMPlexMono_600SemiBold } from "@expo-google-fonts/ibm-plex-mono";
+import { getIdToken } from "@/lib/auth";
+import { onSessionExpired } from "@/lib/authEvents";
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+function AppStack() {
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="(app)" />
+    </Stack>
+  );
+}
+
+// No server-side middleware exists in RN to gate routes ahead of a render,
+// so this root layout does the equivalent job client-side: resolve whether
+// a usable id token exists (silently refreshing if needed) before deciding
+// whether to render the requested screen or redirect. RN port of
+// frontend/middleware.ts.
+function AuthGate() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [checking, setChecking] = useState(true);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    onSessionExpired(() => {
+      setAuthed(false);
+      router.replace("/sign-in");
+    });
+    return () => onSessionExpired(null);
+  }, [router]);
+
+  // Re-checks on every pathname change, not just on mount: sign-in and
+  // sign-out both navigate (router.replace) without going through
+  // onSessionExpired, and a token check on mount only would leave `authed`
+  // stale forever after either -- bouncing a freshly-logged-in user back to
+  // sign-in, or a freshly-signed-out user back into the app.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getIdToken();
+        if (!cancelled) setAuthed(token !== null);
+      } catch (err) {
+        console.error("Auth check failed:", err);
+        if (!cancelled) setAuthed(false);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
+  if (checking) return null;
+
+  const inAuthGroup = pathname.startsWith("/sign-in");
+  if (!authed && !inAuthGroup) return <Redirect href="/sign-in" />;
+  if (authed && inAuthGroup) return <Redirect href="/library" />;
+  return <AppStack />;
+}
+
+export default function RootLayout() {
+  const scheme = useColorScheme();
+  const [fontsLoaded] = useFonts({
+    Fraunces_500Medium,
+    Fraunces_600SemiBold,
+    Fraunces_700Bold,
+    Karla_400Regular,
+    Karla_500Medium,
+    Karla_600SemiBold,
+    Karla_700Bold,
+    IBMPlexMono_400Regular,
+    IBMPlexMono_500Medium,
+    IBMPlexMono_600SemiBold,
+  });
+
+  const onLayout = useCallback(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
+
+  if (!fontsLoaded) return null;
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayout}>
+      <BottomSheetModalProvider>
+        <SafeAreaProvider>
+          <View className="flex-1 bg-bg dark:bg-dbg">
+            <AuthGate />
+          </View>
+          <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        </SafeAreaProvider>
+      </BottomSheetModalProvider>
+    </GestureHandlerRootView>
+  );
+}

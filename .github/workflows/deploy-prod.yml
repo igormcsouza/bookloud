@@ -20,22 +20,20 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
-    with:
-      # Merges to main are the one place the full docker-compose e2e suite
-      # (playback project included) runs -- not every PR commit.
-      run_e2e: true
 
-  # Phase 8 (IMPLEMENTATION_PLAN.md): "on merge to main, unit tests -> e2e
+  # Phase 8 (IMPLEMENTATION_PLAN.md): "on merge to main, unit tests -> gate
   # against a staging/prod-like ephemeral stack -> CDK deploy to prod". This
   # job deploys a genuinely ephemeral `Bookloud*-staging` stack set (same CDK
-  # code, same OpenNext build, same Cognito/API Gateway/CloudFront wiring as
-  # prod) and runs the Playwright chromium project against it. `staging` is
-  # not "prod", so get_speech_synthesizer()/get_chat_model() gate to their
-  # stubs exactly like a pr-N environment does -- degraded.spec.ts's
-  # PARTIAL/NO_AUDIO assertions are meaningful here, and nothing here touches
-  # real TTS quota or the real Cognito pool.
+  # code, same Cognito/API Gateway wiring as prod) and runs the full
+  # login-gated smoke test against it. `staging` is not "prod", so
+  # get_speech_synthesizer()/get_chat_model() gate to their stubs exactly
+  # like a pr-N environment does, and nothing here touches real TTS quota or
+  # the real Cognito pool. Issue #10: this used to also run the Playwright
+  # chromium project against the deployed frontend -- gone along with the
+  # frontend itself; a mobile e2e replacement is an explicitly deferred
+  # follow-up.
   staging:
-    name: Staging (ephemeral e2e gate)
+    name: Staging (ephemeral smoke-test gate)
     needs: ci
     uses: ./.github/workflows/deploy-stack.yml
     with:
@@ -47,7 +45,6 @@ jobs:
       aws_region: "us-east-1"
       environment_name: development
       seed_users: true
-      run_e2e: true
     secrets: inherit
 
   # Always attempted once `staging` has run (success or failure) so a failed
@@ -138,8 +135,7 @@ jobs:
             done
           }
 
-          for STACK in "BookloudFrontend-${ENV_NAME}" \
-                       "BookloudApi-${ENV_NAME}" \
+          for STACK in "BookloudApi-${ENV_NAME}" \
                        "BookloudPipeline-${ENV_NAME}" \
                        "BookloudAuth-${ENV_NAME}" \
                        "BookloudStorage-${ENV_NAME}"; do
@@ -176,5 +172,4 @@ jobs:
       aws_region: "sa-east-1"
       environment_name: production
       seed_users: false
-      run_e2e: false
     secrets: inherit

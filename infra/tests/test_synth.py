@@ -24,7 +24,6 @@ import pytest
 from aws_cdk.assertions import Match, Template
 
 from stacks.auth_stack import AuthStack
-from stacks.frontend_stack import FrontendStack
 from stacks.pipeline_stack import PipelineStack
 from stacks.storage_stack import StorageStack
 
@@ -52,8 +51,8 @@ def _synth(stack_cls, environment: str, **kwargs) -> Template:
 # deploy-pr.yml). These tests exercise that mechanism directly: a stack
 # constructed with an explicit `env=` for each region must synthesize with
 # that region on `Stack.region`, and any resource that mirrors the stack's
-# own region into a runtime env var (e.g. FrontendStack's COGNITO_REGION,
-# wired from `cdk.Stack.of(self).region` in api_stack.py) must follow it too.
+# own region into a runtime env var (wired from `cdk.Stack.of(self).region`
+# in api_stack.py) must follow it too.
 @pytest.mark.parametrize(
     ("environment", "region"),
     [("prod", "sa-east-1"), ("pr-99", "us-east-1")],
@@ -735,48 +734,6 @@ def test_pipeline_stack_no_google_secret_no_secretsmanager_actions_anywhere(envi
     assert not any(a.startswith("secretsmanager:") for a in actions)
 
 
-# --- FrontendStack -------------------------------------------------------
-
-
-_FRONTEND_KWARGS = {
-    "api_base_url": "https://api.example.com",
-    "chat_base_url": "https://chat.example.com",
-    "cognito_client_id": "test-client-id",
-    "cognito_region": "us-east-1",
-}
-
-
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_frontend_stack_synthesizes_without_a_build(environment: str) -> None:
-    """No `.open-next` build exists in this checkout -> the placeholder Lambda
-    code path is exercised, proving synth never hard-depends on a frontend
-    build."""
-    template = _synth(FrontendStack, environment, **_FRONTEND_KWARGS)
-    template.resource_count_is("AWS::CloudFront::Distribution", 1)
-
-
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_frontend_stack_has_two_cache_behaviours(environment: str) -> None:
-    template = _synth(FrontendStack, environment, **_FRONTEND_KWARGS)
-    (distribution,) = template.find_resources("AWS::CloudFront::Distribution").values()
-    config = distribution["Properties"]["DistributionConfig"]
-    assert "DefaultCacheBehavior" in config
-    assert len(config["CacheBehaviors"]) == 1
-
-
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_frontend_stack_has_cognito_client_id_env(environment: str) -> None:
-    """The SSR Lambda's BFF route handlers (frontend/lib/cognito.ts) need
-    COGNITO_CLIENT_ID at runtime, not build time -- no NEXT_PUBLIC_* value."""
-    template = _synth(FrontendStack, environment, **_FRONTEND_KWARGS)
-    functions = template.find_resources(
-        "AWS::Lambda::Function",
-        {"Properties": {"Environment": {"Variables": Match.object_like({"BUCKET_NAME": Match.any_value()})}}},
-    )
-    (props,) = [r["Properties"] for r in functions.values()]
-    assert props["Environment"]["Variables"]["COGNITO_CLIENT_ID"] == "test-client-id"
-
-
 # --- Stack naming ----------------------------------------------------------
 
 
@@ -1273,28 +1230,3 @@ def test_no_stack_template_contains_a_key_shaped_string() -> None:
             template = _synth_api_stack(environment, openai_secret_name=secret_name)
             text = json.dumps(template.to_json())
             assert "sk-" not in text
-
-
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_frontend_chat_wiring(environment: str) -> None:
-    from stacks.config import Config
-    
-    app = cdk.App()
-    stack = FrontendStack(
-        app,
-        f"TestFrontend-{environment}",
-        environment=environment,
-        api_base_url="api_url",
-        chat_base_url="chat_url",
-        cognito_client_id="c_id",
-        cognito_region="c_region",
-    )
-    template = Template.from_stack(stack)
-    
-    template.has_resource_properties("AWS::Lambda::Function", {
-        "Environment": {
-            "Variables": Match.object_like({
-                Config.ENV_CHAT_BASE_URL: "chat_url"
-            })
-        }
-    })

@@ -1,13 +1,23 @@
 # Bookloud
 
-A personal webapp that reads uploaded PDFs aloud with word-level highlighting
-synced to audio, plus a chat sidebar for asking questions about the book,
-scoped to the section currently being read.
+A personal Android app that reads uploaded PDFs aloud with word-level
+highlighting synced to audio, plus a chat sidebar for asking questions about
+the book, scoped to the section currently being read.
 
-Built phase by phase per `IMPLEMENTATION_PLAN.md`. This repo is currently at
-**Phase 7**: the reader UI and chat sidebar. Every non-public backend route requires a valid Cognito JWT; the frontend
-has working login/logout/session-refresh via a Next.js backend-for-frontend;
-local dev emulates Cognito with `jagregory/cognito-local`. The backend's
+Built phase by phase per `IMPLEMENTATION_PLAN.md`, phases 1-7 land the
+backend and (at the time) a Next.js web frontend; **issue #10** then drops
+that web frontend entirely in favor of a native Expo/React Native Android
+app (`mobile/`) against the same, unchanged backend API -- better fit for
+background audio, lock-screen controls, and one-handed reading-while-
+listening than a browser tab. The sections below describing the old Next.js
+`frontend/` are kept as historical record of what phases 6-7 built; see
+"Mobile app (Expo, issue #10)" for the current client.
+
+Every non-public backend route requires a valid Cognito JWT; the client
+authenticates directly against Cognito's plain JSON API (no backend-for-
+frontend -- the app client has no secret, so there's nothing a server layer
+would protect); local dev emulates Cognito with `jagregory/cognito-local`.
+The backend's
 `Library` bounded context owns `Book`/`Chunk` CRUD against the single DynamoDB
 table plus the full pipeline: `POST /books` creates a book and returns a
 presigned S3 upload; the PDF landing in the bucket fires an S3 event -> SQS ->
@@ -21,13 +31,12 @@ one message to a third queue where the **stitch Lambda** concatenates every
 book to `READY` or `PARTIAL`. `GET /books/{id}/status` is the one cheap poll a
 client needs.
 
-On top of that, the frontend now has a **two-pane reader**: a left sidebar
-listing books and polling their status, a centre pane rendering the extracted
-text with the spoken word highlighted, and a player bar that plays, pauses,
-seeks and changes speed. Uploading a PDF from the browser finally has a UI (the
-presigned POST has existed since phase 3 with nothing calling it), and a
-`PARTIAL` book can be repaired with `POST /books/{id}/resynthesize` instead of
-being a dead end.
+The client (originally the phase-6/7 Next.js frontend, now the `mobile/`
+Expo app) has a reader screen showing the extracted text with the spoken
+word highlighted, and player controls that play, pause, seek and change
+speed. Uploading a PDF has a UI (the presigned POST has existed since phase 3
+with nothing calling it), and a `PARTIAL` book can be repaired with
+`POST /books/{id}/resynthesize` instead of being a dead end.
 
 ## Library context (backend)
 
@@ -89,7 +98,7 @@ library/
                      secondary ASGI app inside the new ChatFunction)
 ```
 
-**Upload contract** (what `frontend/components/UploadButton.tsx` does): `POST /books
+**Upload contract** (what `mobile/lib/upload.ts` does): `POST /books
 {"title": "..."}` returns `{book, upload: {url, fields, key, expiresIn,
 maxBytes}}`. Build a `FormData`, append every entry of `upload.fields` first,
 append the file **last** under the field name `file` (S3 ignores anything
@@ -338,7 +347,11 @@ book_id)` before ever calling into `ChunkRepository`.
 
 See `PLANS/phase-2.md` for the full design rationale and decisions log.
 
-## Reader UI (frontend, phase 6)
+## Reader UI (historical: the phase-6/7 Next.js frontend)
+
+**Superseded by issue #10's `mobile/` Expo app** -- kept here as a record of
+what phases 6-7 built; the code below no longer exists in this repo. See
+"Mobile app (Expo, issue #10)" further down for the current client.
 
 Route group `app/(app)/` holds the two-pane shell — `/` is the library,
 `/books/<id>` is the reader. Route groups don't appear in URLs, so `/login`
@@ -452,36 +465,75 @@ container interacts badly with the slice-the-active-paragraph rendering above,
 for a limit no personal library will hit. The reader logs a console warning
 above 2,000 chunks so the day it matters is not a mystery.
 
+## Mobile app (Expo, issue #10)
+
+`mobile/` is an Expo (React Native + TypeScript) Android app, replacing the
+Next.js frontend above against the same, unchanged backend API -- no backend
+or infra changes were needed. Expo Router + NativeWind, matching the stack
+of this user's other Expo apps.
+
+```
+mobile/
+├── app/(auth)/sign-in.tsx      username/password + NEW_PASSWORD_REQUIRED,
+│                                one screen (Cognito's challenge flow)
+├── app/(app)/library/          index.tsx (book list, upload FAB, retry/
+│                                re-upload), add.tsx (5-step upload progress)
+├── app/(app)/reader/[bookId]/  word-level highlight sync, mini-player,
+│                                the "Ask" chat bottom sheet
+├── components/                 BookCard, StatusChip, MiniPlayer, ChatSheet,
+│                                Field, PrimaryButton
+├── hooks/                      usePlayback (expo-av, rewritten from the web
+│                                rAF/HTMLAudioElement version), useBookList,
+│                                useBookStatus, useChat, useReadingAnchor
+└── lib/                        auth.ts, api.ts, books.ts, manifest.ts,
+                                 marks.ts, chat.ts, upload.ts, storage.ts
+```
+
+`manifest.ts`/`marks.ts`/`books.ts` port near-verbatim from the old
+`frontend/lib/`; `usePlayback` is the one full rewrite (expo-av's
+lower-frequency status callbacks instead of `requestAnimationFrame` against
+`HTMLAudioElement`); `chat.ts`'s SSE transport uses `react-native-sse`
+instead of `fetch().body.getReader()`, which RN/Hermes doesn't reliably
+support.
+
+Background audio uses `expo-av` with `staysActiveInBackground` for
+lock-screen/Now-Playing presence; a fully custom lock-screen transport
+(remote play/pause/seek) is native-module territory beyond expo-av's surface
+and is a known follow-up, not claimed here.
+
+Local dev: `cd mobile && npx expo start`, pointed at a running `make up`
+backend or a deployed `pr-N` API via `EXPO_PUBLIC_API_BASE_URL`/
+`EXPO_PUBLIC_CHAT_BASE_URL` (see `mobile/.env.example`). Real Android builds
+are triggered by publishing a GitHub release (`mobile-release.yml`, EAS
+Build, APK attached to the release -- sideload distribution, no Play
+Console). PR environments deploy backend only; there is no per-PR mobile
+build.
+
 ## Auth model
 
 Username + password sign-in (not email-based). **Accounts are admin-provisioned
 only -- there is no public signup.** The Cognito user pool has
 `self_sign_up_enabled=False`, so Cognito itself rejects the `SignUp` API
-regardless of what the frontend does; see "Provisioning a new reader account"
-below. The browser never talks to Cognito directly:
-`POST /api/auth/{login,new-password,refresh,logout}` (Next.js route handlers)
-do, over Cognito's plain JSON API. The refresh token (30-day validity) lives
-in an `httpOnly; SameSite=Lax` cookie (`bookloud_refresh`) the browser can't
-read; the id token (~1h) is held in a JS module variable and attached as
-`Authorization: Bearer` on calls to the backend API, which never validates it
-itself -- API Gateway's Cognito JWT authorizer does, forwarding the verified
-claims to the Lambda. See `PLANS/phase-1.md` for the full design (and why this
-topology, not Amplify Auth or a FastAPI-side `/auth/*`); §11 covers the
-admin-only revision.
-
-`app/signup/page.tsx` and its `/api/auth/{signup,confirm}` routes still exist
-in the repo (unreachable from the UI, no "Sign up" link) in case self-signup
-is ever revisited -- hitting `/signup` directly and submitting now surfaces
-Cognito's rejection as a 401.
+regardless of what the client does; see "Provisioning a new reader account"
+below. The app talks to Cognito's plain JSON API directly (`mobile/lib/
+auth.ts`) -- the app client has no secret, so there is nothing a
+backend-for-frontend layer would protect, unlike the old Next.js frontend's
+route-handler BFF. The refresh token lives in `expo-secure-store`; the id
+token (~1h) is held there too and attached as `Authorization: Bearer` on
+calls to the backend API, which never validates it itself -- API Gateway's
+Cognito JWT authorizer does, forwarding the verified claims to the Lambda.
+See `PLANS/phase-1.md` for the full design (and why this topology, not
+Amplify Auth or a FastAPI-side `/auth/*`); §11 covers the admin-only
+revision.
 
 ### First login: forced password change
 
 An admin-provisioned user is created with a *temporary* password. Their
 first `InitiateAuth` returns Cognito's `NEW_PASSWORD_REQUIRED` challenge
-instead of tokens; `/login` detects this and swaps in a "choose a new
-password" step. Once that new password is set, the account behaves like any
-other -- normal login, no further forced changes. There is no self-service
-"change password while logged in" page (out of scope for this phase).
+instead of tokens; the sign-in screen detects this and swaps in a "choose a
+new password" step. Once that new password is set, the account behaves like
+any other -- normal login, no further forced changes. There is no
+self-service "change password while logged in" screen (out of scope).
 
 ### Provisioning a new reader account
 
@@ -504,8 +556,8 @@ aws cognito-idp admin-set-user-password \
 Or via the Console: Cognito -> User pools -> the pool -> Users -> "Create
 user" -> set a temporary password, uncheck "send an invitation" if you'd
 rather share the password out-of-band. Either way, tell the new user their
-temporary password out of band; their first login at `/login` will prompt
-them to choose their own password before they can use the app.
+temporary password out of band; their first sign-in in the app will prompt
+them to choose their own password before they can use it.
 
 ## Quickstart (local dev)
 
@@ -515,31 +567,30 @@ Requires Docker, Python 3.12+, Node 24, and [uv](https://docs.astral.sh/uv/).
 make up      # LocalStack + cognito-local + backend (uvicorn, hot reload) +
              # extract-worker, synthesize-worker and stitch-worker (poll
              # loops over their respective queues) on :8000
-make ui      # + Next.js frontend on :3000 (optional)
 make smoke   # smoke test against the running stack: upload -> extraction ->
              # synthesis fan-out/fan-in -> stitch -> poll
              # GET /books/{id}/status to READY. Real TTS is never called;
              # locally the offline SilentSynthesizer produces real bytes so
              # the concatenation and manifest are genuinely exercised.
 make down    # tear everything down
-
-make e2e-local  # the phase-6 gate: up -> ui -> Playwright (incl. the
-                # `playback` project, which only exists with E2E_AUDIO=1)
-                # -> down
 ```
+
+Run the Expo app against that backend separately -- `cd mobile && npx expo
+start`, with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` in
+`mobile/.env` pointed at the LAN IP of the machine running `make up` (a
+phone/emulator can't reach `localhost` on the host). See "Mobile app" above.
 
 `make up` seeds a local Cognito pool (via `jagregory/cognito-local`) with two
 users:
 - **`dev` / `devpassword`** -- permanent password, no forced change, for
-  routine local dev / `make smoke` convenience. Log in with it at
-  `http://localhost:3000/login` after `make ui`, or run
-  `curl -H "Authorization: Bearer $(make -s token)" localhost:8000/me` to hit
-  the backend directly.
+  routine local dev / `make smoke` convenience. Sign in with it in the Expo
+  app, or run `curl -H "Authorization: Bearer $(make -s token)"
+  localhost:8000/me` to hit the backend directly.
 - **`newuser` / `TempPass123!`** -- a *temporary* password, to exercise the
-  admin-provisioned forced-first-login flow locally: logging in with it
+  admin-provisioned forced-first-login flow locally: signing in with it
   triggers the "choose a new password" step instead of a normal login.
 
-Run the full test suite (backend pytest, frontend vitest + tsc, infra
+Run the full test suite (backend pytest, mobile jest + tsc + eslint, infra
 `aws_cdk.assertions` synth tests):
 
 ```bash
@@ -547,28 +598,22 @@ make test
 ```
 
 `make synth` runs `cdk synth -c environment=dev` for a local sanity check of
-every stack. `make e2e` is the CI-friendly one-shot: `up` -> `ui` -> smoke
-both -> `down`. `make e2e-local` is the fuller one, adding the Playwright
-suite.
+every stack.
 
-**End-to-end tests, and where each one can honestly run.** `get_speech_
-synthesizer()` gates on `ENVIRONMENT != "prod"` first and unconditionally, so
-in every deployed environment every chunk fails with `EXTERNAL_TTS_DISABLED`
-and there is no audio at all. Local compose is the only place a browser test
-can hear anything, and only because `SYNTHESIS_STUB_MODE=silent` (set on the
-compose `synthesize-worker`, and nowhere else) makes `SilentSynthesizer`
-produce real MPEG-2 frames and real word marks.
+**End-to-end tests (historical: the phase-6/7 Next.js frontend's Playwright
+suite).** Issue #10 removed `frontend/e2e/` along with the rest of the
+Next.js app, and did not replace it -- a mobile e2e suite (Detox/Maestro) is
+an explicitly deferred follow-up. Kept below as a record of what existed and
+why, since the underlying constraint (`get_speech_synthesizer()` gates on
+`ENVIRONMENT != "prod"`, so only local compose's `SYNTHESIS_STUB_MODE=silent`
+ever produces real audio to test against) still applies to whatever replaces
+it.
 
-| spec | local compose (`E2E_AUDIO=1`) | `deploy-pr` | asserts |
+| spec (no longer in the repo) | local compose (`E2E_AUDIO=1`) | `deploy-pr` | asserted |
 |---|---|---|---|
 | `e2e/upload-and-read.spec.ts` | yes | yes | login -> upload -> poll to terminal -> the text renders. **No audio assertion at all.** |
 | `e2e/degraded.spec.ts` | skipped (the local book is `READY`) | yes | on a `PARTIAL`/`NO_AUDIO` book: text readable, no `<audio src>` mounted, the notice copy, and "Try audio again" -> `202` -> back to terminal |
 | `e2e/playback.spec.ts` | yes | not created | play, the highlight advances, pause, seek across a segment boundary and back |
-
-The `playback` project runs `channel: "chrome"`, not bundled Chromium, which
-omits proprietary media codecs — and it **hard-fails** on an empty
-`canPlayType("audio/mpeg")` rather than skipping, because a silent skip in the
-one test that exercises audio would be worse than having no test.
 
 ## Repo layout
 
@@ -584,23 +629,23 @@ bookloud/
 │               extract, synthesize, and stitch Lambdas, plus the streaming
 │               ChatFunction, differing only by their container `cmd` or
 │               Lambda handler.
-├── frontend/   Next.js 15 (App Router) + Tailwind, deployed via OpenNext to
-│               Lambda + CloudFront. Login (incl. forced first-login password
-│               change), the auth BFF route handlers, and (phase 6) the
-│               two-pane reader: app/(app)/ route group, components/,
-│               hooks/, lib/{books,manifest,marks,upload}.ts, and the
-│               Playwright suite in e2e/. The chat sidebar lands in phase 7.
-│               app/signup/ still exists but is unreachable from the UI
-│               (admin-only provisioning, see Auth model above). Runtime
-│               dependencies are still exactly next/react/react-dom.
+├── mobile/     Expo (React Native + TypeScript) Android app, replacing the
+│               Next.js frontend (issue #10) against the same backend API.
+│               Expo Router + NativeWind. app/(auth)/, app/(app)/library/,
+│               app/(app)/reader/[bookId]/, components/, hooks/ (usePlayback
+│               rewritten for expo-av), lib/ (auth, api, books, manifest,
+│               marks, chat, upload -- most ported near-verbatim from the
+│               old frontend/lib/). Built to APK via EAS on GitHub release
+│               (mobile-release.yml), not part of the PR/prod deploy
+│               pipeline below.
 ├── infra/      Python CDK app: AuthStack (Cognito, self_sign_up_enabled=
 │               False, PreSignUp trigger kept but unreachable), StorageStack
 │               (DynamoDB + S3), PipelineStack (extract/synthesize/stitch
 │               SQS queues + DLQs, the three pipeline Lambdas, and the
 │               S3 -> SQS notification), ApiStack (HTTP API + Lambda + Cognito JWT
-│               authorizer), FrontendStack (CloudFront + Lambda + S3).
-│               Dependency order: Storage -> Pipeline -> Api -> Frontend
-│               (Auth feeds into Api and Frontend too).
+│               authorizer). Dependency order: Storage -> Pipeline -> Api
+│               (Auth feeds into Api too). No FrontendStack -- issue #10
+│               removed it along with the Next.js app it deployed.
 ├── local/      docker-compose helper scripts: setup.sh seeds LocalStack
 │               (table/buckets/queues + the S3 -> SQS notification) +
 │               bootstraps cognito-local, cognito_bootstrap.py provisions
@@ -612,11 +657,11 @@ bookloud/
 │               loops (LocalStack community can't run our container-image
 │               Lambda).
 ├── docker-compose.yml, Makefile
-├── .github/workflows/   ci.yml (reusable: backend/frontend/infra tests,
-│                        local-smoke, and e2e-local — the compose Playwright
-│                        run), deploy-pr.yml (deploy + smoke + the `chromium`
-│                        Playwright project against the real deploy),
-│                        destroy-pr.yml, deploy-prod.yml
+├── .github/workflows/   ci.yml (reusable: backend/mobile/infra tests +
+│                        local-smoke), deploy-pr.yml (backend deploy + smoke
+│                        test against a pr-N stack), destroy-pr.yml,
+│                        deploy-prod.yml, mobile-release.yml (EAS Android
+│                        build on GitHub release)
 ├── IMPLEMENTATION_PLAN.md   the overall phase-by-phase plan
 └── PLANS/phase-N.md         each phase's approved, detailed implementation plan
 ```
@@ -633,16 +678,20 @@ value, `environment`, drives every name:
 | `pr-<N>`         | per-PR ephemeral   | `BookloudApi-pr-42`                |
 | `prod`           | push to `main`     | `BookloudApi-prod`                 |
 
-- **On every PR**: `ci.yml` runs backend/frontend/infra unit tests plus a
-  local compose smoke test; `deploy-pr.yml` then deploys all five stacks
-  suffixed `pr-<N>` to the same AWS account, builds the frontend with
-  OpenNext against the just-deployed API, and runs `local/smoke_test.py`
-  against the live URLs. The stack is left standing (that's the point of an
-  ephemeral environment) and a PR comment links to it.
-- **On PR close/merge**: `destroy-pr.yml` deletes the five `pr-<N>` stacks in
-  reverse dependency order (`Frontend -> Api -> Pipeline -> Auth -> Storage`).
+- **On every PR**: `ci.yml` runs backend/mobile/infra unit tests plus a local
+  compose smoke test; `deploy-pr.yml` then deploys all four stacks suffixed
+  `pr-<N>` to the same AWS account and runs `local/smoke_test.py` against
+  the live API. The stack is left standing (that's the point of an
+  ephemeral environment) and a PR comment links to its API URL -- there is
+  no per-PR mobile build; point a local `expo start` dev client at that URL
+  to test against it.
+- **On PR close/merge**: `destroy-pr.yml` deletes the four `pr-<N>` stacks in
+  reverse dependency order (`Api -> Pipeline -> Auth -> Storage`).
 - **On push to `main`**: `deploy-prod.yml` runs the same test-then-deploy
   sequence against the `prod` stacks.
+- **On a GitHub release**: `mobile-release.yml` builds the Android APK via
+  EAS and attaches it to the release -- independent of the backend deploy
+  pipeline above.
 
 Removal policy: `RETAIN` for `environment == "prod"`, `DESTROY` (+
 `auto_delete_objects`) otherwise -- PR environments vanish completely on

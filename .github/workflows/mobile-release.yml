@@ -1,0 +1,60 @@
+name: Mobile release
+
+# Issue #10: builds the Expo Android app and attaches the APK to a GitHub
+# release -- the trigger and shape are copied directly from this user's
+# other Expo app (igormcsouza/cashlytics's mobile-release.yml). Sideload
+# distribution (no Google Play Console submission).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Android APK and attach to release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Build APK via EAS
+        working-directory: mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli build \
+            --platform android \
+            --profile production \
+            --non-interactive \
+            --wait \
+            --json > eas-build.json
+          cat eas-build.json
+
+      - name: Download built APK
+        working-directory: mobile
+        run: |
+          url=$(node -p "require('./eas-build.json')[0].artifacts.buildUrl")
+          curl -fL "$url" -o "bookloud-${{ github.event.release.tag_name }}-android.apk"
+
+      - name: Attach APK to the release
+        working-directory: mobile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "bookloud-${{ github.event.release.tag_name }}-android.apk" \
+            --clobber

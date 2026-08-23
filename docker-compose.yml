@@ -1,7 +1,9 @@
 # Local dev stack: LocalStack (S3/SQS/DynamoDB) + cognito-local (Cognito
 # emulation -- LocalStack's own Cognito support is Pro-only, see
-# PLANS/phase-1.md §4) + backend (uvicorn, hot reload) + frontend (optional,
-# `ui` profile).
+# PLANS/phase-1.md §4) + backend (uvicorn, hot reload). The client is the
+# Expo app in `mobile/`, run separately via `cd mobile && npx expo start` --
+# not part of this compose stack (issue #10 dropped the Next.js `frontend`
+# service this file used to run under a `ui` profile).
 services:
   localstack:
     # Pinned: newer LocalStack tags gate startup behind a Pro auth token even
@@ -222,23 +224,3 @@ services:
     depends_on:
       localstack:
         condition: service_healthy
-
-  frontend:
-    profiles: ["ui"]
-    build:
-      context: ./frontend
-      args:
-        - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-        - NEXT_PUBLIC_CHAT_BASE_URL=http://localhost:8001
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID}
-      - COGNITO_REGION=us-east-1
-      - COGNITO_ENDPOINT=http://cognito-local:9229
-      - ENVIRONMENT=local
-    depends_on:
-      - backend
-      - chat
-      - cognito-local

@@ -1,9 +1,20 @@
 name: Deploy Stack
 
-# Reusable workflow factoring the "push code -> CDK deploy backend -> build +
-# deploy frontend -> smoke test -> (optional) Playwright e2e" sequence shared
-# by deploy-pr.yml (ephemeral pr-N environments) and deploy-prod.yml (the
-# ephemeral staging environment gate, and the prod deploy itself).
+# Reusable workflow factoring the "push code -> CDK deploy backend -> smoke
+# test -> (optional) Playwright e2e" sequence shared by deploy-pr.yml
+# (ephemeral pr-N environments) and deploy-prod.yml (the ephemeral staging
+# environment gate, and the prod deploy itself).
+#
+# Issue #10: the frontend build/deploy steps this workflow used to run
+# (OpenNext build, `BookloudFrontend-*` CDK deploy, frontend URL output) are
+# gone -- the Next.js frontend they built is gone too, replaced by the Expo
+# Android app in `mobile/`, which is not part of this deploy pipeline (it
+# builds separately, via mobile-release.yml, on GitHub release). PR/staging
+# environments deploy backend only; mobile testing points a local `expo
+# start` dev client at this stack's API URL. The Playwright e2e step below
+# is likewise gone -- it exercised the frontend, which no longer exists; a
+# mobile e2e replacement (Detox/Maestro) is an explicitly deferred follow-up
+# to issue #10, not part of it.
 #
 # Phase 8 (IMPLEMENTATION_PLAN.md): deploy-pr.yml and deploy-prod.yml used to
 # carry this sequence duplicated byte-for-byte, deliberately so (see the old
@@ -11,10 +22,8 @@ name: Deploy Stack
 # needed it with different knobs -- the staging gate below is that caller.
 # Do not re-duplicate this again; add an input instead.
 #
-# `seed_users` and `run_e2e` are separate inputs (not one flag) because a
-# caller can seed test users without running Playwright, but never the
-# reverse -- e2e needs the credentials seed-users produces via `E2E_USERNAME`/
-# `E2E_PASSWORD`.
+# `seed_users` provisions throwaway Cognito credentials the (login-gated)
+# smoke test uses -- prod deploys leave it off.
 
 on:
   workflow_call:
@@ -46,20 +55,11 @@ on:
         required: false
         type: boolean
         default: true
-      run_e2e:
-        description: >-
-          Run the Playwright chromium project against the deployed frontend
-          URL after the smoke test passes. Requires seed_users: true.
-        required: false
-        type: boolean
-        default: true
     outputs:
       api_url:
         value: ${{ jobs.deploy.outputs.api_url }}
       chat_url:
         value: ${{ jobs.deploy.outputs.chat_url }}
-      frontend_url:
-        value: ${{ jobs.deploy.outputs.frontend_url }}
       user_pool_id:
         value: ${{ jobs.deploy.outputs.user_pool_id }}
       user_pool_client_id:
@@ -83,13 +83,12 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment_name }}
-      url: ${{ steps.frontend-url.outputs.url }}
+      url: ${{ steps.deploy-backend.outputs.api_url }}
     env:
       ENV_NAME: ${{ inputs.env_name }}
     outputs:
       api_url: ${{ steps.deploy-backend.outputs.api_url }}
       chat_url: ${{ steps.deploy-backend.outputs.chat_url }}
-      frontend_url: ${{ steps.frontend-url.outputs.url }}
       user_pool_id: ${{ steps.deploy-backend.outputs.user_pool_id }}
       user_pool_client_id: ${{ steps.deploy-backend.outputs.user_pool_client_id }}
       login_username: ${{ steps.seed-users.outputs.login_username }}
@@ -113,12 +112,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Only needed for `npm install -g aws-cdk` below -- this job no longer
+      # builds a JS project of its own (the mobile app builds separately, via
+      # mobile-release.yml), so there's no lockfile here to cache against.
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Cache pip dependencies
         uses: actions/cache@v6
@@ -238,56 +238,6 @@ jobs:
             echo "newuser_temp_password=${NEWUSER_TEMP_PASS}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build frontend (OpenNext)
-        working-directory: frontend
-        env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ steps.deploy-backend.outputs.api_url }}
-          NEXT_PUBLIC_CHAT_BASE_URL: ${{ steps.deploy-backend.outputs.chat_url }}
-        run: npx open-next build
-
-      - name: Verify OpenNext output
-        working-directory: frontend
-        run: |
-          if [ ! -d ".open-next/server-functions/default" ]; then
-            echo "ERROR: OpenNext did not produce .open-next/server-functions/default/"
-            echo "Contents of .open-next/ (if it exists):"
-            ls -la .open-next/ 2>/dev/null || echo "  .open-next/ does not exist"
-            exit 1
-          fi
-          echo "OpenNext output OK: $(du -sh .open-next/server-functions/default | cut -f1) in server-functions/default/"
-
-      - name: Deploy Frontend
-        id: deploy-frontend
-        working-directory: infra
-        run: |
-          rm -rf cdk.out
-          cdk deploy \
-            "BookloudFrontend-${ENV_NAME}" \
-            --exclusively \
-            --require-approval never \
-            -c environment="${ENV_NAME}" \
-            -c git_sha="${GITHUB_SHA}" \
-            --outputs-file cdk-frontend-outputs.json
-
-      - name: Extract frontend URL
-        id: frontend-url
-        working-directory: infra
-        run: |
-          FRONTEND_URL=$(python3 - <<'PY'
-          import json, os
-          with open("cdk-frontend-outputs.json") as f:
-              outputs = json.load(f)
-          env_name = os.environ["ENV_NAME"]
-          stack = outputs.get(f"BookloudFrontend-{env_name}", {})
-          print(stack.get("FrontendUrl", "").rstrip("/"))
-          PY
-          )
-          echo "url=${FRONTEND_URL}" >> "$GITHUB_OUTPUT"
-
       # Login-gated checks (Cognito auth, upload/extract/synthesize/stitch)
       # only run when seed_users provisioned credentials for them -- prod
       # never runs them (unchanged from every prior phase: real TTS engines
@@ -299,7 +249,6 @@ jobs:
           python3 local/smoke_test.py \
             --api-url "${{ steps.deploy-backend.outputs.api_url }}" \
             --chat-url "${{ steps.deploy-backend.outputs.chat_url }}" \
-            --frontend-url "${{ steps.frontend-url.outputs.url }}" \
             --expect-commit "${{ github.sha }}" \
             --expect-environment "${{ env.ENV_NAME }}" \
             --cognito-client-id "${{ steps.deploy-backend.outputs.user_pool_client_id }}" \
@@ -315,39 +264,5 @@ jobs:
           python3 local/smoke_test.py \
             --api-url "${{ steps.deploy-backend.outputs.api_url }}" \
             --chat-url "${{ steps.deploy-backend.outputs.chat_url }}" \
-            --frontend-url "${{ steps.frontend-url.outputs.url }}" \
             --expect-commit "${{ github.sha }}" \
             --expect-environment "${{ env.ENV_NAME }}"
-
-      # PLANS/phase-6.md OQ-2, hardened by phase 8. The `e2e-local` job in
-      # ci.yml cannot exercise CloudFront, the SSR Lambda, API Gateway's
-      # Cognito authorizer or real S3 -- and `degraded.spec.ts` is only
-      # *meaningful* against an environment whose books are genuinely
-      # PARTIAL/NO_AUDIO, which local compose (SYNTHESIS_STUB_MODE=silent) is
-      # not. `E2E_AUDIO` is deliberately UNSET here: this runs the `chromium`
-      # project only, which asserts nothing whatsoever about audio -- every
-      # non-prod ENV_NAME (pr-N, staging) makes get_speech_synthesizer() gate
-      # to StubSynthesizer, so there is none here to assert about.
-      - name: Install Playwright browsers
-        if: inputs.run_e2e
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright e2e against the deployed stack
-        if: inputs.run_e2e
-        working-directory: frontend
-        env:
-          E2E_BASE_URL: ${{ steps.frontend-url.outputs.url }}
-          E2E_USERNAME: ${{ steps.seed-users.outputs.login_username }}
-          E2E_PASSWORD: ${{ steps.seed-users.outputs.login_password }}
-        run: npx playwright test --project=chromium
-
-      - name: Upload the Playwright trace on failure
-        if: ${{ inputs.run_e2e && failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-${{ inputs.env_name }}-${{ github.run_id }}
-          path: |
-            frontend/test-results
-            frontend/playwright-report
-          retention-days: 7

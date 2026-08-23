@@ -10,25 +10,30 @@ about.
 ## 0. First, is it actually a deploy problem?
 
 `deploy-prod.yml` runs `ci` → `staging` (deploys `Bookloud*-staging`, seeds
-Cognito users, runs the Playwright `chromium` project against it) →
-`deploy` (deploys `Bookloud*-prod`, no e2e). If `staging` failed, `deploy`
-never ran and prod is untouched — nothing to roll back. If `staging` and
-`ci` both passed and `deploy` still produced a broken prod, that's the
-scenario this doc covers.
+Cognito users, runs the full login-gated smoke test against it) →
+`deploy` (deploys `Bookloud*-prod`, no smoke test). If `staging` failed,
+`deploy` never ran and prod is untouched — nothing to roll back. If
+`staging` and `ci` both passed and `deploy` still produced a broken prod,
+that's the scenario this doc covers.
+
+Note: since issue #10, "prod" is the backend only -- the Android client
+(`mobile/`) is built and distributed independently via `mobile-release.yml`
+on GitHub release, not by this pipeline, so nothing here rolls it back. If
+a bad release is the problem, that's a separate EAS/Play-listing concern,
+not a `cdk deploy` rollback.
 
 ## 1. What "prod" actually is
 
-Five stacks, deployed in this dependency order (`infra/app.py`):
+Four stacks, deployed in this dependency order (`infra/app.py`):
 
 ```
 BookloudStorage-prod  (DynamoDB table, S3: pdf/audio/marks buckets)
 BookloudAuth-prod     (Cognito user pool + client)
 BookloudPipeline-prod (extract/synthesize/stitch queues + Lambdas)
 BookloudApi-prod      (API Gateway HTTP API + API/chat Lambdas, imports Storage+Auth+Pipeline)
-BookloudFrontend-prod (CloudFront + SSR Lambda, imports Api+Auth)
 ```
 
-Everything compute-shaped (`Pipeline`, `Api`, `Frontend`'s SSR Lambda) is
+Everything compute-shaped (`Pipeline`, `Api`) is
 `DockerImageFunction` built with `DockerImageCode.from_image_asset(...)` —
 CDK builds and pushes a **new image tagged from the current source tree**
 on every deploy and points the Lambda's `$LATEST` at it. There is no
@@ -63,16 +68,16 @@ git push origin main
 ```
 
 Pushing to `main` triggers `deploy-prod.yml` exactly as any other merge
-would: unit tests, an ephemeral `staging` deploy + Playwright e2e gate, then
-`cdk deploy` of the reverted code to all five `-prod` stacks. Total time is
-whatever a normal deploy takes (dominated by the two Docker image builds and
-CloudFront's distribution update) plus the staging e2e gate — budget the
-same as a normal merge-to-main run, no faster and no slower.
+would: unit tests, an ephemeral `staging` deploy + smoke-test gate, then
+`cdk deploy` of the reverted code to all four `-prod` stacks. Total time is
+whatever a normal deploy takes (dominated by the two Docker image builds)
+plus the staging gate — budget the same as a normal merge-to-main run, no
+faster and no slower.
 
 **This is the default recommendation.** It goes through the same gate a
 forward deploy does, which is the whole point of phase 8 — a rollback that
-skips the e2e gate to save a few minutes is exactly the kind of shortcut
-that turns one bad deploy into two.
+skips the gate to save a few minutes is exactly the kind of shortcut that
+turns one bad deploy into two.
 
 ## 3. Faster path: manual `cdk deploy` from a known-good commit
 
@@ -94,37 +99,22 @@ cd infra
 pip install -r requirements.txt
 npm install -g aws-cdk
 
-# Rebuild the frontend against the KNOWN-GOOD commit's API/chat URLs.
-# These don't change between deploys (API Gateway/HTTP API URLs are stable
-# across updates to the same stack), so pull them from the last successful
-# deploy-prod.yml run's `deploy` job logs ("Extract frontend URL" /
-# `cdk-backend-outputs.json`), or:
-aws cloudformation describe-stacks --stack-name BookloudApi-prod \
-  --query 'Stacks[0].Outputs' --output table
-
-cd ../frontend
-npm ci
-NEXT_PUBLIC_API_BASE_URL=<api-url> NEXT_PUBLIC_CHAT_BASE_URL=<chat-url> \
-  npx open-next build
-
-cd ../infra
 cdk deploy \
   "BookloudStorage-prod" "BookloudAuth-prod" \
   "BookloudPipeline-prod" "BookloudApi-prod" \
   --exclusively --require-approval never \
   -c environment=prod -c git_sha="$(git rev-parse HEAD)"
-
-rm -rf cdk.out
-cdk deploy "BookloudFrontend-prod" \
-  --exclusively --require-approval never \
-  -c environment=prod -c git_sha="$(git rev-parse HEAD)"
 ```
 
-Then run the smoke test against it by hand to confirm:
+Then run the smoke test against it by hand to confirm (API/chat URLs are
+stable across updates to the same stack, so pull them from the last
+successful `deploy-prod.yml` run's `deploy` job logs, or
+`aws cloudformation describe-stacks --stack-name BookloudApi-prod --query
+'Stacks[0].Outputs' --output table`):
 
 ```bash
 python3 local/smoke_test.py \
-  --api-url <api-url> --chat-url <chat-url> --frontend-url <frontend-url> \
+  --api-url <api-url> --chat-url <chat-url> \
   --expect-commit "$(git rev-parse HEAD)" --expect-environment prod
 ```
 
@@ -151,11 +141,10 @@ aws cloudformation continue-update-rollback --stack-name BookloudApi-prod
 ```
 
 Do not `cdk destroy` a `-prod` stack to "reset" it. `Storage`/`Auth` are
-`RETAIN`, so the data would survive, but `Api`/`Pipeline`/`Frontend` hold
-live traffic and re-creating them from scratch means new API Gateway/
-CloudFront endpoints — a much bigger outage than the rollback you were
-trying to do. The revert-and-redeploy path in §2 always updates the
-existing stacks in place.
+`RETAIN`, so the data would survive, but `Api`/`Pipeline` hold live traffic
+and re-creating them from scratch means a new API Gateway endpoint — a much
+bigger outage than the rollback you were trying to do. The revert-and-
+redeploy path in §2 always updates the existing stacks in place.
 
 ## 5. A migration (not just code) is the bad deploy
 

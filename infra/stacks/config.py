@@ -93,13 +93,7 @@ class Config:
     # §6.1).
     SOURCE_PDF_PREFIX = "books/"
 
-    # --- env var name read by frontend/lib/api.ts ---
-    ENV_API_BASE_URL = "NEXT_PUBLIC_API_BASE_URL"
-    ENV_CHAT_BASE_URL = "NEXT_PUBLIC_CHAT_BASE_URL"
-
-    # --- env vars set on the SSR Lambda, read by frontend/lib/cognito.ts ---
-    # Deliberately NOT NEXT_PUBLIC_* -- server-only, read at runtime by the
-    # Next.js BFF route handlers, never baked into the client bundle.
+    # --- Cognito env vars, read by backend/src/config.py (the chat Lambda) ---
     ENV_COGNITO_CLIENT_ID = "COGNITO_CLIENT_ID"
     ENV_COGNITO_USER_POOL_ID = "COGNITO_USER_POOL_ID"
     ENV_COGNITO_REGION = "COGNITO_REGION"
