@@ -1,5 +1,7 @@
 import { Pressable, Text, View } from "react-native";
+import { Pause, Play, RotateCcw, RotateCw } from "lucide-react-native";
 import { PLAYBACK_RATES } from "@/hooks/usePlayback";
+import { useTheme } from "@/lib/theme";
 
 function formatTime(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -32,6 +34,7 @@ export function MiniPlayer({
   onSeekMs,
   onSetRate,
 }: Props) {
+  const theme = useTheme();
   const percent = durationMs > 0 ? Math.min(100, (positionMs / durationMs) * 100) : 0;
 
   function cycleRate() {
@@ -64,31 +67,45 @@ export function MiniPlayer({
         <View className="h-full bg-accent dark:bg-daccent" style={{ width: `${percent}%` }} />
       </View>
 
-      <View className="flex-row items-center justify-center gap-6">
+      <View className="flex-row items-center justify-center gap-8">
         <Pressable
           onPress={() => onSeekMs(positionMs - 15_000)}
           disabled={disabled}
           hitSlop={10}
+          className="items-center"
         >
-          <Text className="text-ink-muted dark:text-dink-muted" style={{ fontFamily: "IBMPlexMono_500Medium" }}>
-            ⏮ 15
+          <RotateCcw size={22} color={theme.textMuted} strokeWidth={2} />
+          <Text
+            className="text-ink-muted dark:text-dink-muted text-[9px] mt-0.5"
+            style={{ fontFamily: "IBMPlexMono_500Medium" }}
+          >
+            15
           </Text>
         </Pressable>
         <Pressable
           onPress={onToggle}
           disabled={disabled}
-          className="w-[46px] h-[46px] rounded-full bg-accent dark:bg-daccent items-center justify-center"
+          className="w-14 h-14 rounded-full bg-accent dark:bg-daccent items-center justify-center"
           style={{ opacity: disabled ? 0.5 : 1 }}
         >
-          <Text className="text-accent-ink dark:text-daccent-ink text-base">{playing ? "❚❚" : "▶"}</Text>
+          {playing ? (
+            <Pause size={24} color={theme.accentInk} fill={theme.accentInk} strokeWidth={0} />
+          ) : (
+            <Play size={24} color={theme.accentInk} fill={theme.accentInk} strokeWidth={0} />
+          )}
         </Pressable>
         <Pressable
           onPress={() => onSeekMs(positionMs + 15_000)}
           disabled={disabled}
           hitSlop={10}
+          className="items-center"
         >
-          <Text className="text-ink-muted dark:text-dink-muted" style={{ fontFamily: "IBMPlexMono_500Medium" }}>
-            15 ⏭
+          <RotateCw size={22} color={theme.textMuted} strokeWidth={2} />
+          <Text
+            className="text-ink-muted dark:text-dink-muted text-[9px] mt-0.5"
+            style={{ fontFamily: "IBMPlexMono_500Medium" }}
+          >
+            15
           </Text>
         </Pressable>
       </View>

@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useRouter } from "expo-router";
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { completeNewPassword, login } from "@/lib/auth";
 import { Field } from "@/components/Field";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -48,8 +49,9 @@ export default function SignIn() {
   }
 
   return (
+    <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg">
     <KeyboardAvoidingView
-      className="flex-1 bg-bg dark:bg-dbg"
+      className="flex-1"
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView contentContainerClassName="flex-grow justify-center px-6 py-10" keyboardShouldPersistTaps="handled">
@@ -128,5 +130,6 @@ export default function SignIn() {
         )}
       </ScrollView>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }

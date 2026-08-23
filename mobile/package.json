@@ -4,10 +4,10 @@
   "main": "expo-router/entry",
   "private": true,
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
+    "start": "expo start --port 18541",
+    "android": "expo start --android --port 18541",
+    "ios": "expo start --ios --port 18541",
+    "web": "expo start --web --port 18541",
     "test": "jest",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
@@ -30,6 +30,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "lucide-react-native": "^1.33.0",
     "nativewind": "^4.2.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -59,7 +60,9 @@
   },
   "jest": {
     "preset": "jest-expo",
-    "testPathIgnorePatterns": ["<rootDir>/node_modules/"],
+    "testPathIgnorePatterns": [
+      "<rootDir>/node_modules/"
+    ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1"
     },

@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import BottomSheet from "@gorhom/bottom-sheet";
+import { ChevronLeft, MessageCircle } from "lucide-react-native";
 import { getBookChunks, getManifest, type Chunk } from "@/lib/books";
 import type { BookManifest } from "@/lib/manifest";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useReadingAnchor } from "@/hooks/useReadingAnchor";
 import { MiniPlayer } from "@/components/MiniPlayer";
 import { ChatSheet } from "@/components/ChatSheet";
+import { useTheme } from "@/lib/theme";
 
 /** Splits one chunk's text into (before, active word, after) using the
  *  chunk-relative character offsets `usePlayback` already computes. A
@@ -24,6 +27,7 @@ function splitAtWord(text: string, start: number, end: number) {
 export default function Reader() {
   const { bookId } = useLocalSearchParams<{ bookId: string }>();
   const router = useRouter();
+  const theme = useTheme();
   const sheetRef = useRef<BottomSheet>(null);
 
   const [manifest, setManifest] = useState<BookManifest | null>(null);
@@ -75,12 +79,12 @@ export default function Reader() {
 
   if (loadError) {
     return (
-      <View className="flex-1 bg-bg dark:bg-dbg items-center justify-center px-8">
+      <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg items-center justify-center px-8">
         <Text className="text-brick dark:text-dbrick text-center mb-4">{loadError}</Text>
         <Pressable onPress={() => router.back()}>
           <Text className="text-accent dark:text-daccent underline">Back</Text>
         </Pressable>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -89,17 +93,18 @@ export default function Reader() {
     : { before: "", word: "", after: "" };
 
   return (
-    <View className="flex-1 bg-bg dark:bg-dbg px-6 pt-4 pb-3">
+    <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg px-6 pt-4 pb-3">
       <View className="flex-row items-center justify-between mb-2">
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Text className="text-ink-muted dark:text-dink-muted">← Library</Text>
+        <Pressable onPress={() => router.back()} hitSlop={8} className="flex-row items-center gap-0.5">
+          <ChevronLeft size={18} color={theme.textMuted} strokeWidth={2} />
+          <Text className="text-ink-muted dark:text-dink-muted">Library</Text>
         </Pressable>
         <Pressable
           onPress={() => sheetRef.current?.expand()}
-          className="flex-row items-center gap-1.5 bg-teal-wash dark:bg-dteal-wash rounded-full pl-2.5 pr-3.5 py-1.5"
+          className="flex-row items-center gap-1.5 bg-accent-wash dark:bg-daccent-wash rounded-full pl-2.5 pr-3.5 py-1.5"
         >
-          <View className="w-1.5 h-1.5 rounded-full bg-teal dark:bg-dteal" />
-          <Text className="text-[11.5px] text-teal dark:text-dteal" style={{ fontFamily: "Karla_700Bold" }}>
+          <MessageCircle size={13} color={theme.accent} strokeWidth={2.5} />
+          <Text className="text-[11.5px] text-accent dark:text-daccent" style={{ fontFamily: "Karla_700Bold" }}>
             Ask
           </Text>
         </Pressable>
@@ -175,6 +180,6 @@ export default function Reader() {
           onClose={() => sheetRef.current?.close()}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }

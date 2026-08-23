@@ -1,5 +1,5 @@
 import "@/global.css";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Redirect, Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
@@ -76,7 +76,7 @@ function AuthGate() {
 
 export default function RootLayout() {
   const scheme = useColorScheme();
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Fraunces_500Medium,
     Fraunces_600SemiBold,
     Fraunces_700Bold,
@@ -89,14 +89,23 @@ export default function RootLayout() {
     IBMPlexMono_600SemiBold,
   });
 
-  const onLayout = useCallback(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
-
-  if (!fontsLoaded) return null;
+  // Splash hides unconditionally, decoupled from font loading -- gating the
+  // ENTIRE app render on `fontsLoaded` (as this used to) meant any stall in
+  // fetching the font assets (e.g. from Expo Go's dev-server round trip, not
+  // just a genuine bundled-asset failure) left the user stuck on the native
+  // splash screen forever, with no visibility into what was wrong and no way
+  // forward short of force-quitting. Text elsewhere in the app sets
+  // fontFamily directly via inline `style`, so it silently falls back to the
+  // system font until `fontsLoaded` flips true and RN re-renders with the
+  // real glyphs -- a brief unstyled flash is a strictly better failure mode
+  // than an indefinitely stuck splash.
+  useEffect(() => {
+    if (fontError) console.error("Font loading failed:", fontError);
+    SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded, fontError]);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayout}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <BottomSheetModalProvider>
         <SafeAreaProvider>
           <View className="flex-1 bg-bg dark:bg-dbg">

@@ -87,7 +87,17 @@ export async function streamChat(
 
     let receivedDone = false;
     let settled = false;
-    const cleanup = () => es.close();
+    const cleanup = () => {
+      es.close();
+      // react-native-sse's own onreadystatechange handler calls
+      // `_pollAgain()` (arming a new reconnect timer) UNCONDITIONALLY right
+      // after dispatching our "done" event -- with no check of whether we
+      // just closed it. That new timer is armed *after* the `es.close()`
+      // above already ran, so it survives that first close() call. A
+      // deferred second close() one tick later reliably clears it (its
+      // library-default interval is 5000ms, i.e. many ticks away).
+      setTimeout(() => es.close(), 0);
+    };
     const settle = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -112,6 +122,14 @@ export async function streamChat(
         else if (name === "done") {
           receivedDone = true;
           handlers.onDone(data.finishReason, data.usage);
+          // Close immediately on our OWN protocol's "done" frame -- do not
+          // wait for react-native-sse's transport-level "close"/"error"
+          // events. On a clean HTTP completion (200, readyState DONE) the
+          // library's onreadystatechange calls `_pollAgain(...)` and
+          // RE-ISSUES THE SAME POST with the same body, rather than
+          // dispatching a "close" event -- left uncaught, this silently
+          // resends the identical question over and over on an interval.
+          settle(resolve);
         }
       });
     }

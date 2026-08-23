@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useRouter } from "expo-router";
 import { FlatList, Pressable, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
+import { Plus } from "lucide-react-native";
 import { useBookList } from "@/hooks/useBookList";
 import { BookCard } from "@/components/BookCard";
 import {
@@ -13,6 +15,7 @@ import {
 } from "@/lib/books";
 import { buildUploadForm, titleFromFilename, type PickedFile } from "@/lib/upload";
 import { logout } from "@/lib/auth";
+import { useTheme } from "@/lib/theme";
 
 async function pickPdf(): Promise<PickedFile | null> {
   const result = await DocumentPicker.getDocumentAsync({
@@ -26,6 +29,7 @@ async function pickPdf(): Promise<PickedFile | null> {
 
 export default function Library() {
   const router = useRouter();
+  const theme = useTheme();
   const { books, loading, error, refresh, insert } = useBookList();
   const [uploading, setUploading] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -92,7 +96,7 @@ export default function Library() {
   const needsAttention = books.filter((b) => b.status === "PARTIAL" || b.status === "FAILED").length;
 
   return (
-    <View className="flex-1 bg-bg dark:bg-dbg px-5 pt-4">
+    <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg px-5 pt-4">
       <View className="flex-row items-baseline justify-between mb-1">
         <View>
           <Text className="text-[27px] text-ink dark:text-dink" style={{ fontFamily: "Fraunces_600SemiBold" }}>
@@ -153,8 +157,8 @@ export default function Library() {
         className="absolute right-5 bottom-7 w-14 h-14 rounded-full bg-accent dark:bg-daccent items-center justify-center"
         style={{ opacity: uploading ? 0.6 : 1, elevation: 4 }}
       >
-        <Text className="text-2xl text-accent-ink dark:text-daccent-ink">+</Text>
+        <Plus size={26} color={theme.accentInk} strokeWidth={2.5} />
       </Pressable>
-    </View>
+    </SafeAreaView>
   );
 }

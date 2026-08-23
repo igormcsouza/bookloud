@@ -1,6 +1,8 @@
 import { Pressable, Text, View } from "react-native";
+import { ArrowRight } from "lucide-react-native";
 import type { Book } from "@/lib/books";
 import { StatusChip } from "@/components/StatusChip";
+import { useTheme } from "@/lib/theme";
 
 const COVER_PALETTE = [
   { bg: "bg-teal-wash dark:bg-dteal-wash", text: "text-teal dark:text-dteal" },
@@ -33,6 +35,7 @@ type Props = {
 };
 
 export function BookCard({ book, onPress, onRetry, onReupload, retrying, reuploading }: Props) {
+  const theme = useTheme();
   const palette = paletteFor(book.title);
   const initial = book.title.charAt(0).toUpperCase();
   const percent =
@@ -88,19 +91,21 @@ export function BookCard({ book, onPress, onRetry, onReupload, retrying, reuploa
               {book.chunksFailed} section{book.chunksFailed === 1 ? "" : "s"} couldn&apos;t be read aloud
               — playback still works, just skips them.
             </Text>
-            <Pressable onPress={onRetry} disabled={retrying} hitSlop={8}>
-              <Text className="text-[12px] text-brick dark:text-dbrick underline mt-1.5" style={{ fontFamily: "Karla_700Bold" }}>
-                {retrying ? "Queued — check back shortly" : "Retry those sections →"}
+            <Pressable onPress={onRetry} disabled={retrying} hitSlop={8} className="flex-row items-center gap-1 mt-1.5">
+              <Text className="text-[12px] text-brick dark:text-dbrick underline" style={{ fontFamily: "Karla_700Bold" }}>
+                {retrying ? "Queued — check back shortly" : "Retry those sections"}
               </Text>
+              {!retrying && <ArrowRight size={12} color={theme.brick} strokeWidth={2.5} />}
             </Pressable>
           </>
         )}
 
         {book.status === "FAILED" && (
-          <Pressable onPress={onReupload} disabled={reuploading} hitSlop={8}>
-            <Text className="text-[12px] text-brick dark:text-dbrick underline mt-1.5" style={{ fontFamily: "Karla_700Bold" }}>
-              {reuploading ? "Uploading…" : "Re-upload →"}
+          <Pressable onPress={onReupload} disabled={reuploading} hitSlop={8} className="flex-row items-center gap-1 mt-1.5">
+            <Text className="text-[12px] text-brick dark:text-dbrick underline" style={{ fontFamily: "Karla_700Bold" }}>
+              {reuploading ? "Uploading…" : "Re-upload"}
             </Text>
+            {!reuploading && <ArrowRight size={12} color={theme.brick} strokeWidth={2.5} />}
           </Pressable>
         )}
       </View>

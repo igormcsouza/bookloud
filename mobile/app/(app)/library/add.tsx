@@ -1,8 +1,11 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { ArrowRight, Check } from "lucide-react-native";
 import { useBookStatus } from "@/hooks/useBookStatus";
 import type { BookStatus } from "@/lib/books";
 import { PrimaryButton } from "@/components/PrimaryButton";
+import { useTheme, type Theme } from "@/lib/theme";
 
 type StepState = "done" | "active" | "pending";
 
@@ -33,18 +36,18 @@ function stepStates(status: BookStatus | undefined, terminal: boolean): StepStat
   ];
 }
 
-function Dot({ state, index }: { state: StepState; index: number }) {
+function Dot({ state, theme }: { state: StepState; theme: Theme }) {
   if (state === "done") {
     return (
       <View className="w-[26px] h-[26px] rounded-full bg-teal dark:bg-dteal items-center justify-center">
-        <Text className="text-surface dark:text-dsurface text-xs">✓</Text>
+        <Check size={14} color={theme.surface} strokeWidth={3} />
       </View>
     );
   }
   if (state === "active") {
     return (
       <View className="w-[26px] h-[26px] rounded-full border-2 border-accent dark:border-daccent bg-accent-wash dark:bg-daccent-wash items-center justify-center">
-        <Text className="text-accent dark:text-daccent text-xs">●</Text>
+        <View className="w-2 h-2 rounded-full bg-accent dark:bg-daccent" />
       </View>
     );
   }
@@ -54,14 +57,15 @@ function Dot({ state, index }: { state: StepState; index: number }) {
 export default function AddBook() {
   const { bookId } = useLocalSearchParams<{ bookId: string }>();
   const router = useRouter();
+  const theme = useTheme();
   const { status, notFound } = useBookStatus(bookId ?? null);
 
   if (notFound) {
     return (
-      <View className="flex-1 bg-bg dark:bg-dbg items-center justify-center px-8">
+      <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg items-center justify-center px-8">
         <Text className="text-ink dark:text-dink text-center mb-4">This book no longer exists.</Text>
         <PrimaryButton label="Back to library" onPress={() => router.replace("/library")} />
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -70,7 +74,7 @@ export default function AddBook() {
   const ready = status?.terminal && !failed;
 
   return (
-    <View className="flex-1 bg-bg dark:bg-dbg px-6 pt-6">
+    <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg px-6 pt-6">
       <Text className="text-[23px] text-ink dark:text-dink mb-1" style={{ fontFamily: "Fraunces_600SemiBold" }}>
         Adding your book
       </Text>
@@ -85,7 +89,7 @@ export default function AddBook() {
       <View className="gap-4">
         {STEPS.map((step, i) => (
           <View key={step.key} className="flex-row gap-3 items-start">
-            <Dot state={states[i]} index={i} />
+            <Dot state={states[i]} theme={theme} />
             <View className="flex-1">
               <Text
                 className={`text-[14.5px] ${states[i] === "pending" ? "text-ink-faint dark:text-dink-faint" : "text-ink dark:text-dink"}`}
@@ -116,10 +120,11 @@ export default function AddBook() {
           <Text className="text-brick dark:text-dbrick text-[13px] mb-3">
             {status?.failureReason || "This PDF couldn't be read."}
           </Text>
-          <Pressable onPress={() => router.replace("/library")}>
+          <Pressable onPress={() => router.replace("/library")} className="flex-row items-center gap-1">
             <Text className="text-brick dark:text-dbrick underline" style={{ fontFamily: "Karla_700Bold" }}>
-              Back to library to re-upload →
+              Back to library to re-upload
             </Text>
+            <ArrowRight size={14} color={theme.brick} strokeWidth={2.5} />
           </Pressable>
         </View>
       )}
@@ -129,6 +134,6 @@ export default function AddBook() {
           <PrimaryButton label="Open book" onPress={() => router.replace(`/reader/${bookId}`)} />
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
