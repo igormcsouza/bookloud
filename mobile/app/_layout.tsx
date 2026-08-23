@@ -93,7 +93,7 @@ function AuthGate() {
 
 export default function RootLayout() {
   const scheme = useColorScheme();
-  const [fontsLoaded, fontError] = useFonts({
+  const [, fontError] = useFonts({
     Fraunces_500Medium,
     Fraunces_600SemiBold,
     Fraunces_700Bold,
@@ -118,8 +118,21 @@ export default function RootLayout() {
   // than an indefinitely stuck splash.
   useEffect(() => {
     if (fontError) console.error("Font loading failed:", fontError);
+
+    // Retried, not called once: in a standalone release build (unlike Expo
+    // Go, which warms up its own bridge first) this first call can race the
+    // native Activity still attaching the SplashScreenModule listener --
+    // when that happens the call is silently swallowed by `.catch(() => {})`
+    // and the splash is stuck forever with no error anywhere. hideAsync() is
+    // a no-op once already hidden, so retrying a couple of times on a short
+    // delay is a safe, cheap way to survive that race without needing to
+    // detect it.
     SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded, fontError]);
+    const retries = [100, 500, 1500].map((delay) =>
+      setTimeout(() => SplashScreen.hideAsync().catch(() => {}), delay),
+    );
+    return () => retries.forEach(clearTimeout);
+  }, [fontError]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
