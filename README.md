@@ -563,10 +563,19 @@ them to choose their own password before they can use it.
 
 Requires Docker, Python 3.12+, Node 24, and [uv](https://docs.astral.sh/uv/).
 
+Ports follow a fixed `1854X` scheme: `18540` backend, `18541` the Expo dev
+server (started separately, below), `18542` chat, `18543` cognito-local.
+LocalStack keeps its default `4566` (see `docker-compose.yml`'s header
+comment).
+
 ```bash
-make up      # LocalStack + cognito-local + backend (uvicorn, hot reload) +
+# S3_PUBLIC_HOST=<your-LAN-IP> makes presigned S3 URLs (upload/download)
+# reachable from a phone -- omit it and they default to localhost, which
+# only works for a browser/emulator on this same machine.
+S3_PUBLIC_HOST=<your-LAN-IP> make up
+             # LocalStack + cognito-local + backend (uvicorn, hot reload) +
              # extract-worker, synthesize-worker and stitch-worker (poll
-             # loops over their respective queues) on :8000
+             # loops over their respective queues) on :18540
 make smoke   # smoke test against the running stack: upload -> extraction ->
              # synthesis fan-out/fan-in -> stitch -> poll
              # GET /books/{id}/status to READY. Real TTS is never called;
@@ -575,17 +584,27 @@ make smoke   # smoke test against the running stack: upload -> extraction ->
 make down    # tear everything down
 ```
 
+Real TTS is never called locally by default -- `synthesize-worker`'s stitched `book.mp3` is genuine MPEG frames, genuinely silent. To actually hear narration before deploying, opt into the one deliberate exception:
+
+```bash
+SYNTHESIS_STUB_MODE=edge_tts S3_PUBLIC_HOST=<your-LAN-IP> make up
+```
+
+Gated on `ENVIRONMENT=local` exactly (`get_speech_synthesizer()`'s docstring) -- a `pr-N`/CI stack can never reach it even by accident, so the "no automated environment calls a live endpoint" guarantee (`PLANS/phase-4.md` Q21) is untouched. `edge-tts` needs no API key, so this is a manual opt-in with no quota/cost risk, just the usual flakiness of an unofficial endpoint. Don't run `make smoke` in this mode -- it asserts the deterministic `--expect-synthesis silent` outcome and will correctly complain about the mismatch.
+```
+
 Run the Expo app against that backend separately -- `cd mobile && npx expo
-start`, with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` in
-`mobile/.env` pointed at the LAN IP of the machine running `make up` (a
-phone/emulator can't reach `localhost` on the host). See "Mobile app" above.
+start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/
+`EXPO_PUBLIC_CHAT_BASE_URL`/`EXPO_PUBLIC_COGNITO_ENDPOINT` in `mobile/.env`
+pointed at `http://<your-LAN-IP>:1854{0,2,3}` (a phone/emulator can't reach
+`localhost` on the host). See "Mobile app" above.
 
 `make up` seeds a local Cognito pool (via `jagregory/cognito-local`) with two
 users:
 - **`dev` / `devpassword`** -- permanent password, no forced change, for
   routine local dev / `make smoke` convenience. Sign in with it in the Expo
   app, or run `curl -H "Authorization: Bearer $(make -s token)"
-  localhost:8000/me` to hit the backend directly.
+  localhost:18540/me` to hit the backend directly.
 - **`newuser` / `TempPass123!`** -- a *temporary* password, to exercise the
   admin-provisioned forced-first-login flow locally: signing in with it
   triggers the "choose a new password" step instead of a normal login.

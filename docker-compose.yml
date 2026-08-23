@@ -4,6 +4,14 @@
 # Expo app in `mobile/`, run separately via `cd mobile && npx expo start` --
 # not part of this compose stack (issue #10 dropped the Next.js `frontend`
 # service this file used to run under a `ui` profile).
+#
+# Host ports follow this repo's `1854X` convention (X = service), matching
+# the scheme already used in this user's other local-first repos:
+#   18540 backend   18541 mobile (Expo dev server, run separately)
+#   18542 chat      18543 cognito-local
+# LocalStack keeps its default 4566 -- nothing outside the docker network
+# needs a friendly port for it, only S3's presigned-URL host needs to be
+# reachable (S3_PUBLIC_HOST, set to the host's LAN IP for phone testing).
 services:
   localstack:
     # Pinned: newer LocalStack tags gate startup behind a Pro auth token even
@@ -24,7 +32,7 @@ services:
   cognito-local:
     image: jagregory/cognito-local:latest
     ports:
-      - "9229:9229"
+      - "18543:9229"
     volumes:
       # cognito-local's own default (UsernameAttributes: ["email"]) would
       # make every AdminCreateUser/SignUp reject a plain username -- this
@@ -39,7 +47,7 @@ services:
       target: dev
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "18540:8000"
     environment:
       - ENVIRONMENT=local
       - GIT_SHA=local
@@ -68,7 +76,7 @@ services:
       # signs with the same client, and the failure mode is silent (the URL is
       # well-formed and correctly signed, the browser just cannot connect).
       # See PLANS/phase-6.md §4.2.
-      - S3_PUBLIC_ENDPOINT_URL=http://localhost:4566
+      - S3_PUBLIC_ENDPOINT_URL=http://${S3_PUBLIC_HOST:-localhost}:4566
       # Used only by local/cognito_bootstrap.py (run inside this container --
       # it already has boto3), not by the app itself: the backend never
       # talks to Cognito directly (see PLANS/phase-1.md §1).
@@ -89,7 +97,7 @@ services:
     restart: unless-stopped
     command: ["uv", "run", "uvicorn", "src.chat_app:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
     ports:
-      - "8001:8001"
+      - "18542:8001"
     environment:
       - ENVIRONMENT=local
       - GIT_SHA=local
@@ -107,7 +115,7 @@ services:
       # cognito_local uses endpoint URL directly
       - COGNITO_ENDPOINT_URL=http://cognito-local:9229
       # S3_PUBLIC_ENDPOINT_URL might not be strictly needed for chat but good to have
-      - S3_PUBLIC_ENDPOINT_URL=http://localhost:4566
+      - S3_PUBLIC_ENDPOINT_URL=http://${S3_PUBLIC_HOST:-localhost}:4566
     volumes:
       - ./backend:/app
       - ./local:/local-shared
@@ -160,6 +168,14 @@ services:
   # multipart upload against LocalStack's S3. This is the ONLY place this
   # variable is set -- never on a PR stack, and it is ignored in prod because
   # the environment gate is checked first regardless.
+  #
+  # Override to `edge_tts` (`SYNTHESIS_STUB_MODE=edge_tts make up`) to hear
+  # real narration locally before deploying -- the ONE deliberate exception
+  # to "no non-prod environment calls a live endpoint" (get_speech_
+  # synthesizer()'s docstring), gated on ENVIRONMENT=local exactly so a PR/CI
+  # stack can never reach it. No API key needed (edge-tts is free), so this
+  # is a manual opt-in with no quota/cost risk, just the usual flakiness of
+  # an unofficial, unsupported endpoint.
   synthesize-worker:
     build:
       context: ./backend
@@ -181,7 +197,7 @@ services:
       # This worker is now also a StitchQueue producer: it publishes the
       # fan-in message when its increment is the one that completes the book.
       - STITCH_QUEUE_URL=http://localstack:4566/000000000000/bookloud-local-stitch
-      - SYNTHESIS_STUB_MODE=silent
+      - SYNTHESIS_STUB_MODE=${SYNTHESIS_STUB_MODE:-silent}
     volumes:
       - ./backend:/app
     command: ["uv", "run", "python", "-m", "src.contexts.library.interface.local_synthesize_worker"]

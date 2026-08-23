@@ -17,7 +17,7 @@ no admin-created users).
    ExplicitAuthFlows=["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
    no secret.
 3. get-or-create user "dev" via admin_create_user(MessageAction="SUPPRESS")
-   + admin_set_user_password(Password="devpassword", Permanent=True) -- a
+   + admin_set_user_password(Password="password", Permanent=True) -- a
    confirmed, known-good login for `make smoke` and manual dev.
 4. get-or-create user "newuser" via admin_create_user(MessageAction="SUPPRESS")
    + admin_set_user_password(Password="TempPass123!", Permanent=False) --
@@ -36,7 +36,7 @@ import boto3
 POOL_NAME = "bookloud-local"
 CLIENT_NAME = "WebClient"
 DEV_USERNAME = "dev"
-DEV_PASSWORD = "devpassword"
+DEV_PASSWORD = "password"
 # Admin-provisioned user with a temporary (non-permanent) password, so the
 # NEW_PASSWORD_REQUIRED challenge has something to exercise locally.
 NEWUSER_USERNAME = "newuser"
