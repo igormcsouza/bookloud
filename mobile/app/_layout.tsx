@@ -53,7 +53,7 @@ function AuthGate() {
     let cancelled = false;
     const timeout = setTimeout(() => {
       if (cancelled) return;
-      console.warn("Auth check timed out; falling back to sign-in.");
+      console.warn("[auth] check timed out; falling back to sign-in.");
       setAuthed(false);
       setChecking(false);
     }, AUTH_CHECK_TIMEOUT_MS);
@@ -61,9 +61,10 @@ function AuthGate() {
     (async () => {
       try {
         const token = await getIdToken();
+        console.log(`[auth] check resolved: ${token !== null ? "authed" : "no session"}`);
         if (!cancelled) setAuthed(token !== null);
       } catch (err) {
-        console.error("Auth check failed:", err);
+        console.error("[auth] check failed:", err);
         if (!cancelled) setAuthed(false);
       } finally {
         if (!cancelled) setChecking(false);
@@ -126,10 +127,17 @@ export default function RootLayout() {
     // and the splash is stuck forever with no error anywhere. hideAsync() is
     // a no-op once already hidden, so retrying a couple of times on a short
     // delay is a safe, cheap way to survive that race without needing to
-    // detect it.
-    SplashScreen.hideAsync().catch(() => {});
+    // detect it. Every attempt is logged (harmless -- no PII, just timing)
+    // so a future hang shows up in adb logcat as "[splash]" lines instead
+    // of the silent freeze this hotfix was written to diagnose.
+    const hide = (attempt: string) =>
+      SplashScreen.hideAsync()
+        .then(() => console.log(`[splash] hideAsync ok (${attempt})`))
+        .catch((err) => console.warn(`[splash] hideAsync failed (${attempt})`, err));
+
+    hide("mount");
     const retries = [100, 500, 1500].map((delay) =>
-      setTimeout(() => SplashScreen.hideAsync().catch(() => {}), delay),
+      setTimeout(() => hide(`${delay}ms`), delay),
     );
     return () => retries.forEach(clearTimeout);
   }, [fontError]);
