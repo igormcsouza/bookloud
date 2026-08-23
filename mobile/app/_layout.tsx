@@ -2,7 +2,6 @@ import "@/global.css";
 import { useEffect, useState } from "react";
 import { Redirect, Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import * as SplashScreen from "expo-splash-screen";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -13,7 +12,6 @@ import { IBMPlexMono_400Regular, IBMPlexMono_500Medium, IBMPlexMono_600SemiBold 
 import { getIdToken } from "@/lib/auth";
 import { onSessionExpired } from "@/lib/authEvents";
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
 const AUTH_CHECK_TIMEOUT_MS = 4000;
 
 function AppStack() {
@@ -107,39 +105,21 @@ export default function RootLayout() {
     IBMPlexMono_600SemiBold,
   });
 
-  // Splash hides unconditionally, decoupled from font loading -- gating the
-  // ENTIRE app render on `fontsLoaded` (as this used to) meant any stall in
-  // fetching the font assets (e.g. from Expo Go's dev-server round trip, not
-  // just a genuine bundled-asset failure) left the user stuck on the native
-  // splash screen forever, with no visibility into what was wrong and no way
-  // forward short of force-quitting. Text elsewhere in the app sets
-  // fontFamily directly via inline `style`, so it silently falls back to the
-  // system font until `fontsLoaded` flips true and RN re-renders with the
-  // real glyphs -- a brief unstyled flash is a strictly better failure mode
-  // than an indefinitely stuck splash.
+  // No manual preventAutoHideAsync()/hideAsync() dance: that relied on a
+  // promise from expo-splash-screen's native module resolving, and on this
+  // build/device combination it simply never does -- not a one-time startup
+  // race (retrying it on a delay, tried in v0.1.2, made no difference: every
+  // retry hung the same way, proving it wasn't a timing race but a call that
+  // never returns at all). Without preventAutoHideAsync(), Android's own
+  // splash-screen API (12+) auto-dismisses the native splash as soon as the
+  // Activity draws its first frame, with no JS<->native round trip involved
+  // that can hang. The tradeoff is a possible brief flash of unstyled text
+  // if fonts are still loading when that first frame draws -- Text elsewhere
+  // in the app sets fontFamily directly via inline `style`, so it falls back
+  // to the system font until `fontError` is checked below, and AuthGate's
+  // own "Loading Bookloud…" screen covers the rest of the startup work.
   useEffect(() => {
     if (fontError) console.error("Font loading failed:", fontError);
-
-    // Retried, not called once: in a standalone release build (unlike Expo
-    // Go, which warms up its own bridge first) this first call can race the
-    // native Activity still attaching the SplashScreenModule listener --
-    // when that happens the call is silently swallowed by `.catch(() => {})`
-    // and the splash is stuck forever with no error anywhere. hideAsync() is
-    // a no-op once already hidden, so retrying a couple of times on a short
-    // delay is a safe, cheap way to survive that race without needing to
-    // detect it. Every attempt is logged (harmless -- no PII, just timing)
-    // so a future hang shows up in adb logcat as "[splash]" lines instead
-    // of the silent freeze this hotfix was written to diagnose.
-    const hide = (attempt: string) =>
-      SplashScreen.hideAsync()
-        .then(() => console.log(`[splash] hideAsync ok (${attempt})`))
-        .catch((err) => console.warn(`[splash] hideAsync failed (${attempt})`, err));
-
-    hide("mount");
-    const retries = [100, 500, 1500].map((delay) =>
-      setTimeout(() => hide(`${delay}ms`), delay),
-    );
-    return () => retries.forEach(clearTimeout);
   }, [fontError]);
 
   return (
