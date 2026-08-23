@@ -18,14 +18,8 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
-    with:
-      # The full docker-compose e2e suite (with the playback project) is
-      # main-only -- expensive to run on every commit, and this PR's `deploy`
-      # job below already runs its own Playwright pass (chromium only)
-      # against the real ephemeral deploy.
-      run_e2e: false
 
-  # Phase 8 (IMPLEMENTATION_PLAN.md): the deploy-and-smoke-test-and-e2e
+  # Phase 8 (IMPLEMENTATION_PLAN.md): the deploy-and-smoke-test
   # sequence now lives in deploy-stack.yml so deploy-prod.yml's staging gate
   # can reuse it byte-for-byte instead of drifting from this one.
   deploy:
@@ -37,14 +31,19 @@ jobs:
       aws_region: "us-east-1"  # PR/staging: keep off prod's sa-east-1 quota, issue #8
       environment_name: development
       seed_users: true
-      run_e2e: true
     secrets: inherit
 
   comment:
     name: Comment on PR
     needs: deploy
     runs-on: ubuntu-latest
+    # Job-level `permissions:` REPLACES the workflow-level block entirely,
+    # not merges with it -- omitting `contents: read` here leaves the
+    # GITHUB_TOKEN with no repo-read scope at all, and actions/checkout
+    # fails with a misleading "repository not found" rather than a
+    # permissions error.
     permissions:
+      contents: read
       pull-requests: write
     steps:
       - name: Checkout
@@ -54,22 +53,22 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const apiUrl      = '${{ needs.deploy.outputs.api_url }}';
-            const frontendUrl = '${{ needs.deploy.outputs.frontend_url }}';
-            const envName     = 'pr-${{ github.event.pull_request.number }}';
-            const sha         = context.sha.slice(0, 7);
+            const apiUrl  = '${{ needs.deploy.outputs.api_url }}';
+            const chatUrl = '${{ needs.deploy.outputs.chat_url }}';
+            const envName = 'pr-${{ github.event.pull_request.number }}';
+            const sha     = context.sha.slice(0, 7);
 
             const marker = '<!-- bookloud-pr-env-comment -->';
             const body = [
               marker,
               '## Deploy: PR environment ready',
               '',
-              `Environment: \`${envName}\``,
+              `Environment: \`${envName}\` (backend only -- issue #10 dropped the web frontend; point a local \`expo start\` dev client at the API URL below)`,
               '',
               '| Service | URL |',
               '|---------|-----|',
-              `| Frontend | ${frontendUrl} |`,
               `| API | ${apiUrl} |`,
+              `| Chat | ${chatUrl} |`,
               '',
               'Login: `admin` / `password`',
               '',

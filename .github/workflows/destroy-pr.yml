@@ -31,8 +31,8 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       # Stack names are deterministic, so plain CloudFormation deletes are
-      # enough -- no checkout, CDK synth, or frontend build needed. Reverse
-      # dependency order: Frontend -> Api -> Pipeline -> Auth -> Storage.
+      # enough -- no checkout or CDK synth needed. Reverse dependency order:
+      # Api -> Pipeline -> Auth -> Storage.
       - name: Delete stacks (reverse dependency order)
         run: |
           set -euo pipefail
@@ -128,8 +128,7 @@ jobs:
             done
           }
 
-          for STACK in "BookloudFrontend-${ENV_NAME}" \
-                       "BookloudApi-${ENV_NAME}" \
+          for STACK in "BookloudApi-${ENV_NAME}" \
                        "BookloudPipeline-${ENV_NAME}" \
                        "BookloudAuth-${ENV_NAME}" \
                        "BookloudStorage-${ENV_NAME}"; do

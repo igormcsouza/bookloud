@@ -6,7 +6,6 @@ import aws_cdk as cdk
 from stacks.api_stack import ApiStack
 from stacks.auth_stack import AuthStack
 from stacks.config import Config, stack_name
-from stacks.frontend_stack import FrontendStack
 from stacks.pipeline_stack import PipelineStack
 from stacks.storage_stack import StorageStack
 
@@ -21,12 +20,11 @@ app = cdk.App()
 # (AWS_REGION_PROD vs AWS_REGION). Locally, CDK_DEFAULT_REGION comes from
 # whatever the developer's AWS CLI/profile defaults to.
 #
-# Every downstream stack that needs the deployed region at runtime (e.g.
-# FrontendStack's COGNITO_REGION env var, wired from auth.region in this
-# file) reads it off `cdk.Stack.of(self).region`, which CDK resolves from
-# this same `env` -- so nothing else needs to change when the region
-# changes per environment; see infra/tests/test_synth.py's
-# test_stack_region_follows_env for a synth-level check of this.
+# Every downstream stack that needs the deployed region at runtime reads it
+# off `cdk.Stack.of(self).region`, which CDK resolves from this same `env`
+# -- so nothing else needs to change when the region changes per
+# environment; see infra/tests/test_synth.py's test_stack_region_follows_env
+# for a synth-level check of this.
 env = cdk.Environment(
     account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
     region=os.environ.get("CDK_DEFAULT_REGION"),
@@ -92,22 +90,6 @@ api = ApiStack(
     environment=environment,
     git_sha=git_sha,
     openai_secret_name=app.node.try_get_context("openai_secret_name") or "",
-    env=env,
-)
-
-# Frontend imports Api + Auth (Cognito config for the SSR Lambda's BFF route
-# handlers). Dependency graph: Storage, Auth, Pipeline -> Api -> Frontend,
-# with Auth -> Frontend as well. Teardown order in destroy-pr.yml
-# (Frontend -> Api -> Pipeline -> Auth -> Storage) is already correct for
-# this and needs no change.
-FrontendStack(
-    app,
-    stack_name("Frontend", environment),
-    api_base_url=api.http_api.url or "",
-    chat_base_url=api.chat_url.url or "",
-    cognito_client_id=auth.user_pool_client.user_pool_client_id,
-    cognito_region=auth.region,
-    environment=environment,
     env=env,
 )
 

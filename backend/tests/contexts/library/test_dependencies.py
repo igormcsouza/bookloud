@@ -139,6 +139,38 @@ def test_get_speech_synthesizer_returns_silent_when_stub_mode_is_silent(
     assert isinstance(get_speech_synthesizer(), SilentSynthesizer)
 
 
+def test_get_speech_synthesizer_returns_bare_edge_tts_when_local_opts_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one deliberate exception to "no non-prod environment calls a live
+    endpoint" (issue raised while testing #10's mobile app against a
+    genuinely silent local stack): SYNTHESIS_STUB_MODE=edge_tts, gated on
+    environment == "local" exactly. No Google fallback wrapper here even if
+    a secret name is set -- this opt-in only ever constructs the free,
+    no-credential edge-tts engine."""
+    monkeypatch.setattr(config.settings, "environment", "local")
+    monkeypatch.setattr(config.settings, "synthesis_stub_mode", "edge_tts")
+    monkeypatch.setattr(config.settings, "google_tts_secret_name", "bookloud/google-tts-api-key")
+
+    synthesizer = get_speech_synthesizer()
+
+    assert isinstance(synthesizer, EdgeTtsSynthesizer)
+    assert not isinstance(synthesizer, FallbackSynthesizer)
+
+
+@pytest.mark.parametrize("environment", ["pr-1", "pr-42", "staging", "dev"])
+def test_edge_tts_stub_mode_never_reaches_a_real_engine_outside_local(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+) -> None:
+    """The exact match on environment == "local" (not != "prod") is
+    load-bearing: SYNTHESIS_STUB_MODE=edge_tts must never turn on a live
+    endpoint for an automated PR/CI/staging stack, even if set there by
+    accident."""
+    monkeypatch.setattr(config.settings, "environment", environment)
+    monkeypatch.setattr(config.settings, "synthesis_stub_mode", "edge_tts")
+    assert isinstance(get_speech_synthesizer(), StubSynthesizer)
+
+
 @pytest.mark.parametrize("mode", ["disabled", "", "SILENT", "anything-else"])
 def test_get_speech_synthesizer_returns_the_raise_only_stub_for_any_other_mode(
     monkeypatch: pytest.MonkeyPatch, mode: str

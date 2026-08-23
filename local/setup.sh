@@ -37,13 +37,13 @@ done
 # (PUT/POST/GET, any origin, any header) -- keep the two in lockstep, same
 # rule as SOURCE_PREFIX and the notification config below.
 #
-# Load-bearing, and it was missing until phase 6 went looking: the browser
-# uploads straight to S3 from http://localhost:3000, so the presigned POST is
-# a cross-origin request and Chrome preflights it. Without this rule the
-# upload fails as an opaque "Failed to fetch" with nothing in any server log.
-# local/smoke_test.py never caught it because urllib sends no preflight --
-# a real browser is the only thing that can, which is precisely why the
-# Playwright suite exists (PLANS/phase-6.md §13.4).
+# Load-bearing when phase 6's Next.js frontend existed: the browser uploaded
+# straight to S3 from http://localhost:3000, a cross-origin request Chrome
+# preflighted. Kept in lockstep with storage_stack.py's real CorsRule even
+# though issue #10's native mobile client isn't subject to browser CORS.
+# local/smoke_test.py never caught a missing rule because urllib sends no
+# preflight -- a real browser was the only thing that could (PLANS/
+# phase-6.md §13.4's now-removed Playwright suite).
 #
 # audio_bucket and marks_bucket deliberately get NO CORS rule, exactly as in
 # storage_stack.py: an <audio> element loading a cross-origin src without a
@@ -112,9 +112,9 @@ if [ "$cognito_ready" != "true" ]; then
   exit 1
 fi
 
-echo "Waiting for the backend on :8000 ..."
+echo "Waiting for the backend on :18540 ..."
 for _ in $(seq 1 60); do
-  if curl -sf http://localhost:8000/health >/dev/null 2>&1; then break; fi
+  if curl -sf http://localhost:18540/health >/dev/null 2>&1; then break; fi
   sleep 2
 done
 
