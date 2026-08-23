@@ -25,6 +25,12 @@ jobs:
   deploy:
     name: Deploy PR Environment
     needs: ci
+    # Mobile ships through its own release-triggered pipeline, entirely
+    # separate from the AWS stack -- a mobile-only PR has nothing for a CDK
+    # deploy to pick up, so skip standing up a PR environment for it.
+    # destroy-pr.yml already tolerates a stack that was never created (its
+    # "does not exist - skipping" branch), so no change needed there.
+    if: needs.ci.outputs.backend_or_infra_changed == 'true'
     uses: ./.github/workflows/deploy-stack.yml
     with:
       env_name: pr-${{ github.event.pull_request.number }}

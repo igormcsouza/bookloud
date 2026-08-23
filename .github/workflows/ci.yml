@@ -2,10 +2,55 @@ name: CI
 
 on:
   workflow_call:
+    outputs:
+      backend_or_infra_changed:
+        description: "true if this push/PR touches backend/, infra/, local/, docker-compose*.yml, Makefile, or a workflow file shared by both deploy pipelines"
+        value: ${{ jobs.changes.outputs.backend_or_infra }}
+      mobile_changed:
+        value: ${{ jobs.changes.outputs.mobile }}
 
 jobs:
+  # Mobile ships through its own release-triggered pipeline
+  # (mobile-release.yml), entirely separate from the AWS stack -- so a
+  # mobile-only change has no business running backend tests, infra synth,
+  # the local compose smoke test, or (per deploy-prod.yml/deploy-pr.yml) a
+  # full CDK deploy+teardown. Conversely a backend/infra-only change has no
+  # business running the mobile suite. Detected once here so every caller
+  # (this file's own jobs, plus deploy-prod.yml/deploy-pr.yml gating their
+  # deploy jobs) shares one answer instead of re-deriving it and risking
+  # drift.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      backend_or_infra: ${{ steps.filter.outputs.backend_or_infra }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend_or_infra:
+              - 'backend/**'
+              - 'infra/**'
+              - 'local/**'
+              - 'docker-compose*.yml'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/deploy-prod.yml'
+              - '.github/workflows/deploy-pr.yml'
+              - '.github/workflows/deploy-stack.yml'
+              - '.github/workflows/destroy-pr.yml'
+            mobile:
+              - 'mobile/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/mobile-release.yml'
+
   test-backend:
     name: Backend tests
+    needs: changes
+    if: needs.changes.outputs.backend_or_infra == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +78,8 @@ jobs:
 
   test-mobile:
     name: Mobile app tests
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -63,6 +110,8 @@ jobs:
 
   test-infra:
     name: Infra tests + synth
+    needs: changes
+    if: needs.changes.outputs.backend_or_infra == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -106,7 +155,11 @@ jobs:
   # check.
   local-smoke:
     name: Local compose smoke test
-    needs: [test-backend, test-mobile, test-infra]
+    # Backend-only (`make up`/`make smoke` never touch mobile/) -- test-mobile
+    # is deliberately not a dependency, so a mobile-only push (where
+    # test-mobile is the only job that ran) doesn't skip this one too.
+    needs: [changes, test-backend, test-infra]
+    if: needs.changes.outputs.backend_or_infra == 'true'
     runs-on: ubuntu-latest
 
     steps:

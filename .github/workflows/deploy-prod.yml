@@ -35,6 +35,11 @@ jobs:
   staging:
     name: Staging (ephemeral smoke-test gate)
     needs: ci
+    # Mobile ships through its own release-triggered pipeline, entirely
+    # separate from the AWS stack -- a mobile-only push has nothing for a
+    # CDK deploy to pick up, so skip standing up (and tearing down) a
+    # staging stack for it.
+    if: needs.ci.outputs.backend_or_infra_changed == 'true'
     uses: ./.github/workflows/deploy-stack.yml
     with:
       env_name: staging
@@ -56,7 +61,12 @@ jobs:
   destroy-staging:
     name: Destroy staging
     needs: staging
-    if: always()
+    # `always()` so a FAILED staging deploy still gets cleaned up (a failed
+    # job's default needs-check would otherwise skip this and strand the
+    # stack) -- but a SKIPPED staging job (mobile-only push, nothing was
+    # ever deployed) must still skip this too, hence the explicit check
+    # rather than bare `always()`.
+    if: always() && needs.staging.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: development
