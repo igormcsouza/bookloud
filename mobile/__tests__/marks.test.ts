@@ -1,6 +1,7 @@
 import {
   MAX_CACHED_SEGMENTS,
   MarksCache,
+  canSkipSync,
   locateWord,
   rebaseMarks,
   stillInside,
@@ -140,6 +141,48 @@ describe("stillInside", () => {
         expect(stillInside(words, i, t)).toBe(i === located);
       }
     }
+  });
+});
+
+describe("canSkipSync", () => {
+  // Issue #13 regression: reading froze on a chunk's last word forever,
+  // while the audio itself kept advancing. Root cause was `usePlayback`'s
+  // sync loop trusting `stillInside` alone as its "nothing changed, skip
+  // the resync" fast path -- `stillInside` is true for the last word at ANY
+  // t at or past its start (tested above), which is correct for lighting
+  // that word but wrongly told the loop it never needed to look at the next
+  // segment again. `canSkipSync` adds the segment-end bound that was
+  // missing.
+  const words = sentence(4);
+  const last = words.length - 1;
+  const segmentEndMs = words[last].t + words[last].d * 2; // some time after the last word starts
+
+  it("still allows the fast path mid-word, same as stillInside alone", () => {
+    expect(canSkipSync(words, 1, words[1].t, segmentEndMs)).toBe(true);
+  });
+
+  it("REGRESSION: false once tMs reaches the segment end, even parked on the last word", () => {
+    // This is exactly the stuck state from issue #13: wordRef parked on the
+    // last word (stillInside would say "yes, skip" forever), but playback
+    // has moved on to the next chunk's audio.
+    expect(stillInside(words, last, segmentEndMs)).toBe(true); // the old, buggy signal
+    expect(canSkipSync(words, last, segmentEndMs, segmentEndMs)).toBe(false); // the fix
+  });
+
+  it("REGRESSION: false arbitrarily far past the segment end, not just at the boundary", () => {
+    expect(canSkipSync(words, last, segmentEndMs + 10 * 60_000, segmentEndMs)).toBe(false);
+  });
+
+  it("still true right up to (but not at) the segment end", () => {
+    expect(canSkipSync(words, last, segmentEndMs - 1, segmentEndMs)).toBe(true);
+  });
+
+  it("is false with no cached words (forces a resync to fetch them)", () => {
+    expect(canSkipSync(undefined, 0, 0, segmentEndMs)).toBe(false);
+  });
+
+  it("is false with no current segment (e.g. before the first segment)", () => {
+    expect(canSkipSync(words, 0, 0, undefined)).toBe(false);
   });
 });
 

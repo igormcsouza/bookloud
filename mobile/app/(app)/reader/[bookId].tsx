@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import BottomSheet from "@gorhom/bottom-sheet";
 import { ChevronLeft, MessageCircle } from "lucide-react-native";
 import { getBookChunks, getManifest, type Chunk } from "@/lib/books";
@@ -22,6 +24,33 @@ function splitAtWord(text: string, start: number, end: number) {
     return { before: text, word: "", after: "" };
   }
   return { before: text.slice(0, start), word: text.slice(start, end), after: text.slice(end) };
+}
+
+/** Horizontal drag distance (px) that counts as a swipe rather than a stray
+ *  touch or a scroll-adjacent wobble. */
+const SWIPE_THRESHOLD = 50;
+
+/** Settle-animation duration (ms), both for completing a swipe past
+ *  `SWIPE_THRESHOLD` and for snapping back when it falls short. */
+const SWIPE_SETTLE_MS = 220;
+
+/** A neighboring chunk's opening text, peeking in from off-screen while its
+ *  pane is being dragged into view. Not interactive (no scrolling, no word
+ *  highlight -- it isn't the playing chunk) and not measured: the row's
+ *  `overflow: hidden` parent clips it to exactly what's visible. */
+function ChunkPeek({ chunk, width }: { chunk: Chunk | null; width: number }) {
+  return (
+    <View style={{ width }}>
+      {chunk && (
+        <Text
+          className="text-[21px] leading-8 text-ink dark:text-dink"
+          style={{ fontFamily: "Fraunces_500Medium" }}
+        >
+          {chunk.text}
+        </Text>
+      )}
+    </View>
+  );
 }
 
 export default function Reader() {
@@ -61,21 +90,119 @@ export default function Reader() {
     };
   }, [bookId]);
 
-  const playback = usePlayback(bookId ?? "", manifest);
-  const [visibleChunkIndex, setVisibleChunkIndex] = useState(0);
-  const anchorRef = useReadingAnchor(playback.state.chunkIndex, visibleChunkIndex);
-
-  const activeChunk = useMemo(() => {
-    const index = playback.state.chunkIndex >= 0 ? playback.state.chunkIndex : chunks[0]?.index ?? -1;
-    return chunks.find((c) => c.index === index) ?? chunks[0] ?? null;
-  }, [chunks, playback.state.chunkIndex]);
-
-  useEffect(() => {
-    if (activeChunk) setVisibleChunkIndex(activeChunk.index);
-  }, [activeChunk]);
-
   const hasAudio = Boolean(manifest?.audioKey);
   const isPartial = manifest?.status === "PARTIAL";
+
+  const playback = usePlayback(bookId ?? "", manifest);
+
+  // The chunk currently shown in the reading pane. Normally this just
+  // tracks `playback.state.chunkIndex` as audio advances, but it's also the
+  // target of manual swipe navigation (issue #13, asks #2/#3): a swipe sets
+  // it directly -- so the text turns immediately, with no round trip
+  // through playback state -- and, when there's audio, seeks playback to
+  // match so text and audio never drift apart in either direction.
+  const [chunkIndex, setChunkIndex] = useState(0);
+
+  useEffect(() => {
+    if (playback.state.chunkIndex >= 0) setChunkIndex(playback.state.chunkIndex);
+  }, [playback.state.chunkIndex]);
+
+  const anchorRef = useReadingAnchor(playback.state.chunkIndex, chunkIndex);
+
+  const activeChunk = useMemo(
+    () => chunks.find((c) => c.index === chunkIndex) ?? chunks[0] ?? null,
+    [chunks, chunkIndex],
+  );
+
+  // `activeChunk`'s position within `chunks` -- its array position, not its
+  // stable `.index` id. The two coincide for a fully-synthesized book but
+  // aren't guaranteed to, and swiping should move by "next/previous chunk
+  // in reading order", not by id arithmetic.
+  const chunkPosition = useMemo(() => chunks.findIndex((c) => c.index === chunkIndex), [chunks, chunkIndex]);
+
+  const goToChunkAt = useCallback(
+    (position: number) => {
+      if (position < 0 || position >= chunks.length) return;
+      const target = chunks[position];
+      setChunkIndex(target.index);
+      // Keep audio in lockstep with a manual jump (issue #13 ask #3) -- a
+      // no-op if this chunk has no audio (seekToChunk's segment lookup
+      // returns -1), so text-only navigation still works on a PARTIAL book.
+      if (hasAudio) playback.seekToChunk(target.index);
+    },
+    [chunks, hasAudio, playback],
+  );
+
+  const goToPreviousChunk = useCallback(
+    () => goToChunkAt(chunkPosition - 1),
+    [goToChunkAt, chunkPosition],
+  );
+  const goToNextChunk = useCallback(() => goToChunkAt(chunkPosition + 1), [goToChunkAt, chunkPosition]);
+
+  const canGoPrevious = chunkPosition > 0;
+  const canGoNext = chunkPosition >= 0 && chunkPosition + 1 < chunks.length;
+  const previousChunk = canGoPrevious ? chunks[chunkPosition - 1] : null;
+  const nextChunk = canGoNext ? chunks[chunkPosition + 1] : null;
+
+  // Live drag offset (px) of the reading pane, in screen coordinates:
+  // negative while dragging toward the next chunk, positive toward the
+  // previous one. Driven 1:1 by the pan gesture so the neighboring chunk's
+  // text visibly slides in from off-screen as the finger moves, rather than
+  // only appearing once the swipe completes.
+  const dragX = useSharedValue(0);
+  // Measured width of the clipping container (not the screen width -- this
+  // pane sits inside the reader's own horizontal padding), used both to
+  // size the three side-by-side panes and as the "fully swiped" distance.
+  const [paneWidth, setPaneWidth] = useState(0);
+  const onPaneLayout = useCallback((e: LayoutChangeEvent) => {
+    setPaneWidth(e.nativeEvent.layout.width);
+  }, []);
+
+  const commitNext = useCallback(() => {
+    goToNextChunk();
+    dragX.value = 0;
+  }, [goToNextChunk, dragX]);
+  const commitPrevious = useCallback(() => {
+    goToPreviousChunk();
+    dragX.value = 0;
+  }, [goToPreviousChunk, dragX]);
+
+  const swipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(paneWidth > 0)
+        // Only claims the gesture once a drag is clearly horizontal, so a
+        // vertical drag on a long chunk still scrolls the ScrollView
+        // normally instead of being swallowed by the swipe handler.
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-15, 15])
+        .onUpdate((e) => {
+          // Clamped so you can't drag a nonexistent neighbor into view --
+          // there's nothing to peek at past the first or last chunk.
+          const limit = e.translationX < 0 ? (canGoNext ? paneWidth : 0) : canGoPrevious ? paneWidth : 0;
+          dragX.value = Math.max(-limit, Math.min(limit, e.translationX));
+        })
+        .onEnd((e) => {
+          if (e.translationX <= -SWIPE_THRESHOLD && canGoNext) {
+            dragX.value = withTiming(-paneWidth, { duration: SWIPE_SETTLE_MS }, (finished) => {
+              if (finished) runOnJS(commitNext)();
+            });
+          } else if (e.translationX >= SWIPE_THRESHOLD && canGoPrevious) {
+            dragX.value = withTiming(paneWidth, { duration: SWIPE_SETTLE_MS }, (finished) => {
+              if (finished) runOnJS(commitPrevious)();
+            });
+          } else {
+            // Short of the threshold (or no neighbor that way) -- spring
+            // back to the current chunk rather than completing the swipe.
+            dragX.value = withTiming(0, { duration: SWIPE_SETTLE_MS });
+          }
+        }),
+    [paneWidth, canGoNext, canGoPrevious, commitNext, commitPrevious, dragX],
+  );
+
+  const rowStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: dragX.value - paneWidth }],
+  }));
 
   if (loadError) {
     return (
@@ -99,6 +226,14 @@ export default function Reader() {
           <ChevronLeft size={18} color={theme.textMuted} strokeWidth={2} />
           <Text className="text-ink-muted dark:text-dink-muted">Library</Text>
         </Pressable>
+        {chunks.length > 0 && chunkPosition >= 0 && (
+          <Text
+            className="text-[11px] text-ink-faint dark:text-dink-faint"
+            style={{ fontFamily: "IBMPlexMono_500Medium" }}
+          >
+            {chunkPosition + 1} / {chunks.length}
+          </Text>
+        )}
         <Pressable
           onPress={() => sheetRef.current?.expand()}
           className="flex-row items-center gap-1.5 bg-accent-wash dark:bg-daccent-wash rounded-full pl-2.5 pr-3.5 py-1.5"
@@ -132,18 +267,30 @@ export default function Reader() {
             </View>
           )}
 
-          <ScrollView className="flex-1 mb-3">
-            <Text
-              className="text-[21px] leading-8 text-ink dark:text-dink"
-              style={{ fontFamily: "Fraunces_500Medium" }}
-            >
-              {before}
-              <Text className="bg-accent-wash dark:bg-daccent-wash text-accent dark:text-daccent">
-                {word}
-              </Text>
-              {after}
-            </Text>
-          </ScrollView>
+          <GestureDetector gesture={swipeGesture}>
+            <View className="flex-1 mb-3" style={{ overflow: "hidden" }} onLayout={onPaneLayout}>
+              {paneWidth > 0 && (
+                <Animated.View
+                  style={[{ flex: 1, flexDirection: "row", width: paneWidth * 3 }, rowStyle]}
+                >
+                  <ChunkPeek chunk={previousChunk} width={paneWidth} />
+                  <ScrollView style={{ width: paneWidth }}>
+                    <Text
+                      className="text-[21px] leading-8 text-ink dark:text-dink"
+                      style={{ fontFamily: "Fraunces_500Medium" }}
+                    >
+                      {before}
+                      <Text className="bg-accent-wash dark:bg-daccent-wash text-accent dark:text-daccent">
+                        {word}
+                      </Text>
+                      {after}
+                    </Text>
+                  </ScrollView>
+                  <ChunkPeek chunk={nextChunk} width={paneWidth} />
+                </Animated.View>
+              )}
+            </View>
+          </GestureDetector>
 
           {hasAudio && playback.state.error && playback.state.error !== "NO_AUDIO" && (
             <View className="bg-brick-wash dark:bg-dbrick-wash rounded-md px-3 py-2.5 mb-3">
