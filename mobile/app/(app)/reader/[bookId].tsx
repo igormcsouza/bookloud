@@ -10,6 +10,7 @@ import { getBookChunks, getManifest, type Chunk } from "@/lib/books";
 import type { BookManifest } from "@/lib/manifest";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useReadingAnchor } from "@/hooks/useReadingAnchor";
+import { computeScrollTarget, findLineForOffset, type TextLine } from "@/lib/autoscroll";
 import { MiniPlayer } from "@/components/MiniPlayer";
 import { ChatSheet } from "@/components/ChatSheet";
 import { useTheme } from "@/lib/theme";
@@ -108,6 +109,75 @@ export default function Reader() {
   }, [playback.state.chunkIndex]);
 
   const anchorRef = useReadingAnchor(playback.state.chunkIndex, chunkIndex);
+
+  // --- auto-scroll to the active highlighted word (issue #15) ---------------
+  //
+  // Two problems live here, both fixed by the same ref/measure plumbing:
+  //
+  // 1. As playback highlights advance word-by-word, once the highlighted
+  //    word scrolls out of the viewport the view never followed it -- there
+  //    was no scroll-position code in this file at all before this fix.
+  // 2. Crossing a chunk boundary swaps `activeChunk`'s text entirely (a new
+  //    chunk's words start at char offset 0), but the ScrollView kept
+  //    whatever `contentOffset.y` was left over from the *previous* chunk --
+  //    e.g. scrolled halfway down a long paragraph -- so the new chunk's
+  //    first lines rendered off-screen above the visible area. On screen
+  //    this looked exactly like "the chunk didn't rerender": the state had
+  //    in fact already updated (`chunkIndex` tracks `playback.state.chunkIndex`
+  //    above), but nothing was visibly different because the stale scroll
+  //    offset hid the new content.
+  //
+  // The highlighted word is a nested inline `<Text>` (a span inside the
+  // paragraph's outer `<Text>`), not a `View` -- RN's text-flattening
+  // optimization means `onLayout` on an inline span is unreliable (may never
+  // fire; coordinate space isn't documented) and can't be used to find it.
+  // Instead this uses `onTextLayout` on the OUTER `Text`, which is RN's
+  // documented per-line layout API, and locates the highlighted word's own
+  // line by its character offset (`findLineForOffset` in lib/autoscroll.ts).
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const viewportHeightRef = useRef(0);
+
+  // Reset to the top of the pane on every chunk change -- covers both the
+  // swipe-navigation case (already snappy without this) and, more
+  // importantly, the playback-driven chunk advance, where nothing else in
+  // this file ever touched scroll position.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    scrollYRef.current = 0;
+  }, [chunkIndex]);
+
+  const onScrollViewLayout = useCallback((e: LayoutChangeEvent) => {
+    viewportHeightRef.current = e.nativeEvent.layout.height;
+  }, []);
+
+  const onReaderScroll = useCallback((e: { nativeEvent: { contentOffset: { y: number } } }) => {
+    scrollYRef.current = e.nativeEvent.contentOffset.y;
+  }, []);
+
+  const onParagraphTextLayout = useCallback(
+    (e: { nativeEvent: { lines: TextLine[] } }, wordStart: number) => {
+      if (wordStart < 0) return;
+      const { lines } = e.nativeEvent;
+      const lineIndex = findLineForOffset(lines, wordStart);
+      if (lineIndex < 0) return;
+      const line = lines[lineIndex];
+      const target = computeScrollTarget({
+        wordTop: line.y,
+        wordBottom: line.y + line.height,
+        scrollY: scrollYRef.current,
+        viewportHeight: viewportHeightRef.current,
+      });
+      // Only scroll when the word's line is actually near/past the visible
+      // edge -- avoids fighting the user's own scroll and avoids a scroll
+      // call (and its animation restart) on every single word tick when the
+      // current line is already comfortably on screen.
+      if (target !== null) {
+        scrollRef.current?.scrollTo({ y: target, animated: true });
+      }
+    },
+    [],
+  );
 
   const activeChunk = useMemo(
     () => chunks.find((c) => c.index === chunkIndex) ?? chunks[0] ?? null,
@@ -274,10 +344,17 @@ export default function Reader() {
                   style={[{ flex: 1, flexDirection: "row", width: paneWidth * 3 }, rowStyle]}
                 >
                   <ChunkPeek chunk={previousChunk} width={paneWidth} />
-                  <ScrollView style={{ width: paneWidth }}>
+                  <ScrollView
+                    ref={scrollRef}
+                    style={{ width: paneWidth }}
+                    onLayout={onScrollViewLayout}
+                    onScroll={onReaderScroll}
+                    scrollEventThrottle={100}
+                  >
                     <Text
                       className="text-[21px] leading-8 text-ink dark:text-dink"
                       style={{ fontFamily: "Fraunces_500Medium" }}
+                      onTextLayout={(e) => onParagraphTextLayout(e, playback.state.wordStart)}
                     >
                       {before}
                       <Text className="bg-accent-wash dark:bg-daccent-wash text-accent dark:text-daccent">
