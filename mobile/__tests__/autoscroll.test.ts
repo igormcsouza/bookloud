@@ -1,4 +1,11 @@
-import { AUTOSCROLL_MARGIN, computeScrollTarget, findLineForOffset, type TextLine } from "@/lib/autoscroll";
+import {
+  AUTOSCROLL_BOTTOM_FRACTION,
+  AUTOSCROLL_LANDING_FRACTION,
+  AUTOSCROLL_MARGIN,
+  computeScrollTarget,
+  findLineForOffset,
+  type TextLine,
+} from "@/lib/autoscroll";
 
 function line(text: string, y: number, height = 28): TextLine {
   return { x: 0, y, width: 300, height, text };
@@ -20,8 +27,8 @@ describe("computeScrollTarget", () => {
 
   it("does nothing when the word is comfortably inside the viewport", () => {
     const target = computeScrollTarget({
-      wordTop: 200,
-      wordBottom: 230,
+      wordTop: 100,
+      wordBottom: 130,
       ...viewport(0),
     });
     expect(target).toBeNull();
@@ -37,26 +44,27 @@ describe("computeScrollTarget", () => {
     expect(target).toBeNull();
   });
 
-  it("does nothing right at the bottom edge, inside the margin", () => {
-    const bottomEdge = 400 - AUTOSCROLL_MARGIN;
+  it("does nothing right at the bottom trigger line, inside it", () => {
+    const triggerLine = 400 * AUTOSCROLL_BOTTOM_FRACTION;
     const target = computeScrollTarget({
-      wordTop: bottomEdge - 20,
-      wordBottom: bottomEdge,
+      wordTop: triggerLine - 20,
+      wordBottom: triggerLine,
       ...viewport(0),
     });
     expect(target).toBeNull();
   });
 
-  it("scrolls down when the word crosses the bottom edge", () => {
-    // Viewport [0, 400); word at [390, 420) pokes past the bottom.
+  it("scrolls down when the word crosses the bottom trigger line (mid-screen, not the edge)", () => {
+    // Viewport [0, 400); bottom trigger sits at 400 * AUTOSCROLL_BOTTOM_FRACTION.
+    const triggerLine = 400 * AUTOSCROLL_BOTTOM_FRACTION;
     const target = computeScrollTarget({
-      wordTop: 390,
-      wordBottom: 420,
+      wordTop: triggerLine + 10,
+      wordBottom: triggerLine + 40,
       ...viewport(0),
     });
-    // Word's bottom should land AUTOSCROLL_MARGIN above the viewport's
-    // bottom edge: scrollY + viewportHeight - AUTOSCROLL_MARGIN == wordBottom.
-    expect(target).toBe(420 - 400 + AUTOSCROLL_MARGIN);
+    // Word's bottom should land AUTOSCROLL_LANDING_FRACTION of the way down
+    // the viewport, not just inside the bottom edge.
+    expect(target).toBe(triggerLine + 40 - 400 * AUTOSCROLL_LANDING_FRACTION);
     expect(target).not.toBeNull();
   });
 
@@ -91,17 +99,22 @@ describe("computeScrollTarget", () => {
   });
 
   it("is a no-op once the returned target is applied (idempotent)", () => {
-    const first = computeScrollTarget({ wordTop: 390, wordBottom: 420, ...viewport(0) });
+    const triggerLine = 400 * AUTOSCROLL_BOTTOM_FRACTION;
+    const first = computeScrollTarget({
+      wordTop: triggerLine + 10,
+      wordBottom: triggerLine + 40,
+      ...viewport(0),
+    });
     expect(first).not.toBeNull();
     const second = computeScrollTarget({
-      wordTop: 390,
-      wordBottom: 420,
+      wordTop: triggerLine + 10,
+      wordBottom: triggerLine + 40,
       ...viewport(first as number),
     });
     expect(second).toBeNull();
   });
 
-  it("prioritizes the bottom-edge case when a word is taller than the viewport", () => {
+  it("prioritizes the bottom-trigger case when a word is taller than the viewport", () => {
     // Degenerate case: word spans past both edges. Bottom check runs first,
     // so scrolling follows the word's leading (bottom) edge rather than
     // fighting itself between the two branches.
@@ -110,7 +123,7 @@ describe("computeScrollTarget", () => {
       wordBottom: 900,
       ...viewport(0),
     });
-    expect(target).toBe(Math.max(0, 900 - 400 + AUTOSCROLL_MARGIN));
+    expect(target).toBe(Math.max(0, 900 - 400 * AUTOSCROLL_LANDING_FRACTION));
   });
 });
 

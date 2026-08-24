@@ -16,19 +16,35 @@ export type ScrollTarget = {
   viewportHeight: number;
 };
 
-/** Padding (px) kept between the highlighted word and the viewport edge when
- *  auto-scrolling -- lands the word comfortably inside the visible area
- *  instead of flush against the very top or bottom, which reads as jarring
- *  and can clip descenders/ascenders against the viewport edge. */
+/** Padding (px) kept between the highlighted word and the viewport's TOP edge
+ *  when auto-scrolling up -- lands the word comfortably below the top edge
+ *  instead of flush against it, which reads as jarring and can clip
+ *  ascenders against the viewport edge. */
 export const AUTOSCROLL_MARGIN = 24;
 
+/** How far down the viewport (as a fraction of its height) the bottom
+ *  trigger line sits. Reading eyesight rests around the middle of the
+ *  screen, not the bottom edge -- keeping the highlight comfortably above
+ *  that natural gaze line (rather than letting it drift down to just above
+ *  the audio controls) is what keeps the follow feeling anticipatory
+ *  instead of catching up. */
+export const AUTOSCROLL_BOTTOM_FRACTION = 0.55;
+
+/** Where a word that trips the bottom trigger is scrolled back TO, again as
+ *  a fraction of viewport height from the top -- comfortably above
+ *  `AUTOSCROLL_BOTTOM_FRACTION` so the same word doesn't immediately retrip
+ *  the trigger on the very next tick. */
+export const AUTOSCROLL_LANDING_FRACTION = 0.35;
+
 /**
- * The new `contentOffset.y` to scroll to so the highlighted word is back
- * inside the viewport (with `AUTOSCROLL_MARGIN` of breathing room), or `null`
- * if the word is already sufficiently visible and no scroll is needed.
+ * The new `contentOffset.y` to scroll to so the highlighted word sits back
+ * around `AUTOSCROLL_LANDING_FRACTION` of the way down the viewport, or
+ * `null` if the word is already sufficiently visible (above the
+ * `AUTOSCROLL_BOTTOM_FRACTION` trigger line, at or below the top margin) and
+ * no scroll is needed.
  *
  * Deliberately asymmetric in *why* it scrolls, not just *where* to: scrolling
- * only fires when the word is actually near/past an edge, so playback
+ * only fires when the word is actually near/past a trigger, so playback
  * advancing word-by-word inside an already-visible line never triggers a
  * scroll (the "don't scroll on every tick" requirement) -- `stillInside`'s
  * sibling concern, one layer up in the UI instead of the sync loop.
@@ -40,12 +56,13 @@ export function computeScrollTarget(target: ScrollTarget): number | null {
   // treat every word as "past the bottom edge" of a zero-height viewport.
   if (viewportHeight <= 0) return null;
   const visibleTop = scrollY;
-  const visibleBottom = scrollY + viewportHeight;
+  const bottomTrigger = visibleTop + viewportHeight * AUTOSCROLL_BOTTOM_FRACTION;
 
-  // Below the fold (or crossing the bottom edge): bring the word to
-  // `AUTOSCROLL_MARGIN` above the bottom edge.
-  if (wordBottom > visibleBottom - AUTOSCROLL_MARGIN) {
-    return Math.max(0, wordBottom - viewportHeight + AUTOSCROLL_MARGIN);
+  // Past the bottom trigger line (mid-screen, not the bottom edge): bring
+  // the word up to `AUTOSCROLL_LANDING_FRACTION` of the way down the
+  // viewport instead of just barely back inside the fold.
+  if (wordBottom > bottomTrigger) {
+    return Math.max(0, wordBottom - viewportHeight * AUTOSCROLL_LANDING_FRACTION);
   }
 
   // Above the fold (or crossing the top edge): bring the word to
