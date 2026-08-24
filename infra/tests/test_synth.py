@@ -280,6 +280,23 @@ def test_pipeline_stack_synthesize_queue_shape(environment: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_queues_use_long_polling(environment: str) -> None:
+    """Every queue (all three pipeline queues plus their DLQs) must set
+    ReceiveMessageWaitTimeSeconds=20 (SQS's max). Without this, each queue
+    defaults to short polling (0s), and the Lambda ESM's background poller
+    calls ReceiveMessage in a tight loop even while idle -- this is what
+    burns the SQS free tier's 1M requests/month on empty queues, not on
+    actual book traffic (the AWS free-tier usage alert this regression test
+    exists because of)."""
+    template = _synth_pipeline_stack(environment)
+    queues = template.find_resources("AWS::SQS::Queue")
+    assert len(queues) == 6
+    for props in (q["Properties"] for q in queues.values()):
+        assert props["ReceiveMessageWaitTimeSeconds"] == 20, props["QueueName"]
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_has_s3_bucket_notification(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
     template.resource_count_is("Custom::S3BucketNotifications", 1)
