@@ -1,11 +1,10 @@
 # Rolling back a bad prod deploy
 
-Phase 8 (`IMPLEMENTATION_PLAN.md`). This is the concrete procedure for
-undoing a bad `main` push once `deploy-prod.yml` has already deployed it,
-not a general principles doc. It matches what is actually in this repo's
-CDK code today — see "What's not in place yet" at the bottom for the gap
-between this and the more instant alias-based rollback the phase asked
-about.
+This is the concrete procedure for undoing a bad `main` push once
+`deploy-prod.yml` has already deployed it, not a general principles doc. It
+matches what is actually in this repo's CDK code today — see "What's not in
+place yet" at the bottom for the gap between this and a faster, alias-based
+rollback that isn't built yet.
 
 ## 0. First, is it actually a deploy problem?
 
@@ -171,8 +170,8 @@ distinctly if it comes up, since §2/§3 alone would not fix it.
 
 ## What's not in place yet
 
-The phase description mentions "previous Lambda version alias strategy" as
-an alternative to a CDK stack rollback. That mechanism does not exist in
+A "previous Lambda version alias" strategy is a faster alternative to a full
+CDK stack rollback. That mechanism does not exist in
 this repo's CDK today: none of the `DockerImageFunction`s publish a
 versioned snapshot (`fn.current_version`) or sit behind a
 `lambda.Alias`/`aws_apigatewayv2_integrations.HttpLambdaIntegration`
