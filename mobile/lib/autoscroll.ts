@@ -28,13 +28,13 @@ export const AUTOSCROLL_MARGIN = 24;
  *  that natural gaze line (rather than letting it drift down to just above
  *  the audio controls) is what keeps the follow feeling anticipatory
  *  instead of catching up. */
-export const AUTOSCROLL_BOTTOM_FRACTION = 0.45;
+export const AUTOSCROLL_BOTTOM_FRACTION = 0.55;
 
 /** Where a word that trips the bottom trigger is scrolled back TO, again as
  *  a fraction of viewport height from the top -- comfortably above
  *  `AUTOSCROLL_BOTTOM_FRACTION` so the same word doesn't immediately retrip
  *  the trigger on the very next tick. */
-export const AUTOSCROLL_LANDING_FRACTION = 0.28;
+export const AUTOSCROLL_LANDING_FRACTION = 0.35;
 
 /**
  * The new `contentOffset.y` to scroll to so the highlighted word sits back
