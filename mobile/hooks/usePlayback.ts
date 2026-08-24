@@ -27,7 +27,7 @@ import {
   segmentIndexOfChunk,
   type BookManifest,
 } from "@/lib/manifest";
-import { MarksCache, locateWord, stillInside, type MarksEntry } from "@/lib/marks";
+import { MarksCache, canSkipSync, locateWord, type MarksEntry } from "@/lib/marks";
 
 /** §3.3: bounded so a genuinely deleted object doesn't loop forever. */
 export const MAX_URL_REFRESH_ATTEMPTS = 3;
@@ -113,6 +113,8 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
   const wordRef = useRef(-1);
   const refreshAttempts = useRef(0);
   const timingRef = useRef<Map<number, boolean>>(new Map());
+  // Serializes native `setPositionAsync` calls -- see `seekMs`.
+  const seekChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
   // The estimated-clock state (see file header comment).
   const lastKnownMs = useRef(0);
@@ -219,7 +221,22 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
       const tMs = estimatedPositionMs();
       const words: MarksEntry | undefined = cache.get(segmentRef.current);
 
-      if (!force && words && stillInside(words, wordRef.current, tMs)) return;
+      // Issue #13's root cause lived in this fast-path check -- see
+      // `canSkipSync`'s docstring in lib/marks.ts for the full story. In
+      // short: it used to be `words && stillInside(...)`, which stops being
+      // a safe "nothing to do" signal once playback reaches a segment's
+      // last word, because `stillInside` then returns true for literally
+      // any later `tMs` -- freezing `segmentRef`/`chunkIndex` (and so the
+      // displayed chunk) right there, permanently, while the audio itself
+      // (and its position readout, both native-driven) kept advancing. A
+      // seek looked unaffected only because `seekMs` calls `sync(true)`,
+      // whose `force` bypasses this fast path entirely.
+      const currentSegment = segmentRef.current >= 0 ? segments[segmentRef.current] : undefined;
+      const segmentEndMs = currentSegment ? currentSegment.t + currentSegment.d : undefined;
+
+      if (!force && canSkipSync(words, wordRef.current, tMs, segmentEndMs)) {
+        return;
+      }
 
       const position = locateSegment(segments, tMs);
       const segmentChanged = position !== segmentRef.current;
@@ -274,7 +291,19 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
   const startLoop = useCallback(() => {
     if (rafRef.current !== null) return;
     const frame = () => {
-      sync(false);
+      try {
+        sync(false);
+      } catch (err) {
+        // Defense in depth (issue #13's actual bug is in `sync` itself --
+        // see its comment): a throw here must never permanently kill the
+        // loop. Without this guard, an exception would skip the
+        // `requestAnimationFrame(frame)` call below, leaving `rafRef.current`
+        // pointing at an already-fired frame id forever -- `startLoop`'s
+        // `rafRef.current !== null` guard would then see it as "already
+        // running" and refuse to restart it, even though `onStatus` keeps
+        // calling `startLoop()` on every native status update.
+        if (__DEV__) console.warn("[usePlayback] sync() threw inside the highlight loop", err);
+      }
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
@@ -317,6 +346,18 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
         positionMs: status.positionMillis,
         playing: status.isPlaying,
       }));
+
+      // Defense in depth for issue #13 (the actual bug is the fast-path
+      // check inside `sync` -- see its comment): the chunk/word highlight
+      // is otherwise driven *exclusively* by the rAF loop below, which only
+      // runs while the JS engine keeps scheduling `requestAnimationFrame`
+      // callbacks. This native `onPlaybackStatusUpdate` callback fires on
+      // its own schedule (`progressUpdateIntervalMillis`, 150ms) for as
+      // long as audio is actually playing, independent of RN's rAF -- so
+      // resyncing here too gives chunk/word advancement a second, more
+      // reliable clock to fall back on. The rAF loop remains for smoother
+      // between-update interpolation when it's running.
+      sync(false);
 
       if (status.isPlaying) startLoop();
       else stopLoop();
@@ -434,8 +475,22 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
       const clamped = Math.max(0, ms);
       lastKnownMs.current = clamped;
       lastUpdateWallClock.current = Date.now();
-      void soundRef.current?.setPositionAsync(clamped).catch(() => {});
+      // Text/word state updates synchronously here -- swiping between
+      // chunks (issue #13 ask #2/#3) must feel instant regardless of how
+      // long the native seek takes.
       sync(true);
+      // The native seek itself is serialized behind any seek still in
+      // flight. Firing `setPositionAsync` again before the previous call
+      // has resolved was observed, while testing rapid swipe-to-navigate on
+      // a real device, to leave expo-av's underlying ExoPlayer instance
+      // wedged -- `playAsync`/`pauseAsync` silently no-op afterwards, with
+      // no error surfaced anywhere (not `state.error`, not a rejected
+      // promise). Queuing here costs nothing in the common case (one seek
+      // at a time) and makes two swipes thrown in quick succession land in
+      // order instead of racing.
+      seekChainRef.current = seekChainRef.current.then(() =>
+        soundRef.current?.setPositionAsync(clamped).catch(() => {}),
+      );
     },
     [sync],
   );

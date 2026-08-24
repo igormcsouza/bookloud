@@ -105,6 +105,38 @@ export function stillInside(words: WordMark[], i: number, tMs: number): boolean 
   return i + 1 >= words.length || tMs < words[i + 1].t;
 }
 
+/**
+ * Whether the rAF/status-driven sync loop may take its fast path and skip a
+ * full resync (re-running `locateSegment`/`locateWord`) this tick.
+ *
+ * `stillInside` alone is NOT enough for this, even though it looks like it
+ * should be -- issue #13's root cause. `stillInside` deliberately lights a
+ * segment's *last* word from its start through to "forever" (its own
+ * docstring: "the partition is total, so there is never a frame with no
+ * word lit"), which is correct for word-highlighting *within* a segment but
+ * says nothing about whether the segment itself is still current. Once
+ * playback reached a chunk's last word, `stillInside` started returning
+ * `true` for literally any later `tMs` -- including times well into the
+ * *next* chunk, or the one after that -- so the fast path kept firing
+ * forever and `locateSegment` (the only thing that ever advances the
+ * segment/chunk) never ran again. Reading would freeze right at a chunk's
+ * last word while the audio (and anything reading its position directly,
+ * bypassing this loop, e.g. a seek or the transport's own clock) kept
+ * advancing normally.
+ *
+ * The fix: additionally require `tMs` to still be before `segmentEndMs`.
+ */
+export function canSkipSync(
+  words: MarksEntry | undefined,
+  wordIndex: number,
+  tMs: number,
+  segmentEndMs: number | undefined,
+): boolean {
+  if (!words || segmentEndMs === undefined) return false;
+  if (tMs >= segmentEndMs) return false;
+  return stillInside(words, wordIndex, tMs);
+}
+
 /** Default radius. `evict` drops entries *further than* `radius` from the
  *  centre, so it holds at most `2 * radius + 1` == **9** entries: the centre
  *  plus four either side. (PLANS/phase-6.md §6.2 glosses this as "≤8", which
