@@ -64,6 +64,12 @@ on:
         value: ${{ jobs.deploy.outputs.user_pool_id }}
       user_pool_client_id:
         value: ${{ jobs.deploy.outputs.user_pool_client_id }}
+      extract_function_name:
+        value: ${{ jobs.deploy.outputs.extract_function_name }}
+      synthesize_function_name:
+        value: ${{ jobs.deploy.outputs.synthesize_function_name }}
+      stitch_function_name:
+        value: ${{ jobs.deploy.outputs.stitch_function_name }}
       login_username:
         value: ${{ jobs.deploy.outputs.login_username }}
       login_password:
@@ -91,6 +97,9 @@ jobs:
       chat_url: ${{ steps.deploy-backend.outputs.chat_url }}
       user_pool_id: ${{ steps.deploy-backend.outputs.user_pool_id }}
       user_pool_client_id: ${{ steps.deploy-backend.outputs.user_pool_client_id }}
+      extract_function_name: ${{ steps.deploy-backend.outputs.extract_function_name }}
+      synthesize_function_name: ${{ steps.deploy-backend.outputs.synthesize_function_name }}
+      stitch_function_name: ${{ steps.deploy-backend.outputs.stitch_function_name }}
       login_username: ${{ steps.seed-users.outputs.login_username }}
       login_password: ${{ steps.seed-users.outputs.login_password }}
       newuser_username: ${{ steps.seed-users.outputs.newuser_username }}
@@ -161,10 +170,17 @@ jobs:
           env_name = os.environ["ENV_NAME"]
           api = outputs.get(f"BookloudApi-{env_name}", {})
           auth = outputs.get(f"BookloudAuth-{env_name}", {})
+          pipeline = outputs.get(f"BookloudPipeline-{env_name}", {})
           print(f"api_url={api.get('ApiUrl', '').rstrip('/')}")
           print(f"chat_url={api.get('ChatUrl', '').rstrip('/')}")
           print(f"user_pool_id={auth.get('UserPoolId', '')}")
           print(f"user_pool_client_id={auth.get('UserPoolClientId', '')}")
+          # The smoke test invokes these directly instead of waiting on their
+          # own EventBridge Rule schedule (infra/stacks/pipeline_stack.py's
+          # _add_scheduled_pollers) -- see local/smoke_test.py's docstring.
+          print(f"extract_function_name={pipeline.get('ExtractFunctionName', '')}")
+          print(f"synthesize_function_name={pipeline.get('SynthesizeFunctionName', '')}")
+          print(f"stitch_function_name={pipeline.get('StitchFunctionName', '')}")
           PY
 
       # Self-signup is disabled on the pool (admin-only provisioning, see
@@ -256,7 +272,10 @@ jobs:
             --login-username "${{ steps.seed-users.outputs.login_username }}" \
             --login-password "${{ steps.seed-users.outputs.login_password }}" \
             --newuser-username "${{ steps.seed-users.outputs.newuser_username }}" \
-            --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}"
+            --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}" \
+            --extract-function-name "${{ steps.deploy-backend.outputs.extract_function_name }}" \
+            --synthesize-function-name "${{ steps.deploy-backend.outputs.synthesize_function_name }}" \
+            --stitch-function-name "${{ steps.deploy-backend.outputs.stitch_function_name }}"
 
       - name: Smoke test (minimal) the deployed stack
         if: ${{ !inputs.seed_users }}
