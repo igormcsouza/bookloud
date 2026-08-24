@@ -103,8 +103,11 @@ export default function Library() {
             Your books
           </Text>
           <Text className="text-[14px] text-ink-muted dark:text-dink-muted mb-3">
-            {books.length} book{books.length === 1 ? "" : "s"}
-            {needsAttention > 0 ? ` · ${needsAttention} need${needsAttention === 1 ? "s" : ""} a look` : ""}
+            {loading
+              ? "Loading books…"
+              : `${books.length} book${books.length === 1 ? "" : "s"}${
+                  needsAttention > 0 ? ` · ${needsAttention} need${needsAttention === 1 ? "s" : ""} a look` : ""
+                }`}
           </Text>
         </View>
         <Pressable onPress={() => logout().then(() => router.replace("/sign-in"))} hitSlop={8}>
