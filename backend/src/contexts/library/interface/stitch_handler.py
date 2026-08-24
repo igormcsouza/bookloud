@@ -1,11 +1,18 @@
-"""SQS-triggered stitch Lambda handler -- the pipeline's "controller"
-(PLANS/phase-5.md §6.3). Wired in ``infra/stacks/pipeline_stack.py`` as a
-fourth ``DockerImageFunction`` over the same backend image as the API/extract/
+"""Stitch Lambda handlers -- the pipeline's "controller" (PLANS/phase-5.md
+§6.3). Wired in ``infra/stacks/pipeline_stack.py`` as a fourth
+``DockerImageFunction`` over the same backend image as the API/extract/
 synthesize Lambdas, with
-``cmd=["src.contexts.library.interface.stitch_handler.handler"]``.
+``cmd=["src.contexts.library.interface.stitch_handler.scheduled_handler"]``.
 
-``local_stitch_worker.py`` runs this same ``handle_records`` in a poll loop
-against LocalStack, mirroring ``local_synthesize_worker.py``.
+``scheduled_handler`` is the deployed entrypoint -- an EventBridge Rule
+invokes it on a fixed schedule instead of an SQS event source mapping
+polling the queue 24/7 (``pipeline_stack.py``'s ``_add_scheduled_pollers``
+has the free-tier cost reasoning). It drains the queue with the same
+``poll_once`` the ``stitch-worker`` docker-compose service already runs
+against LocalStack (``local_stitch_worker.py``).
+
+``handler`` (the plain ``event["Records"]`` shape) is kept for direct/test
+invocation -- nothing in AWS calls it anymore.
 """
 
 from __future__ import annotations
@@ -45,6 +52,19 @@ def handler(event: dict, context: object) -> None:
         max_attempts=settings.stitch_max_receive_count,
     )
     handle_records(event.get("Records", []), use_case)
+
+
+def scheduled_handler(event: dict, context: object) -> None:
+    """EventBridge Rule entrypoint (``infra/stacks/pipeline_stack.py``'s
+    ``_add_scheduled_pollers``). Ignores ``event`` -- the rule's schedule is
+    the only trigger that matters -- and drains the stitch queue with the
+    same ``poll_once`` the local docker-compose worker uses."""
+    from src.config import settings
+    from src.contexts.library.interface.local_stitch_worker import poll_once
+    from src.contexts.library.interface.queue_poller import drain_queue
+    from src.infrastructure.aws import client
+
+    drain_queue(poll_once, client("sqs"), settings.stitch_queue_url, context)
 
 
 def handle_records(records: Sequence[dict], use_case: StitchBook) -> list[StitchBookResult]:

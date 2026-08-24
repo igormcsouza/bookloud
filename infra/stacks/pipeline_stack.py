@@ -3,6 +3,8 @@ import os
 import aws_cdk as cdk
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as events_targets
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
 from aws_cdk import aws_logs as logs
@@ -17,12 +19,14 @@ from .config import Config, queue_name
 
 class PipelineStack(cdk.Stack):
     """Extract/synthesize/stitch SQS queues + DLQs, the extract Lambda and
-    its S3 -> SQS trigger (phase 3), the synthesize Lambda attached to
+    its S3 -> SQS trigger (phase 3), the synthesize Lambda that polls
     ``synthesize_queue`` -- fed by the extract Lambda, which is also a
     ``SynthesisQueue`` producer (``synthesize_queue.grant_send_messages(
-    extract_fn)``) -- and (phase 5) the stitch Lambda attached to
+    extract_fn)``) -- and (phase 5) the stitch Lambda that polls
     ``stitch_queue``, fed by the synthesize Lambda's fan-in edge
-    (``stitch_queue.grant_send_messages(synthesize_fn)``).
+    (``stitch_queue.grant_send_messages(synthesize_fn)``). Each of the three
+    polls its own queue on an EventBridge Rule schedule rather than via an
+    SQS event source mapping -- see ``_add_scheduled_pollers`` for why.
 
     ``pdf_bucket_name``/``table`` are threaded in (rather than the actual
     ``StorageStack`` constructs) so this stack can **re-import** the pdf
@@ -125,6 +129,9 @@ class PipelineStack(cdk.Stack):
         self._add_dlq_sweeper_lambda(table=table, git_sha=git_sha, environment=environment)
         self._add_dlq_depth_alarms(environment=environment)
         self._add_tts_fallback_alarm(synthesize_fn=synthesize_fn, environment=environment)
+        self._add_scheduled_pollers(
+            extract_fn=extract_fn, synthesize_fn=synthesize_fn, stitch_fn=self.stitch_function
+        )
 
         # The fan-out producer grant -- the extract Lambda publishes to
         # synthesize_queue as the last step of ExtractBook.execute (PLANS/
@@ -173,7 +180,7 @@ class PipelineStack(cdk.Stack):
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir,
                 target="lambda",  # explicit: see api_stack.py's ApiFunction comment
-                cmd=["src.contexts.library.interface.extract_handler.handler"],
+                cmd=["src.contexts.library.interface.extract_handler.scheduled_handler"],
             ),
             # PyMuPDF text extraction is CPU-bound; more memory is
             # (proportionally) faster at roughly constant cost on Lambda.
@@ -184,6 +191,7 @@ class PipelineStack(cdk.Stack):
                 Config.ENV_GIT_SHA: git_sha,
                 Config.ENV_TABLE_NAME: table.table_name,
                 Config.ENV_PDF_BUCKET: pdf_bucket.bucket_name,
+                Config.ENV_EXTRACT_QUEUE_URL: self.extract_queue.queue_url,
                 Config.ENV_LOG_LEVEL: "INFO",
             },
         )
@@ -191,11 +199,14 @@ class PipelineStack(cdk.Stack):
         pdf_bucket.grant_read(extract_fn)
         table.grant_read_write_data(extract_fn)
 
-        # batch_size=1 -- one pathological PDF can never poison a batch, and
-        # it makes partial-batch-failure reporting unnecessary.
-        extract_fn.add_event_source(
-            lambda_event_sources.SqsEventSource(self.extract_queue, batch_size=1)
-        )
+        # No SqsEventSource here (unlike phase-3's original wiring) --
+        # _add_scheduled_pollers attaches an EventBridge Rule instead, so
+        # this Lambda polls itself on a schedule rather than an ESM poller
+        # idling 24/7 (the SQS free-tier cost trap). grant_consume_messages
+        # is the ESM's IAM half without the polling half: ReceiveMessage/
+        # DeleteMessage/GetQueueAttributes on the function's role, nothing
+        # more.
+        self.extract_queue.grant_consume_messages(extract_fn)
 
         pdf_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
@@ -228,7 +239,7 @@ class PipelineStack(cdk.Stack):
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir,
                 target="lambda",  # explicit: see api_stack.py's ApiFunction comment
-                cmd=["src.contexts.library.interface.synthesize_handler.handler"],
+                cmd=["src.contexts.library.interface.synthesize_handler.scheduled_handler"],
             ),
             # I/O-bound (websocket + HTTPS), not CPU-bound like extraction.
             # 1024 MB is chosen for Lambda's memory-proportional *network*
@@ -244,10 +255,15 @@ class PipelineStack(cdk.Stack):
             # decreases account's UnreservedConcurrentExecution below its
             # minimum value of [10]", in prod exactly as in pr-N.
             # Nothing is lost: reserved concurrency was only ever a backstop
-            # here (see PLANS/phase-4.md §6.3) -- the ESM's max_concurrency
-            # below is the real throttle on concurrent TTS calls, and it caps
-            # invocations without reserving account-wide capacity. Raising the
-            # account quota is the prerequisite for adding it back.
+            # here (see PLANS/phase-4.md §6.3), and the real throttle on
+            # concurrent TTS calls is now structural, not configured -- this
+            # function has no SqsEventSource (_add_scheduled_pollers attaches
+            # an EventBridge Rule instead), and its own schedule interval is
+            # always longer than its timeout (Config.
+            # SYNTHESIZE_POLL_INTERVAL_MINUTES's comment), so at most one
+            # invocation is ever draining this queue at a time. Raising the
+            # account quota is still the prerequisite for adding reserved
+            # concurrency back, if that's ever wanted for its own sake.
             environment={
                 Config.ENV_ENVIRONMENT: environment,
                 Config.ENV_GIT_SHA: git_sha,
@@ -279,23 +295,17 @@ class PipelineStack(cdk.Stack):
             )
             secret.grant_read(synthesize_fn)  # also grants kms:Decrypt where needed
 
-        synthesize_fn.add_event_source(
-            lambda_event_sources.SqsEventSource(
-                self.synthesize_queue,
-                batch_size=1,
-                # ScalingConfig.MaximumConcurrency; minimum allowed is 2.
-                # Real reasoning: the free Edge Read Aloud endpoint is an
-                # undocumented consumer service with no published rate
-                # limit -- 5 concurrent websocket sessions from one Lambda
-                # account is roughly "one person with five browser tabs"
-                # and defensible; 50 would be abuse. Using max_concurrency
-                # (not just reserved_concurrent_executions) is what makes
-                # the SQS poller itself back off instead of the invocations
-                # getting throttled and messages returning to the queue,
-                # burning the DLQ budget on backpressure alone.
-                max_concurrency=Config.SYNTHESIZE_MAX_CONCURRENCY,
-            )
-        )
+        # No SqsEventSource here -- _add_scheduled_pollers attaches an
+        # EventBridge Rule instead, so this Lambda polls itself on a
+        # schedule rather than an ESM poller idling 24/7 on the free Edge
+        # Read Aloud endpoint's queue (the SQS free-tier cost trap).
+        # grant_consume_messages is the ESM's IAM half without the polling
+        # half: ReceiveMessage/DeleteMessage/GetQueueAttributes on the
+        # function's role, nothing more. The old ScalingConfig.
+        # MaximumConcurrency=2 throttle on concurrent TTS calls is now moot:
+        # with no ESM there is only ever at most one invocation of this
+        # function draining the queue (see the timeout comment above).
+        self.synthesize_queue.grant_consume_messages(synthesize_fn)
 
         self.synthesize_function = synthesize_fn
         cdk.CfnOutput(self, "SynthesizeFunctionName", value=synthesize_fn.function_name)
@@ -321,7 +331,7 @@ class PipelineStack(cdk.Stack):
             code=lambda_.DockerImageCode.from_image_asset(
                 backend_dir,
                 target="lambda",  # explicit: see api_stack.py's ApiFunction comment
-                cmd=["src.contexts.library.interface.stitch_handler.handler"],
+                cmd=["src.contexts.library.interface.stitch_handler.scheduled_handler"],
             ),
             # 1536 MB is NOT sized for the whole book: the multipart writer
             # (PLANS/phase-5.md §7.4) keeps resident bytes at O(one 5 MiB
@@ -340,8 +350,10 @@ class PipelineStack(cdk.Stack):
             # above: this account's total Lambda concurrency limit is 10 and
             # AWS refuses any reservation that drops unreserved concurrency
             # below its floor of 10, so every possible value is rejected, in
-            # prod exactly as in pr-N. The ESM's max_concurrency below is the
-            # only throttle.
+            # prod exactly as in pr-N. No SqsEventSource either (see below) --
+            # with no ESM there is only ever at most one invocation of this
+            # function draining the queue, so "one book per invocation" (the
+            # old batch_size=1 concern) is structural now, not configured.
             environment={
                 Config.ENV_ENVIRONMENT: environment,
                 Config.ENV_GIT_SHA: git_sha,
@@ -366,15 +378,13 @@ class PipelineStack(cdk.Stack):
         # transition).
         table.grant_read_write_data(stitch_fn)
 
-        stitch_fn.add_event_source(
-            lambda_event_sources.SqsEventSource(
-                self.stitch_queue,
-                # One book per invocation: a 15-minute concatenation must
-                # never share a batch with another book's.
-                batch_size=1,
-                max_concurrency=Config.STITCH_MAX_CONCURRENCY,
-            )
-        )
+        # No SqsEventSource here -- _add_scheduled_pollers attaches an
+        # EventBridge Rule instead, so this Lambda polls itself on a
+        # schedule rather than an ESM poller idling 24/7 (the SQS free-tier
+        # cost trap). grant_consume_messages is the ESM's IAM half without
+        # the polling half: ReceiveMessage/DeleteMessage/GetQueueAttributes
+        # on the function's role, nothing more.
+        self.stitch_queue.grant_consume_messages(stitch_fn)
 
         self.stitch_function = stitch_fn
         cdk.CfnOutput(self, "StitchFunctionName", value=stitch_fn.function_name)
@@ -538,6 +548,68 @@ class PipelineStack(cdk.Stack):
             evaluation_periods=1,
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+
+    def _add_scheduled_pollers(
+        self,
+        *,
+        extract_fn: lambda_.DockerImageFunction,
+        synthesize_fn: lambda_.DockerImageFunction,
+        stitch_fn: lambda_.DockerImageFunction,
+    ) -> None:
+        """Replaces the extract/synthesize/stitch SqsEventSources with an
+        EventBridge Rule apiece (the AWS free-tier usage alert this exists
+        because of -- SQS at 864k/1M requests for August, almost entirely
+        from idle infrastructure, not book uploads).
+
+        The root cause the first attempt at this (commit that added
+        ``receive_message_wait_time=cdk.Duration.seconds(20)`` on every
+        queue in ``_queue_with_dlq``) missed: that attribute only controls
+        long polling for consumers that call ``ReceiveMessage`` directly.
+        Lambda's own SQS event-source-mapping poller always long-polls
+        internally regardless of the queue's own setting, and keeps a
+        minimum number of poller threads running against the queue whether
+        or not it has ever had a message -- an ESM is simply never idle,
+        which is exactly what a mostly-empty personal-scale pipeline is
+        almost all of the time.
+
+        The fix: no ESM at all. Each function's ``cmd`` now points at a
+        ``scheduled_handler`` (see ``extract_handler.py`` etc.) that drains
+        its own queue with ``poll_once`` -- the same receive/process/
+        delete-on-success loop the local docker-compose workers already run
+        against LocalStack -- until either the queue is empty or the
+        invocation is close to its own timeout. An EventBridge Rule invokes
+        that handler on a fixed schedule instead of an ESM invoking it
+        continuously, so cost only accrues once per tick instead of once
+        per ~10s of wall-clock time.
+
+        Every function's target payload is the default EventBridge event
+        (nothing app-specific): ``scheduled_handler`` ignores ``event``
+        entirely, so there's nothing to construct here.
+        """
+        events.Rule(
+            self,
+            "ExtractPollSchedule",
+            schedule=events.Schedule.rate(
+                cdk.Duration.minutes(Config.EXTRACT_POLL_INTERVAL_MINUTES)
+            ),
+            targets=[events_targets.LambdaFunction(extract_fn)],
+        )
+        events.Rule(
+            self,
+            "SynthesizePollSchedule",
+            schedule=events.Schedule.rate(
+                cdk.Duration.minutes(Config.SYNTHESIZE_POLL_INTERVAL_MINUTES)
+            ),
+            targets=[events_targets.LambdaFunction(synthesize_fn)],
+        )
+        events.Rule(
+            self,
+            "StitchPollSchedule",
+            schedule=events.Schedule.rate(
+                cdk.Duration.minutes(Config.STITCH_POLL_INTERVAL_MINUTES)
+            ),
+            targets=[events_targets.LambdaFunction(stitch_fn)],
         )
 
     def _queue_with_dlq(

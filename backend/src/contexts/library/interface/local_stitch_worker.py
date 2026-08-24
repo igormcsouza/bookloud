@@ -11,6 +11,11 @@ job). Requests ``AttributeNames=["ApproximateReceiveCount"]`` on every
 ``receive_message`` call and forwards it into the pseudo-record's
 ``attributes`` -- otherwise local dev would never exercise ``StitchBook``'s
 last-attempt rule, a small and easy-to-forget detail.
+
+``stitch_handler.py``'s ``scheduled_handler`` (the deployed Lambda
+entrypoint) also imports ``poll_once`` directly, wrapping it in a
+time-boxed drain loop instead of this module's infinite one -- same queue
+logic, two different callers.
 """
 
 from __future__ import annotations

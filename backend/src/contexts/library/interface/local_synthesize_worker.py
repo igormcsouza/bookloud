@@ -12,6 +12,11 @@ job). Requests ``AttributeNames=["ApproximateReceiveCount"]`` on every
 ``attributes`` -- otherwise local dev would never exercise
 ``SynthesizeChunk``'s last-attempt rule (§8.3), a small and easy-to-forget
 detail.
+
+``synthesize_handler.py``'s ``scheduled_handler`` (the deployed Lambda
+entrypoint) also imports ``poll_once`` directly, wrapping it in a
+time-boxed drain loop instead of this module's infinite one -- same queue
+logic, two different callers.
 """
 
 from __future__ import annotations

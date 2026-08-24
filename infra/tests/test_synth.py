@@ -319,26 +319,85 @@ def test_pipeline_stack_queue_policy_allows_s3_to_send(environment: str) -> None
 
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_pipeline_stack_extract_lambda_event_source_mapping(environment: str) -> None:
+def test_pipeline_stack_only_dlq_sweeper_uses_event_source_mappings(environment: str) -> None:
+    """The extract/synthesize/stitch Lambdas no longer have an SqsEventSource
+    -- only the phase-8 sweeper's two (extract DLQ, synthesize DLQ) remain.
+    An ESM here is exactly the always-on poller
+    ``_add_scheduled_pollers`` exists to avoid re-introducing (the SQS
+    free-tier usage alert this stack's scheduled-polling rewrite is for)."""
     template = _synth_pipeline_stack(environment)
-    # extract + synthesize + stitch queues, plus the phase-8 sweeper's two
-    # (extract DLQ, synthesize DLQ).
-    template.resource_count_is("AWS::Lambda::EventSourceMapping", 5)
+    template.resource_count_is("AWS::Lambda::EventSourceMapping", 2)
     template.has_resource_properties("AWS::Lambda::EventSourceMapping", {"BatchSize": 1})
 
 
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_pipeline_stack_synthesize_lambda_event_source_mapping(environment: str) -> None:
+def test_pipeline_stack_has_a_scheduled_poll_rule_per_pipeline_queue(environment: str) -> None:
+    """Each of the extract/synthesize/stitch Lambdas is invoked by an
+    EventBridge Rule on a fixed rate instead of an SQS event source mapping
+    (``_add_scheduled_pollers``). Interval must exceed the Lambda's own
+    timeout with margin -- see ``infra/stacks/config.py``'s
+    ``*_POLL_INTERVAL_MINUTES`` comment for why overlapping invocations
+    would be a correctness problem, not just a cost one."""
+    template = _synth_pipeline_stack(environment)
+    rules = template.find_resources("AWS::Events::Rule")
+    schedules = sorted(r["Properties"]["ScheduleExpression"] for r in rules.values())
+    assert schedules == ["rate(10 minutes)", "rate(20 minutes)", "rate(5 minutes)"]
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_extract_function_shape(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
     template.has_resource_properties(
-        "AWS::Lambda::EventSourceMapping",
-        # 3, lowered from 5 in phase 5 (PLANS/phase-5.md OQ-2): the account's
-        # total Lambda concurrency is 10 and the stitch function now competes
-        # for it, so 5 here could starve the user-facing API during
-        # processing.
-        {"BatchSize": 1, "ScalingConfig": {"MaximumConcurrency": 2}},
+        "AWS::Lambda::Function",
+        {
+            "ImageConfig": {"Command": ["src.contexts.library.interface.extract_handler.scheduled_handler"]},
+            "Timeout": 120,
+            "MemorySize": 1536,
+        },
     )
+    functions = template.find_resources(
+        "AWS::Lambda::Function",
+        {
+            "Properties": {
+                "ImageConfig": {
+                    "Command": ["src.contexts.library.interface.extract_handler.scheduled_handler"]
+                }
+            }
+        },
+    )
+    (props,) = [r["Properties"] for r in functions.values()]
+    # Newly needed now that the extract Lambda polls its own queue instead
+    # of an ESM delivering messages to it -- without this, scheduled_handler
+    # has no queue URL to poll.
+    assert "EXTRACT_QUEUE_URL" in props["Environment"]["Variables"]
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+def test_pipeline_stack_pollers_can_consume_their_own_queue(environment: str) -> None:
+    """grant_consume_messages's IAM half of what an SqsEventSource used to
+    grant automatically -- without it, scheduled_handler's own
+    ReceiveMessage/DeleteMessage calls would fail with AccessDenied even
+    though the EventBridge Rule successfully invokes the Lambda."""
+    template = _synth_pipeline_stack(environment)
+
+    actions: list[str] = []
+    for policy in template.find_resources("AWS::IAM::Policy").values():
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]:
+            action = statement.get("Action")
+            actions.extend(action if isinstance(action, list) else [action])
+
+    # 5, not 3: the extract/synthesize/stitch Lambdas' own
+    # grant_consume_messages calls (one apiece) plus the phase-8 sweeper's
+    # SqsEventSource, which still grants the same consume actions
+    # automatically for its two DLQs. GetQueueAttributes/GetQueueUrl are
+    # deliberately not asserted here -- grant_send_messages (the three
+    # producer grants elsewhere in this stack) also includes both, so they
+    # aren't unique to consume access the way these three are.
+    for consume_action in ("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility"):
+        assert actions.count(consume_action) == 5, consume_action
 
 
 @pytest.mark.docker
@@ -349,7 +408,7 @@ def test_pipeline_stack_synthesize_function_shape(environment: str) -> None:
         "AWS::Lambda::Function",
         {
             "ImageConfig": {
-                "Command": ["src.contexts.library.interface.synthesize_handler.handler"]
+                "Command": ["src.contexts.library.interface.synthesize_handler.scheduled_handler"]
             },
             # Absent, not 10. This account's total Lambda concurrency limit
             # is 10 and AWS rejects any reservation that drops unreserved
@@ -368,9 +427,9 @@ def test_pipeline_stack_synthesize_function_shape(environment: str) -> None:
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_stitch_queue_shape(environment: str) -> None:
     """PLANS/phase-5.md §6.2: 90 min visibility (6x the stitch Lambda's 900s
-    timeout, the repo's standing rule) and max_receive_count 3 -- unlike the
-    synthesize queue there is no ESM-throttle backpressure to burn attempts,
-    and each attempt costs up to 15 minutes."""
+    timeout, the repo's standing rule) and max_receive_count 3 -- there is
+    no ESM-throttle backpressure to burn attempts, and each attempt costs up
+    to 15 minutes."""
     template = _synth_pipeline_stack(environment)
     template.has_resource_properties(
         "AWS::SQS::Queue",
@@ -403,7 +462,7 @@ def test_pipeline_stack_stitch_function_shape(environment: str) -> None:
     template.has_resource_properties(
         "AWS::Lambda::Function",
         {
-            "ImageConfig": {"Command": ["src.contexts.library.interface.stitch_handler.handler"]},
+            "ImageConfig": {"Command": ["src.contexts.library.interface.stitch_handler.scheduled_handler"]},
             # Absent, not a number. Same account-quota wall as
             # SynthesizeFunction: this account's total Lambda concurrency
             # limit is 10 and AWS rejects any reservation that drops
@@ -420,16 +479,6 @@ def test_pipeline_stack_stitch_function_shape(environment: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
-def test_pipeline_stack_stitch_lambda_event_source_mapping(environment: str) -> None:
-    template = _synth_pipeline_stack(environment)
-    template.has_resource_properties(
-        "AWS::Lambda::EventSourceMapping",
-        {"BatchSize": 1, "ScalingConfig": {"MaximumConcurrency": 2}},
-    )
-
-
-@pytest.mark.docker
-@pytest.mark.parametrize("environment", ENVIRONMENTS)
 def test_pipeline_stack_stitch_function_has_the_queue_url_and_buckets(environment: str) -> None:
     template = _synth_pipeline_stack(environment)
     functions = template.find_resources(
@@ -437,7 +486,7 @@ def test_pipeline_stack_stitch_function_has_the_queue_url_and_buckets(environmen
         {
             "Properties": {
                 "ImageConfig": {
-                    "Command": ["src.contexts.library.interface.stitch_handler.handler"]
+                    "Command": ["src.contexts.library.interface.stitch_handler.scheduled_handler"]
                 }
             }
         },
@@ -463,7 +512,7 @@ def test_pipeline_stack_synthesize_function_carries_the_stitch_queue_url(environ
         {
             "Properties": {
                 "ImageConfig": {
-                    "Command": ["src.contexts.library.interface.synthesize_handler.handler"]
+                    "Command": ["src.contexts.library.interface.synthesize_handler.scheduled_handler"]
                 }
             }
         },

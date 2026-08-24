@@ -7,7 +7,10 @@ source mapping invoking a Lambda.
 
 ``poll_once`` is the testable unit; ``main`` is the infinite loop, excluded
 from coverage and exercised only manually (``make up`` / the local-smoke CI
-job).
+job). ``extract_handler.py``'s ``scheduled_handler`` (the deployed Lambda
+entrypoint) also imports ``poll_once`` directly, wrapping it in a
+time-boxed drain loop instead of this module's infinite one -- same queue
+logic, two different callers.
 """
 
 from __future__ import annotations
