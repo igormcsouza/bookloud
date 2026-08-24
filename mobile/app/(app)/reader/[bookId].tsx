@@ -10,6 +10,7 @@ import { getBookChunks, getManifest, type Chunk } from "@/lib/books";
 import type { BookManifest } from "@/lib/manifest";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useReadingAnchor } from "@/hooks/useReadingAnchor";
+import { useReadingProgress } from "@/hooks/useReadingProgress";
 import { computeScrollTarget, findLineForOffset, type TextLine } from "@/lib/autoscroll";
 import { MiniPlayer } from "@/components/MiniPlayer";
 import { ChatSheet } from "@/components/ChatSheet";
@@ -95,6 +96,7 @@ export default function Reader() {
   const isPartial = manifest?.status === "PARTIAL";
 
   const playback = usePlayback(bookId ?? "", manifest);
+  const progress = useReadingProgress(bookId);
 
   // The chunk currently shown in the reading pane. Normally this just
   // tracks `playback.state.chunkIndex` as audio advances, but it's also the
@@ -107,6 +109,56 @@ export default function Reader() {
   useEffect(() => {
     if (playback.state.chunkIndex >= 0) setChunkIndex(playback.state.chunkIndex);
   }, [playback.state.chunkIndex]);
+
+  // Resume where the reader last left off (issue #22). Applied once per
+  // book, as soon as the saved position, the chunk list, AND (when there's
+  // audio) the player itself are ready. Waiting for `playback.state.ready`
+  // matters: `chunks` loads independently of the `Audio.Sound` inside
+  // `usePlayback`, and calling `seekMs` before that sound exists is a
+  // silent no-op (every native call in that path swallows its own
+  // rejection) -- so firing the restore off `chunks` alone would mark it
+  // "done" via `restoredRef` while never actually seeking.
+  const restoredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!bookId || progress.saved === undefined || chunks.length === 0) return;
+    if (hasAudio && !playback.state.ready) return;
+    if (restoredRef.current === bookId) return;
+    restoredRef.current = bookId;
+    const saved = progress.saved;
+    if (!saved) return;
+    const target = chunks.find((c) => c.index === saved.chunkIndex);
+    if (!target) return;
+    setChunkIndex(target.index);
+    if (hasAudio) playback.seekMs(saved.positionMs);
+  }, [bookId, progress.saved, chunks, hasAudio, playback]);
+
+  // Persist on every meaningful change: chunk turns (text-only books too)
+  // and, while audio is playing, the throttled position tick. Gated on the
+  // restore above having already run (or having nothing to restore) --
+  // otherwise this fires on the very first render with the pre-restore
+  // chunkIndex=0/positionMs=0 and clobbers the saved position in storage
+  // before `seekMs` ever gets a chance to apply it.
+  useEffect(() => {
+    if (restoredRef.current !== bookId) return;
+    if (chunkIndex >= 0) progress.save(chunkIndex, hasAudio ? playback.state.positionMs : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chunkIndex, playback.state.positionMs]);
+
+  // Refs mirroring the latest values, so the unmount cleanup below (which
+  // must run with an empty dep list to fire only on unmount/bookId change,
+  // not on every position tick) never flushes a stale position.
+  const latestRef = useRef({ chunkIndex, positionMs: playback.state.positionMs, hasAudio });
+  latestRef.current = { chunkIndex, positionMs: playback.state.positionMs, hasAudio };
+
+  useEffect(() => {
+    return () => {
+      const latest = latestRef.current;
+      if (bookId && latest.chunkIndex >= 0) {
+        progress.saveNow(latest.chunkIndex, latest.hasAudio ? latest.positionMs : 0);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
 
   const anchorRef = useReadingAnchor(playback.state.chunkIndex, chunkIndex);
 
