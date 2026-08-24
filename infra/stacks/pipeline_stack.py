@@ -561,6 +561,16 @@ class PipelineStack(cdk.Stack):
             # this stack follows.
             visibility_timeout=dlq_visibility_timeout,
             retention_period=cdk.Duration.days(4),
+            # Long polling (SQS's 20s max). Without this every queue defaults
+            # to ReceiveMessageWaitTimeSeconds=0 (short polling), and the
+            # Lambda ESM's background poller then calls ReceiveMessage in a
+            # tight loop even while the queue sits empty 24/7 -- this is what
+            # burns the SQS free tier's 1M requests/month on idle
+            # infrastructure, not on actual book traffic. Long polling makes
+            # an idle poller block for up to 20s per call instead, cutting
+            # empty-queue request volume by roughly two orders of magnitude
+            # with zero effect on delivery latency for a real message.
+            receive_message_wait_time=cdk.Duration.seconds(20),
         )
         queue = sqs.Queue(
             self,
@@ -569,6 +579,8 @@ class PipelineStack(cdk.Stack):
             visibility_timeout=visibility_timeout,
             retention_period=cdk.Duration.days(4),
             dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=max_receive_count, queue=dlq),
+            # See the DLQ's identical comment above -- same fix, same reason.
+            receive_message_wait_time=cdk.Duration.seconds(20),
         )
         # Stashed by logical id (e.g. self.dlqs["Extract"]) so
         # __init__/_add_dlq_sweeper_lambda/_add_dlq_alarms can reach every
