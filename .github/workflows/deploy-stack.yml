@@ -204,16 +204,37 @@ jobs:
           NEWUSER="smoke-newuser-${GITHUB_RUN_ID}"
           NEWUSER_TEMP_PASS="Temp-$(openssl rand -hex 8)!A1"
 
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
-            --message-action SUPPRESS >/dev/null
+          # Tolerate "already exists" here too, same rule and same reasoning
+          # as the fixed "admin" user below -- but for a different trigger:
+          # GITHUB_RUN_ID (normally unique per run) is stable across `gh run
+          # rerun`, so a rerun that gets this far again would otherwise hit
+          # UsernameExistsException on a user THIS SAME run already created.
+          # admin-set-user-password runs unconditionally either way, so a
+          # pre-existing user still ends up with this run's fresh password.
+          if ! create_err=$(aws cognito-idp admin-create-user \
+                --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
+                --message-action SUPPRESS 2>&1 >/dev/null); then
+            case "$create_err" in
+              *UsernameExistsException*)
+                echo "$LOGIN_USER already exists (rerun of this same run) -- resetting its password" ;;
+              *)
+                echo "$create_err" >&2; exit 1 ;;
+            esac
+          fi
           aws cognito-idp admin-set-user-password \
             --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
             --password "$LOGIN_PASS" --permanent >/dev/null
 
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
-            --message-action SUPPRESS >/dev/null
+          if ! create_err=$(aws cognito-idp admin-create-user \
+                --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
+                --message-action SUPPRESS 2>&1 >/dev/null); then
+            case "$create_err" in
+              *UsernameExistsException*)
+                echo "$NEWUSER already exists (rerun of this same run) -- resetting its password" ;;
+              *)
+                echo "$create_err" >&2; exit 1 ;;
+            esac
+          fi
           aws cognito-idp admin-set-user-password \
             --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
             --password "$NEWUSER_TEMP_PASS" >/dev/null
