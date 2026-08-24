@@ -110,12 +110,17 @@ export default function Reader() {
   }, [playback.state.chunkIndex]);
 
   // Resume where the reader last left off (issue #22). Applied once per
-  // book, as soon as both the saved position and the chunk list are ready
-  // -- `chunks` gates it so a swipe/seek before the book has finished
-  // loading never gets clobbered by a late-arriving restore.
+  // book, as soon as the saved position, the chunk list, AND (when there's
+  // audio) the player itself are ready. Waiting for `playback.state.ready`
+  // matters: `chunks` loads independently of the `Audio.Sound` inside
+  // `usePlayback`, and calling `seekMs` before that sound exists is a
+  // silent no-op (every native call in that path swallows its own
+  // rejection) -- so firing the restore off `chunks` alone would mark it
+  // "done" via `restoredRef` while never actually seeking.
   const restoredRef = useRef<string | null>(null);
   useEffect(() => {
     if (!bookId || progress.saved === undefined || chunks.length === 0) return;
+    if (hasAudio && !playback.state.ready) return;
     if (restoredRef.current === bookId) return;
     restoredRef.current = bookId;
     const saved = progress.saved;
@@ -127,8 +132,13 @@ export default function Reader() {
   }, [bookId, progress.saved, chunks, hasAudio, playback]);
 
   // Persist on every meaningful change: chunk turns (text-only books too)
-  // and, while audio is playing, the throttled position tick.
+  // and, while audio is playing, the throttled position tick. Gated on the
+  // restore above having already run (or having nothing to restore) --
+  // otherwise this fires on the very first render with the pre-restore
+  // chunkIndex=0/positionMs=0 and clobbers the saved position in storage
+  // before `seekMs` ever gets a chance to apply it.
   useEffect(() => {
+    if (restoredRef.current !== bookId) return;
     if (chunkIndex >= 0) progress.save(chunkIndex, hasAudio ? playback.state.positionMs : 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chunkIndex, playback.state.positionMs]);
