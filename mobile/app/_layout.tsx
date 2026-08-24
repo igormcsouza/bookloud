@@ -78,7 +78,7 @@ function AuthGate() {
   if (checking) {
     return (
       <View className="flex-1 items-center justify-center bg-bg dark:bg-dbg">
-        <ActivityIndicator color="#B87424" />
+        <ActivityIndicator color="#3F7D3A" />
         <Text className="mt-3 text-[13px] text-ink-muted dark:text-dink-muted">Loading Bookloud…</Text>
       </View>
     );
