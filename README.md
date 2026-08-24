@@ -4,19 +4,11 @@ A personal Android app that reads uploaded PDFs aloud with word-level
 highlighting synced to audio, plus a chat sidebar for asking questions about
 the book, scoped to the section currently being read.
 
-The client is a native Expo/React Native Android app (`mobile/`) -- chosen
-over a browser tab for background audio, lock-screen controls, and
-one-handed reading-while-listening. It talks to a FastAPI backend on AWS
-(API Gateway + Lambda, DynamoDB, S3, SQS, Cognito), all defined as CDK infra.
+The client is a native Expo/React Native Android app (`mobile/`) -- chosen over a browser tab for background audio, lock-screen controls, and one-handed reading-while-listening. It talks to a FastAPI backend on AWS (API Gateway + Lambda, DynamoDB, S3, SQS, Cognito), all defined as CDK infra.
 
-Every non-public backend route requires a valid Cognito JWT; the client
-authenticates directly against Cognito's plain JSON API (no backend-for-
-frontend -- the app client has no secret, so there's nothing a server layer
-would protect); local dev emulates Cognito with `jagregory/cognito-local`.
+Every non-public backend route requires a valid Cognito JWT; the client authenticates directly against Cognito's plain JSON API (no backend-for-frontend -- the app client has no secret, so there's nothing a server layer would protect); local dev emulates Cognito with `jagregory/cognito-local`.
 
-See "Architecture" below for the full request/processing flow and the SQS
-pipeline design, "Mobile app" for the client, and "Quickstart" to run it
-locally.
+See "Architecture" below for the full request/processing flow and the SQS pipeline design, "Mobile app" for the client, and "Quickstart" to run it locally.
 
 ## Architecture
 
@@ -61,81 +53,22 @@ books FAILED/PARTIAL instead of leaving them stuck forever; CloudWatch
 alarms watch DLQ depth and a TTS-fallback log metric.
 ```
 
-**Why SQS, and how it's actually consumed.** The three pipeline stages
-(extract, synthesize, stitch) are decoupled by their own SQS queue rather
-than calling each other directly, for two reasons: fan-out (one extracted
-book becomes N independent per-chunk synthesis jobs, each its own Lambda
-invocation, so a 300-page book synthesizes in parallel instead of
-serially) and durability (a crashed or throttled invocation just leaves its
-message unacknowledged -- SQS redelivers it, no work is lost, no
-distributed lock is needed). Fan-in back onto one book uses an atomic
-`chunksDone` counter on the DynamoDB book item, not a second queue per
-book: exactly one chunk's increment ever observes the counter hit the
-total, and that invocation is the one that publishes the single message
-that advances the pipeline to the next stage.
+**Why SQS, and how it's actually consumed.** The three pipeline stages (extract, synthesize, stitch) are decoupled by their own SQS queue rather than calling each other directly, for two reasons: fan-out (one extracted book becomes N independent per-chunk synthesis jobs, each its own Lambda invocation, so a 300-page book synthesizes in parallel instead of serially) and durability (a crashed or throttled invocation just leaves its message unacknowledged -- SQS redelivers it, no work is lost, no distributed lock is needed). Fan-in back onto one book uses an atomic `chunksDone` counter on the DynamoDB book item, not a second queue per book: exactly one chunk's increment ever observes the counter hit the total, and that invocation is the one that publishes the single message that advances the pipeline to the next stage.
 
-Each queue is attached to its Lambda via an **SQS event source mapping**
-(ESM) -- Lambda's own managed poller calls `ReceiveMessage` on the queue and
-invokes the function when something arrives. This is *not* a push/webhook
-mechanism from SQS's side; the polling happens on AWS's side, on your
-behalf, continuously, whether or not the queue has any messages. Every
-queue in this stack sets `ReceiveMessageWaitTimeSeconds` to SQS's max of 20
-seconds (long polling): an idle poller's `ReceiveMessage` call blocks for up
-to 20s waiting for a message instead of returning immediately and being
-called again in a tight loop. That distinction is what an idle-infrastructure
-SQS bill is made of -- five queues short-polling 24/7 can burn through the
-AWS free tier's 1M requests/month on empty queues alone, with book uploads
-themselves accounting for only a few hundred requests each. Long polling
-cuts that idle request volume by roughly two orders of magnitude with no
-effect on delivery latency for a real message -- a Lambda still fires
-essentially instantly once one lands.
+Each queue is attached to its Lambda via an **SQS event source mapping** (ESM) -- Lambda's own managed poller calls `ReceiveMessage` on the queue and invokes the function when something arrives. This is *not* a push/webhook mechanism from SQS's side; the polling happens on AWS's side, on your behalf, continuously, whether or not the queue has any messages. Every queue in this stack sets `ReceiveMessageWaitTimeSeconds` to SQS's max of 20 seconds (long polling): an idle poller's `ReceiveMessage` call blocks for up to 20s waiting for a message instead of returning immediately and being called again in a tight loop. That distinction is what an idle-infrastructure SQS bill is made of -- five queues short-polling 24/7 can burn through the AWS free tier's 1M requests/month on empty queues alone, with book uploads themselves accounting for only a few hundred requests each. Long polling cuts that idle request volume by roughly two orders of magnitude with no effect on delivery latency for a real message -- a Lambda still fires essentially instantly once one lands.
 
 Other deliberate SQS choices worth knowing when touching this pipeline:
 
-- **Visibility timeout is sized at ~6x each Lambda's own timeout** on every
-  queue, so a message can never become visible to a second concurrent
-  invocation while the first is still legitimately working it.
-- **`max_receive_count` + a DLQ per queue** bounds retries -- a chunk that
-  can never succeed (a permanently broken PDF page, an engine outage) stops
-  retrying and lands in its DLQ instead of looping forever.
-- **`max_concurrency` throttles the synthesize and stitch queues'** event
-  source mappings, independent of Lambda reserved concurrency (this
-  account's total Lambda concurrency budget is small enough that reserving
-  any of it per-function isn't possible). This is also what keeps
-  synthesis calls to the free, unofficial edge-tts endpoint polite rather
-  than bursty.
-- **The stitch DLQ has no consumer** -- unlike extract/synthesize, a
-  permanently failing stitch leaves the book cleanly `PARTIAL` rather than
-  needing an automated retry, so it only needs a depth alarm, not a
-  sweeper.
+- **Visibility timeout is sized at ~6x each Lambda's own timeout** on every queue, so a message can never become visible to a second concurrent invocation while the first is still legitimately working it.
+- **`max_receive_count` + a DLQ per queue** bounds retries -- a chunk that can never succeed (a permanently broken PDF page, an engine outage) stops retrying and lands in its DLQ instead of looping forever.
+- **`max_concurrency` throttles the synthesize and stitch queues'** event source mappings, independent of Lambda reserved concurrency (this account's total Lambda concurrency budget is small enough that reserving any of it per-function isn't possible). This is also what keeps synthesis calls to the free, unofficial edge-tts endpoint polite rather than bursty.
+- **The stitch DLQ has no consumer** -- unlike extract/synthesize, a permanently failing stitch leaves the book cleanly `PARTIAL` rather than needing an automated retry, so it only needs a depth alarm, not a sweeper.
 
-**What could be improved.** An SQS event source mapping's background poller
-keeps running for as long as the mapping is enabled, independent of how
-long each `ReceiveMessage` call blocks -- long polling only slows the empty
-loop's *rate*, it doesn't idle the poller down completely. If idle request
-volume ever needs to drop further than that, the next step is to replace
-the always-on event source mapping with a **scheduled poll**: an
-EventBridge rule invoking each pipeline Lambda directly on a fixed interval,
-with the Lambda draining its own queue in that one invocation instead of
-Lambda's poller doing it continuously in the background. That trades a
-worse best-case latency per pipeline stage (bounded by the poll interval
-instead of near-instant) for a much lower and more predictable request
-floor, and is the natural next lever here if request volume becomes a
-problem again.
+**What could be improved.** An SQS event source mapping's background poller keeps running for as long as the mapping is enabled, independent of how long each `ReceiveMessage` call blocks -- long polling only slows the empty loop's *rate*, it doesn't idle the poller down completely. If idle request volume ever needs to drop further than that, the next step is to replace the always-on event source mapping with a **scheduled poll**: an EventBridge rule invoking each pipeline Lambda directly on a fixed interval, with the Lambda draining its own queue in that one invocation instead of Lambda's poller doing it continuously in the background. That trades a worse best-case latency per pipeline stage (bounded by the poll interval instead of near-instant) for a much lower and more predictable request floor, and is the natural next lever here if request volume becomes a problem again.
 
 ## Library context (backend)
 
-`backend/src/contexts/library/` is a DDD-flavoured bounded context following
-the repo's `{domain,application,infrastructure,interface}` layout: `domain/`
-holds the `Book`/`Chunk` aggregates, status/failure-reason enums, repository
-and storage/queue Protocols (no ABCs), and a handful of pure modules with no
-AWS/library dependencies (chunking, word-timing alignment, book-global
-offset math); `application/` holds one use case per client-facing or
-Lambda-triggered operation (request an upload, extract, synthesize a chunk,
-stitch, resynthesize); `infrastructure/` holds the DynamoDB/S3/SQS adapters
-and the TTS engine implementations (edge-tts primary, Google Cloud TTS
-fallback); `interface/` holds the FastAPI controllers and the SQS Lambda
-handlers (plus their LocalStack poll-loop equivalents for local dev).
+`backend/src/contexts/library/` is a DDD-flavoured bounded context following the repo's `{domain,application,infrastructure,interface}` layout: `domain/` holds the `Book`/`Chunk` aggregates, status/failure-reason enums, repository and storage/queue Protocols (no ABCs), and a handful of pure modules with no AWS/library dependencies (chunking, word-timing alignment, book-global offset math); `application/` holds one use case per client-facing or Lambda-triggered operation (request an upload, extract, synthesize a chunk, stitch, resynthesize); `infrastructure/` holds the DynamoDB/S3/SQS adapters and the TTS engine implementations (edge-tts primary, Google Cloud TTS fallback); `interface/` holds the FastAPI controllers and the SQS Lambda handlers (plus their LocalStack poll-loop equivalents for local dev).
 
 **Upload contract** (what `mobile/lib/upload.ts` does): `POST /books
 {"title": "..."}` returns `{book, upload: {url, fields, key, expiresIn,
@@ -385,85 +318,36 @@ book_id)` before ever calling into `ChunkRepository`.
 
 ## Mobile app (Expo, issue #10)
 
-`mobile/` is an Expo (React Native + TypeScript) Android app talking to the
-backend API above. Expo Router + NativeWind, matching the stack of this
-user's other Expo apps. Roughly: an auth screen driving Cognito's
-username/password + forced-first-login challenge flow, a library screen
-(book list, upload, retry/re-upload), and a reader screen (word-level
-highlight sync, mini-player, an "Ask" chat sheet).
+`mobile/` is an Expo (React Native + TypeScript) Android app talking to the backend API above. Expo Router + NativeWind, matching the stack of this user's other Expo apps. Roughly: an auth screen driving Cognito's username/password + forced-first-login challenge flow, a library screen (book list, upload, retry/re-upload), and a reader screen (word-level highlight sync, mini-player, an "Ask" chat sheet).
 
-Background audio uses `expo-av` with `staysActiveInBackground` for
-lock-screen/Now-Playing presence; a fully custom lock-screen transport
-(remote play/pause/seek) is native-module territory beyond expo-av's surface
-and is a known follow-up, not claimed here. Chat's SSE transport uses
-`react-native-sse` rather than `fetch().body.getReader()`, which RN/Hermes
-doesn't reliably support.
+Background audio uses `expo-av` with `staysActiveInBackground` for lock-screen/Now-Playing presence; a fully custom lock-screen transport (remote play/pause/seek) is native-module territory beyond expo-av's surface and is a known follow-up, not claimed here. Chat's SSE transport uses `react-native-sse` rather than `fetch().body.getReader()`, which RN/Hermes doesn't reliably support.
 
-Local dev: `cd mobile && npx expo start`, pointed at a running `make up`
-backend or a deployed `pr-N` API via `EXPO_PUBLIC_API_BASE_URL`/
-`EXPO_PUBLIC_CHAT_BASE_URL` (see `mobile/.env.example`). Real Android builds
-are triggered by publishing a GitHub release (`mobile-release.yml`, EAS
-Build, APK attached to the release -- sideload distribution, no Play
-Console). PR environments deploy backend only; there is no per-PR mobile
-build.
+Local dev: `cd mobile && npx expo start`, pointed at a running `make up` backend or a deployed `pr-N` API via `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` (see `mobile/.env.example`). Real Android builds are triggered by publishing a GitHub release (`mobile-release.yml`, EAS Build, APK attached to the release -- sideload distribution, no Play Console). PR environments deploy backend only; there is no per-PR mobile build.
 
 ### Highlight sync
 
-**The manifest is the timeline; the audio file is an optimization.**
-Position, segment and word are derived from `book.json` plus the per-chunk
-marks, not from the player's own reported duration (with no Xing header,
-that's an *estimate* on a mixed-engine book).
+**The manifest is the timeline; the audio file is an optimization.** Position, segment and word are derived from `book.json` plus the per-chunk marks, not from the player's own reported duration (with no Xing header, that's an *estimate* on a mixed-engine book).
 
-- A `requestAnimationFrame` loop interpolates the active word between the
-  player's own status callbacks, which fire far less often than a spoken
-  word passes.
-- Position is located with two binary searches -- the manifest's segment
-  list, then the rebased word list inside that segment -- but steady state
-  is one comparison against the current index, falling back to a full
-  search only on a discontinuity (seek).
-- Marks are fetched lazily, one segment at a time with a small prefetch and
-  cache; a missing marks object (the normal case wherever real TTS hasn't
-  run) is negatively cached so the render loop doesn't re-request it dozens
-  of times a second.
+- A `requestAnimationFrame` loop interpolates the active word between the player's own status callbacks, which fire far less often than a spoken word passes.
+- Position is located with two binary searches -- the manifest's segment list, then the rebased word list inside that segment -- but steady state is one comparison against the current index, falling back to a full search only on a discontinuity (seek).
+- Marks are fetched lazily, one segment at a time with a small prefetch and cache; a missing marks object (the normal case wherever real TTS hasn't run) is negatively cached so the render loop doesn't re-request it dozens of times a second.
 
 ### Graceful degradation
 
-**If chunk text exists, it renders.** Audio and text degrade independently:
-a `PARTIAL`/`NO_AUDIO` book (the *only* terminal state a book reaches
-anywhere real TTS is disabled -- see "Real TTS runs in prod only" above)
-still shows full text with playback disabled and a "Try audio again"
-action; only `FAILED` (extraction itself failing) has no text to show yet.
+**If chunk text exists, it renders.** Audio and text degrade independently: a `PARTIAL`/`NO_AUDIO` book (the *only* terminal state a book reaches anywhere real TTS is disabled -- see "Real TTS runs in prod only" above) still shows full text with playback disabled and a "Try audio again" action; only `FAILED` (extraction itself failing) has no text to show yet.
 
 ### Polling
 
-- Book status polling backs off from a fast interval to a slower one after
-  an initial window, stops entirely on the server's `terminal` flag or a
-  404, and pauses while the app is backgrounded, firing one immediate poll
-  on foreground.
-- The library list only polls while at least one book is non-terminal, and
-  generates zero background traffic once everything has settled.
+- Book status polling backs off from a fast interval to a slower one after an initial window, stops entirely on the server's `terminal` flag or a 404, and pauses while the app is backgrounded, firing one immediate poll on foreground.
+- The library list only polls while at least one book is non-terminal, and generates zero background traffic once everything has settled.
 
 ### Known ceiling
 
-`GET /books/{id}/chunks` returns every chunk's full text in one response.
-The hard limit is Lambda's 6 MB response cap, at roughly **3,300 chunks
-(~2,700 pages)**. Not paginated, deliberately -- a cursor plus a
-virtualized list interacts badly with only rendering the active chunk's
-highlighted slice, for a limit no personal library will hit.
+`GET /books/{id}/chunks` returns every chunk's full text in one response. The hard limit is Lambda's 6 MB response cap, at roughly **3,300 chunks (~2,700 pages)**. Not paginated, deliberately -- a cursor plus a virtualized list interacts badly with only rendering the active chunk's highlighted slice, for a limit no personal library will hit.
 
 ## Auth model
 
-Username + password sign-in (not email-based). **Accounts are admin-provisioned
-only -- there is no public signup.** The Cognito user pool has
-`self_sign_up_enabled=False`, so Cognito itself rejects the `SignUp` API
-regardless of what the client does; see "Provisioning a new reader account"
-below. The app talks to Cognito's plain JSON API directly (`mobile/lib/
-auth.ts`) -- the app client has no secret, so there is nothing a
-backend-for-frontend layer would protect. The refresh token lives in
-`expo-secure-store`; the id token (~1h) is held there too and attached as
-`Authorization: Bearer` on calls to the backend API, which never validates
-it itself -- API Gateway's Cognito JWT authorizer does, forwarding the
-verified claims to the Lambda.
+Username + password sign-in (not email-based). **Accounts are admin-provisioned only -- there is no public signup.** The Cognito user pool has `self_sign_up_enabled=False`, so Cognito itself rejects the `SignUp` API regardless of what the client does; see "Provisioning a new reader account" below. The app talks to Cognito's plain JSON API directly (`mobile/lib/auth.ts`) -- the app client has no secret, so there is nothing a backend-for-frontend layer would protect. The refresh token lives in `expo-secure-store`; the id token (~1h) is held there too and attached as `Authorization: Bearer` on calls to the backend API, which never validates it itself -- API Gateway's Cognito JWT authorizer does, forwarding the verified claims to the Lambda.
 
 ### First login: forced password change
 
@@ -531,21 +415,12 @@ SYNTHESIS_STUB_MODE=edge_tts S3_PUBLIC_HOST=<your-LAN-IP> make up
 
 Gated on `ENVIRONMENT=local` exactly (`get_speech_synthesizer()`'s docstring) -- a `pr-N`/CI stack can never reach it even by accident, so the "no automated environment calls a live endpoint" guarantee is untouched. `edge-tts` needs no API key, so this is a manual opt-in with no quota/cost risk, just the usual flakiness of an unofficial endpoint. Don't run `make smoke` in this mode -- it asserts the deterministic `--expect-synthesis silent` outcome and will correctly complain about the mismatch.
 
-Run the Expo app against that backend separately -- `cd mobile && npx expo
-start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/
-`EXPO_PUBLIC_CHAT_BASE_URL`/`EXPO_PUBLIC_COGNITO_ENDPOINT` in `mobile/.env`
-pointed at `http://<your-LAN-IP>:1854{0,2,3}` (a phone/emulator can't reach
-`localhost` on the host). See "Mobile app" above.
+Run the Expo app against that backend separately -- `cd mobile && npx expo start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL`/`EXPO_PUBLIC_COGNITO_ENDPOINT` in `mobile/.env` pointed at `http://<your-LAN-IP>:1854{0,2,3}` (a phone/emulator can't reach `localhost` on the host). See "Mobile app" above.
 
 `make up` seeds a local Cognito pool (via `jagregory/cognito-local`) with two
 users:
-- **`dev` / `password`** -- permanent password, no forced change, for
-  routine local dev / `make smoke` convenience. Sign in with it in the Expo
-  app, or run `curl -H "Authorization: Bearer $(make -s token)"
-  localhost:18540/me` to hit the backend directly.
-- **`newuser` / `TempPass123!`** -- a *temporary* password, to exercise the
-  admin-provisioned forced-first-login flow locally: signing in with it
-  triggers the "choose a new password" step instead of a normal login.
+- **`dev` / `password`** -- permanent password, no forced change, for routine local dev / `make smoke` convenience. Sign in with it in the Expo app, or run `curl -H "Authorization: Bearer $(make -s token)" localhost:18540/me` to hit the backend directly.
+- **`newuser` / `TempPass123!`** -- a *temporary* password, to exercise the admin-provisioned forced-first-login flow locally: signing in with it triggers the "choose a new password" step instead of a normal login.
 
 Run the full test suite (backend pytest, mobile jest + tsc + eslint, infra
 `aws_cdk.assertions` synth tests):
@@ -557,47 +432,23 @@ make test
 `make synth` runs `cdk synth -c environment=dev` for a local sanity check of
 every stack.
 
-**End-to-end tests.** There is no automated mobile e2e suite yet (Detox/
-Maestro is a deferred follow-up); `local/smoke_test.py` (see `make smoke`
-above) is what actually exercises the full upload -> extract -> synthesize
--> stitch -> status flow today, locally and against every deployed
-environment. The constraint to keep in mind when adding real e2e coverage:
-`get_speech_synthesizer()` gates real TTS engines on `ENVIRONMENT != "prod"`,
-so only local compose's `SYNTHESIS_STUB_MODE=silent` ever produces real
-audio bytes to assert against -- every other environment's books settle at
-`PARTIAL`/`NO_AUDIO`.
+**End-to-end tests.** There is no automated mobile e2e suite yet (Detox/Maestro is a deferred follow-up); `local/smoke_test.py` (see `make smoke` above) is what actually exercises the full upload -> extract -> synthesize -> stitch -> status flow today, locally and against every deployed environment. The constraint to keep in mind when adding real e2e coverage: `get_speech_synthesizer()` gates real TTS engines on `ENVIRONMENT != "prod"`, so only local compose's `SYNTHESIS_STUB_MODE=silent` ever produces real audio bytes to assert against -- every other environment's books settle at `PARTIAL`/`NO_AUDIO`.
 
 ## Repo layout
 
-The general shape, not an exact listing (it will drift -- see the actual
-directories for current contents):
+The general shape, not an exact listing (it will drift -- see the actual directories for current contents):
 
-- **`backend/`** -- the FastAPI app, DDD-flavoured (bounded contexts under
-  `src/contexts/<name>/{domain,application,infrastructure,interface}`),
-  packaged as a single Lambda container image. That same image backs the
-  API Lambda, the pipeline Lambdas (extract/synthesize/stitch/DLQ-sweeper),
-  and the streaming chat Lambda -- they differ only by container `cmd`.
-- **`mobile/`** -- the Expo (React Native + TypeScript) Android client,
-  Expo Router + NativeWind, talking to the backend over HTTPS.
-- **`infra/`** -- the CDK app (Python), one stack per concern (auth,
-  storage, the SQS pipeline, the API), synthesized per environment via CDK
-  context rather than hand-maintained per-env config.
-- **`local/`** -- docker-compose helper scripts (LocalStack/Cognito
-  bootstrap, the stdlib-only smoke test used locally, in CI, and against
-  every deployed environment).
-- **`docs/`** -- operational runbooks (e.g. rollback) that outlive any one
-  feature.
-- **`.github/workflows/`** -- CI (unit tests + local smoke) and CD
-  (per-PR ephemeral deploy/teardown, prod deploy, mobile release) pipelines.
+- **`backend/`** -- the FastAPI app, DDD-flavoured (bounded contexts under `src/contexts/<name>/{domain,application,infrastructure,interface}`), packaged as a single Lambda container image. That same image backs the API Lambda, the pipeline Lambdas (extract/synthesize/stitch/DLQ-sweeper), and the streaming chat Lambda -- they differ only by container `cmd`.
+- **`mobile/`** -- the Expo (React Native + TypeScript) Android client, Expo Router + NativeWind, talking to the backend over HTTPS.
+- **`infra/`** -- the CDK app (Python), one stack per concern (auth, storage, the SQS pipeline, the API), synthesized per environment via CDK context rather than hand-maintained per-env config.
+- **`local/`** -- docker-compose helper scripts (LocalStack/Cognito bootstrap, the stdlib-only smoke test used locally, in CI, and against every deployed environment).
+- **`docs/`** -- operational runbooks (e.g. rollback) that outlive any one feature.
+- **`.github/workflows/`** -- CI (unit tests + local smoke) and CD (per-PR ephemeral deploy/teardown, prod deploy, mobile release) pipelines.
 - `docker-compose.yml`, `Makefile` at the root drive local dev.
 
 ## Deploy model
 
-A single AWS account hosts prod and every ephemeral PR environment,
-distinguished by resource name and (deliberately) by region: prod runs
-closer to its one real user, while PR/staging environments share a
-separate region to stay off prod's account-level service quotas. A CDK
-context value, `environment`, drives every stack/resource name:
+A single AWS account hosts prod and every ephemeral PR environment, distinguished by resource name and (deliberately) by region: prod runs closer to its one real user, while PR/staging environments share a separate region to stay off prod's account-level service quotas. A CDK context value, `environment`, drives every stack/resource name:
 
 | `environment`   | when              | stack names (example)             |
 |------------------|-------------------|------------------------------------|
@@ -606,21 +457,9 @@ context value, `environment`, drives every stack/resource name:
 | `staging`        | pre-prod CD gate   | `BookloudApi-staging`              |
 | `prod`           | push to `main`     | `BookloudApi-prod`                 |
 
-- **On every PR**: CI runs backend/mobile/infra unit tests plus a local
-  compose smoke test, then deploys the full stack set suffixed `pr-<N>` and
-  runs the smoke test against the live API. The stack is left standing
-  (that's the point of an ephemeral environment) and a PR comment links to
-  its API URL -- there is no per-PR mobile build; point a local
-  `expo start` dev client at that URL to test against it.
-- **On PR close/merge**: the `pr-<N>` stacks are torn down in reverse
-  dependency order.
-- **On push to `main`**: the same test-then-deploy sequence runs against an
-  ephemeral `staging` stack first (full smoke test, login-gated), then
-  deploys to `prod` only if that gate passes.
-- **On a GitHub release**: the Android APK is built via EAS and attached to
-  the release -- independent of the backend deploy pipeline above.
+- **On every PR**: CI runs backend/mobile/infra unit tests plus a local compose smoke test, then deploys the full stack set suffixed `pr-<N>` and runs the smoke test against the live API. The stack is left standing (that's the point of an ephemeral environment) and a PR comment links to its API URL -- there is no per-PR mobile build; point a local `expo start` dev client at that URL to test against it.
+- **On PR close/merge**: the `pr-<N>` stacks are torn down in reverse dependency order.
+- **On push to `main`**: the same test-then-deploy sequence runs against an ephemeral `staging` stack first (full smoke test, login-gated), then deploys to `prod` only if that gate passes.
+- **On a GitHub release**: the Android APK is built via EAS and attached to the release -- independent of the backend deploy pipeline above.
 
-Removal policy: `RETAIN` for `environment == "prod"`, `DESTROY` (+
-`auto_delete_objects`) otherwise -- PR/staging environments vanish
-completely on teardown; prod data survives a stack deletion. See
-`docs/rollback.md` for the procedure to undo a bad prod deploy.
+Removal policy: `RETAIN` for `environment == "prod"`, `DESTROY` (+ `auto_delete_objects`) otherwise -- PR/staging environments vanish completely on teardown; prod data survives a stack deletion. See `docs/rollback.md` for the procedure to undo a bad prod deploy.
