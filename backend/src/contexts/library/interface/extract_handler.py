@@ -1,11 +1,18 @@
-"""SQS-triggered extract Lambda handler -- the pipeline's "controller"
-(PLANS/phase-3.md §8.1). Wired in ``infra/stacks/pipeline_stack.py`` as a
-second ``DockerImageFunction`` over the same backend image as the API
-Lambda, with ``cmd=["src.contexts.library.interface.extract_handler.handler"]``.
+"""Extract Lambda handlers -- the pipeline's "controller" (PLANS/phase-3.md
+§8.1). Wired in ``infra/stacks/pipeline_stack.py`` as a second
+``DockerImageFunction`` over the same backend image as the API Lambda, with
+``cmd=["src.contexts.library.interface.extract_handler.scheduled_handler"]``.
 
-``local/local_extract_worker.py`` runs this same ``handle_records`` in a
-poll loop against LocalStack, since LocalStack community can't run our
-image-based Lambda.
+``scheduled_handler`` is the deployed entrypoint: an EventBridge Rule
+invokes it on a fixed schedule instead of an SQS event source mapping
+invoking ``handler`` continuously (that ESM used to poll the queue 24/7,
+even idle -- the SQS free-tier cost trap ``pipeline_stack.py``'s
+``_add_scheduled_pollers`` explains). It drains the queue with the same
+``poll_once`` the ``extract-worker`` docker-compose service already runs
+against LocalStack (``local_extract_worker.py``).
+
+``handler`` (the plain ``event["Records"]`` shape) is kept for direct/test
+invocation -- nothing in AWS calls it anymore.
 """
 
 from __future__ import annotations
@@ -44,6 +51,19 @@ def handler(event: dict, context: object) -> None:
         synthesis_queue=get_synthesis_queue(),
     )
     handle_records(event.get("Records", []), use_case)
+
+
+def scheduled_handler(event: dict, context: object) -> None:
+    """EventBridge Rule entrypoint (``infra/stacks/pipeline_stack.py``'s
+    ``_add_scheduled_pollers``). Ignores ``event`` -- the rule's schedule is
+    the only trigger that matters -- and drains the extract queue with the
+    same ``poll_once`` the local docker-compose worker uses."""
+    from src.config import settings
+    from src.contexts.library.interface.local_extract_worker import poll_once
+    from src.contexts.library.interface.queue_poller import drain_queue
+    from src.infrastructure.aws import client
+
+    drain_queue(poll_once, client("sqs"), settings.extract_queue_url, context)
 
 
 def handle_records(records: Sequence[dict], use_case: ExtractBook) -> list[ExtractBookResult]:

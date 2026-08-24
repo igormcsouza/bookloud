@@ -15,6 +15,7 @@ from src.contexts.library.interface.stitch_handler import (
     command_from_record,
     handle_records,
     handler,
+    scheduled_handler,
 )
 
 USER_ID = "user-1"
@@ -170,3 +171,65 @@ def test_handler_end_to_end_all_failed_book_reaches_partial_no_audio(
     assert document["segments"] == []
     assert document["missing"] == [0, 1]
     assert document["status"] == "PARTIAL"
+
+
+# --- scheduled_handler(): the EventBridge-Rule-triggered entrypoint --------------
+
+
+class _FakeLambdaContext:
+    def get_remaining_time_in_millis(self) -> int:
+        return 60_000
+
+
+def test_scheduled_handler_drains_the_stitch_queue_and_deletes_the_message(
+    stitch_infra, dynamodb_table, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scheduled_handler (the deployed cmd, replacing the SqsEventSource) must
+    poll settings.stitch_queue_url itself, process whatever's there through
+    the exact same use case as handler(), and delete the message on
+    success -- nothing left for the next scheduled tick to reprocess."""
+    import src.config as config
+    from src.contexts.library.infrastructure.dynamodb_book_repository import (
+        DynamoDbBookRepository,
+    )
+    from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
+        DynamoDbChunkRepository,
+    )
+    from src.infrastructure.clock import SystemClock
+
+    book_repo = DynamoDbBookRepository(table=dynamodb_table)
+    chunk_repo = DynamoDbChunkRepository(table=dynamodb_table)
+
+    book = Book.create(id=BOOK_ID, user_id=USER_ID, title_raw="Real Book", now=SystemClock().now())
+    book.status = BookStatus.EXTRACTED
+    book.chunks_total = 2
+    book.chunks_done = 2
+    book.chunks_failed = 2
+    book_repo.save(book)
+    for index in range(2):
+        chunk_repo.save(
+            Chunk(
+                book_id=BOOK_ID,
+                index=index,
+                user_id=USER_ID,
+                text=f"chunk {index}",
+                char_start=index * 10,
+                char_end=(index + 1) * 10,
+                audio_key=None,
+                marks_key=None,
+                status=ChunkStatus.FAILED,
+            )
+        )
+
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    queue_url = sqs.create_queue(QueueName="bookloud-test-stitch")["QueueUrl"]
+    monkeypatch.setattr(config.settings, "stitch_queue_url", queue_url)
+    sqs.send_message(QueueUrl=queue_url, MessageBody=_body())
+
+    scheduled_handler({}, _FakeLambdaContext())
+
+    updated = book_repo.get(USER_ID, BOOK_ID)
+    assert updated.status is BookStatus.PARTIAL
+
+    remaining = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0)
+    assert remaining.get("Messages", []) == []

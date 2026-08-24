@@ -11,7 +11,12 @@ from src.contexts.library.application.extraction import ExtractBookResult
 from src.contexts.library.domain.book import Book
 from src.contexts.library.domain.value_objects import BookStatus
 from src.contexts.library.infrastructure.s3_keys import source_pdf_key
-from src.contexts.library.interface.extract_handler import handle_records, handler, s3_objects_from_sqs_body
+from src.contexts.library.interface.extract_handler import (
+    handle_records,
+    handler,
+    s3_objects_from_sqs_body,
+    scheduled_handler,
+)
 from tests.contexts.library.pdf_fixtures import simple_text_pdf
 
 USER_ID = "user-1"
@@ -276,3 +281,45 @@ def test_handler_permanent_failure_flips_book_to_failed(s3_and_dynamodb, dynamod
     updated = book_repo.get(USER_ID, BOOK_ID)
     assert updated.status == BookStatus.FAILED
     assert updated.failure_reason == "CORRUPT_PDF"
+
+
+# --- scheduled_handler(): the EventBridge-Rule-triggered entrypoint --------------
+
+
+class _FakeLambdaContext:
+    def get_remaining_time_in_millis(self) -> int:
+        return 60_000
+
+
+def test_scheduled_handler_drains_the_extract_queue_and_deletes_the_message(
+    s3_and_dynamodb, dynamodb_table, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scheduled_handler (the deployed cmd, replacing the SqsEventSource) must
+    poll settings.extract_queue_url itself, process whatever's there through
+    the exact same use case as handler(), and delete the message on
+    success -- nothing left for the next scheduled tick to reprocess."""
+    import src.config as config
+    from src.contexts.library.infrastructure.dynamodb_book_repository import (
+        DynamoDbBookRepository,
+    )
+
+    key = source_pdf_key(USER_ID, BOOK_ID)
+    book_repo = DynamoDbBookRepository(table=dynamodb_table)
+    book = Book.create(
+        id=BOOK_ID, user_id=USER_ID, title_raw="Real Book", now=datetime.now(UTC), source_key=key
+    )
+    book_repo.save(book)
+    s3_and_dynamodb.put_object(Bucket=PDF_BUCKET, Key=key, Body=simple_text_pdf())
+
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    queue_url = sqs.create_queue(QueueName="bookloud-test-extract")["QueueUrl"]
+    monkeypatch.setattr(config.settings, "extract_queue_url", queue_url)
+    sqs.send_message(QueueUrl=queue_url, MessageBody=_s3_event_body(PDF_BUCKET, key))
+
+    scheduled_handler({}, _FakeLambdaContext())
+
+    updated = book_repo.get(USER_ID, BOOK_ID)
+    assert updated.status == BookStatus.EXTRACTED
+
+    remaining = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0)
+    assert remaining.get("Messages", []) == []

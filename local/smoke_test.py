@@ -32,6 +32,11 @@ Usage:
         [--newuser-username USER]       # optional; exercises the NEW_PASSWORD_REQUIRED
         [--newuser-temp-password PASS]  # challenge flow for an admin-provisioned user
                                          # (e.g. local's seeded "newuser", PLANS/phase-1.md §11)
+        [--extract-function-name NAME]     # optional; deployed Lambda names to invoke
+        [--synthesize-function-name NAME]  # directly on every poll iteration instead of
+        [--stitch-function-name NAME]      # waiting on that Lambda's own EventBridge Rule
+                                            # schedule. Passed by deploy-pr/deploy-prod only
+                                            # -- see check_upload_and_stitch's docstring.
 
 Auth checks (PLANS/phase-1.md §6.1) are all skipped unless their inputs are
 supplied, except the anonymous-401 check, which always runs.
@@ -113,10 +118,12 @@ import base64
 import json
 import random
 import string
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 
 
 def _get(url: str, timeout: float) -> tuple[int, str]:
@@ -150,6 +157,43 @@ def _retry_get(url: str, overall_timeout: float) -> tuple[int, str]:
 def check(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def _invoke_lambda(function_name: str) -> None:
+    """Synchronously invokes a deployed pipeline Lambda via the AWS CLI --
+    this smoke test's substitute for waiting on that Lambda's own
+    EventBridge Rule schedule (up to 20 minutes on the stitch queue,
+    infra/stacks/config.py's ``*_POLL_INTERVAL_MINUTES``). The poll loops
+    below call this every few seconds instead, so the deployed
+    ``scheduled_handler`` code path still gets exercised for real -- CI just
+    doesn't wait on the clock to trigger it. Raises on any AWS CLI failure:
+    an invoke failing here means the deployed Lambda itself is broken, not
+    something to shrug off."""
+    result = subprocess.run(
+        [
+            "aws",
+            "lambda",
+            "invoke",
+            "--function-name",
+            function_name,
+            "--invocation-type",
+            "RequestResponse",
+            "--cli-binary-format",
+            "raw-in-base64-out",
+            "--payload",
+            "{}",
+            "/dev/null",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    check(result.returncode == 0, f"aws lambda invoke {function_name!r} failed: {result.stderr}")
+
+
+def _invoke_all(function_names: Sequence[str]) -> None:
+    for name in function_names:
+        if name:
+            _invoke_lambda(name)
 
 
 def check_health(
@@ -511,11 +555,14 @@ def _authed_get(url: str, id_token: str, timeout: float) -> tuple[int, str]:
 _EXTRACTION_DONE_STATUSES = ("EXTRACTED", "STITCHING", "READY", "PARTIAL", "FAILED")
 
 
-def _poll_book_status(api_url: str, book_id: str, id_token: str, timeout: float) -> dict:
+def _poll_book_status(
+    api_url: str, book_id: str, id_token: str, timeout: float, *, invoke_functions: Sequence[str] = ()
+) -> dict:
     url = f"{api_url.rstrip('/')}/books/{book_id}"
     deadline = time.monotonic() + timeout
     last_body: dict | None = None
     while time.monotonic() < deadline:
+        _invoke_all(invoke_functions)
         status, body = _authed_get(url, id_token, 10)
         check(status == 200, f"GET {url} failed while polling: {status} {body}")
         last_body = json.loads(body)
@@ -527,13 +574,16 @@ def _poll_book_status(api_url: str, book_id: str, id_token: str, timeout: float)
     )
 
 
-def _poll_chunks_to_terminal(api_url: str, book_id: str, id_token: str, timeout: float) -> list[dict]:
+def _poll_chunks_to_terminal(
+    api_url: str, book_id: str, id_token: str, timeout: float, *, invoke_functions: Sequence[str] = ()
+) -> list[dict]:
     """Poll GET /books/{id}/chunks every 3s until every chunk's status is
     DONE or FAILED, or the timeout expires (PLANS/phase-4.md §9.3)."""
     url = f"{api_url.rstrip('/')}/books/{book_id}/chunks"
     deadline = time.monotonic() + timeout
     last_chunks: list[dict] = []
     while time.monotonic() < deadline:
+        _invoke_all(invoke_functions)
         status, body = _authed_get(url, id_token, 15)
         check(status == 200, f"GET {url} failed while polling: {status} {body}")
         last_chunks = json.loads(body)
@@ -546,7 +596,9 @@ def _poll_chunks_to_terminal(api_url: str, book_id: str, id_token: str, timeout:
     )
 
 
-def _poll_book_terminal(api_url: str, book_id: str, id_token: str, timeout: float) -> dict:
+def _poll_book_terminal(
+    api_url: str, book_id: str, id_token: str, timeout: float, *, invoke_functions: Sequence[str] = ()
+) -> dict:
     """Poll GET /books/{id}/status every 3s until the server says the book is
     terminal (PLANS/phase-5.md §8/§9.3). Polling the new endpoint IS part of
     the test -- it is the phase's other deliverable, and its server-computed
@@ -556,6 +608,7 @@ def _poll_book_terminal(api_url: str, book_id: str, id_token: str, timeout: floa
     deadline = time.monotonic() + timeout
     last_body: dict | None = None
     while time.monotonic() < deadline:
+        _invoke_all(invoke_functions)
         status, body = _authed_get(url, id_token, 15)
         check(status == 200, f"GET {url} failed while polling: {status} {body}")
         last_body = json.loads(body)
@@ -579,6 +632,9 @@ def check_upload_and_stitch(
     *,
     skip_synthesis: bool = False,
     expect_synthesis: str = "failed",
+    extract_function: str = "",
+    synthesize_function: str = "",
+    stitch_function: str = "",
 ) -> str:
     """PLANS/phase-3.md §9.3, extended by PLANS/phase-4.md §0/§9.3 and
     PLANS/phase-5.md §9.3 -- the phase's real gate. POST /books -> upload the
@@ -590,7 +646,17 @@ def check_upload_and_stitch(
 
     Then (unless skip_synthesis): poll chunks to a terminal state, then poll
     GET /books/{id}/status until `terminal`, asserting the outcome for
-    `expect_synthesis` (see this module's docstring)."""
+    `expect_synthesis` (see this module's docstring).
+
+    ``extract_function``/``synthesize_function``/``stitch_function`` (empty
+    by default): deployed Lambda function names to invoke directly on every
+    poll iteration of their respective stage (via ``_invoke_all``). Real AWS
+    runs (deploy-pr/deploy-prod) pass these -- the pipeline Lambdas only run
+    on their own EventBridge Rule schedule now (up to 20 minutes on stitch),
+    far longer than this script's polling timeouts should ever be sized for.
+    local-smoke (LocalStack + the local docker-compose workers, which poll
+    every second regardless) omits them; the loops behave exactly as before.
+    """
     id_token = _login(cognito_endpoint, cognito_client_id, username, password)
 
     create_url = f"{api_url.rstrip('/')}/books"
@@ -622,7 +688,9 @@ def check_upload_and_stitch(
     print(f"OK  POST {upload['url']} (presigned upload) -> {upload_status}")
     check(upload_status == 204, f"expected 204 from the presigned upload, got {upload_status}")
 
-    final = _poll_book_status(api_url, book_id, id_token, extraction_timeout)
+    final = _poll_book_status(
+        api_url, book_id, id_token, extraction_timeout, invoke_functions=(extract_function,)
+    )
     print(
         f"OK  extraction finished -> status={final['status']} "
         f"chunksTotal={final.get('chunksTotal')} pageCount={final.get('pageCount')}"
@@ -654,7 +722,9 @@ def check_upload_and_stitch(
     # Real edge-tts/Google are prod-only -- every environment this script runs
     # against gets an offline stand-in, so the outcome is fully deterministic
     # in both modes.
-    terminal_chunks = _poll_chunks_to_terminal(api_url, book_id, id_token, synthesis_timeout)
+    terminal_chunks = _poll_chunks_to_terminal(
+        api_url, book_id, id_token, synthesis_timeout, invoke_functions=(synthesize_function,)
+    )
     sources = {c.get("index"): c.get("synthesisSource") for c in terminal_chunks}
     print(f"OK  synthesis reached a terminal state for {len(terminal_chunks)} chunk(s); sources={sources}")
 
@@ -682,7 +752,9 @@ def check_upload_and_stitch(
     )
 
     # --- stitch phase (PLANS/phase-5.md §9.3) --------------------------------
-    status_body = _poll_book_terminal(api_url, book_id, id_token, stitch_timeout)
+    status_body = _poll_book_terminal(
+        api_url, book_id, id_token, stitch_timeout, invoke_functions=(stitch_function,)
+    )
     print(
         f"OK  stitch finished -> status={status_body['status']} "
         f"terminal={status_body['terminal']} failureReason={status_body.get('failureReason')!r} "
@@ -776,7 +848,15 @@ def check_upload_and_stitch(
     # check_resynthesize MUTATES it (rewinding a PARTIAL book to EXTRACTED),
     # so nothing above may depend on its state afterwards.
     check_audio_delivery(api_url, book_id, id_token, expect_synthesis)
-    check_resynthesize(api_url, book_id, id_token, expect_synthesis, stitch_timeout)
+    check_resynthesize(
+        api_url,
+        book_id,
+        id_token,
+        expect_synthesis,
+        stitch_timeout,
+        synthesize_function=synthesize_function,
+        stitch_function=stitch_function,
+    )
     
     return book_id
 
@@ -906,7 +986,14 @@ def check_audio_delivery(api_url: str, book_id: str, id_token: str, expect_synth
 
 
 def check_resynthesize(
-    api_url: str, book_id: str, id_token: str, expect_synthesis: str, stitch_timeout: float
+    api_url: str,
+    book_id: str,
+    id_token: str,
+    expect_synthesis: str,
+    stitch_timeout: float,
+    *,
+    synthesize_function: str = "",
+    stitch_function: str = "",
 ) -> None:
     url = f"{api_url.rstrip('/')}/books/{book_id}/resynthesize"
     req = urllib.request.Request(url, method="POST", headers={"Authorization": f"Bearer {id_token}"})
@@ -942,7 +1029,17 @@ def check_resynthesize(
     # The loop closes. This is what proves the fan-out was really
     # re-published and really consumed -- not merely that a DynamoDB row was
     # rewritten. Nothing else in this repo can prove /resynthesize end to end.
-    final = _poll_book_terminal(api_url, book_id, id_token, stitch_timeout)
+    # Pokes BOTH functions every iteration -- resynthesize republishes
+    # straight to the synthesize queue (skipping extract), whose completing
+    # increment then fans into the stitch queue, so either one might still
+    # have work sitting unclaimed when the other finishes.
+    final = _poll_book_terminal(
+        api_url,
+        book_id,
+        id_token,
+        stitch_timeout,
+        invoke_functions=(synthesize_function, stitch_function),
+    )
     check(
         final["status"] == "PARTIAL" and final.get("failureReason") == "NO_AUDIO",
         f"expected the retried book back at PARTIAL/NO_AUDIO, got "
@@ -1239,6 +1336,15 @@ def main() -> int:
     parser.add_argument("--login-password", default=None)
     parser.add_argument("--newuser-username", default=None)
     parser.add_argument("--newuser-temp-password", default=None)
+    # Deployed Lambda function names (empty by default -- local-smoke's
+    # LocalStack workers poll every second and never need this). Real AWS
+    # runs pass these so the upload/synthesis/stitch polls above can invoke
+    # each pipeline Lambda directly instead of waiting on its own
+    # EventBridge Rule schedule (up to 20 minutes on stitch) -- see
+    # check_upload_and_stitch's docstring.
+    parser.add_argument("--extract-function-name", default="")
+    parser.add_argument("--synthesize-function-name", default="")
+    parser.add_argument("--stitch-function-name", default="")
     args = parser.parse_args()
 
     print(f"Smoke test against api={args.api_url} frontend={args.frontend_url or '(skipped)'}")
@@ -1290,6 +1396,9 @@ def main() -> int:
                 args.stitch_timeout,
                 skip_synthesis=args.skip_synthesis,
                 expect_synthesis=args.expect_synthesis,
+                extract_function=args.extract_function_name,
+                synthesize_function=args.synthesize_function_name,
+                stitch_function=args.stitch_function_name,
             )
             if args.chat_url:
                 check_chat(

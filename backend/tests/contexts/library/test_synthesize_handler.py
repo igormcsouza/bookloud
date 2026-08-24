@@ -9,7 +9,12 @@ from src.contexts.library.application.synthesis import SynthesizeChunkResult
 from src.contexts.library.domain.chunk import Chunk
 from src.contexts.library.domain.value_objects import ChunkStatus
 from src.contexts.library.infrastructure.sqs_synthesis_queue import SYNTHESIS_MESSAGE_VERSION
-from src.contexts.library.interface.synthesize_handler import command_from_record, handle_records, handler
+from src.contexts.library.interface.synthesize_handler import (
+    command_from_record,
+    handle_records,
+    handler,
+    scheduled_handler,
+)
 
 USER_ID = "user-1"
 BOOK_ID = "book-1"
@@ -228,3 +233,61 @@ def test_handler_publishes_the_stitch_message_on_the_completing_increment(
     ).get("Messages", [])
     assert len(messages) == 1
     assert json.loads(messages[0]["Body"]) == {"v": 1, "userId": USER_ID, "bookId": BOOK_ID}
+
+
+# --- scheduled_handler(): the EventBridge-Rule-triggered entrypoint --------------
+
+
+class _FakeLambdaContext:
+    def get_remaining_time_in_millis(self) -> int:
+        return 60_000
+
+
+def test_scheduled_handler_drains_the_synthesize_queue_and_deletes_the_message(
+    synthesis_infra, dynamodb_table, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scheduled_handler (the deployed cmd, replacing the SqsEventSource) must
+    poll settings.synthesize_queue_url itself, process whatever's there
+    through the exact same use case as handler(), and delete the message on
+    success -- nothing left for the next scheduled tick to reprocess."""
+    import src.config as config
+    from src.contexts.library.domain.book import Book
+    from src.contexts.library.infrastructure.dynamodb_book_repository import (
+        DynamoDbBookRepository,
+    )
+    from src.contexts.library.infrastructure.dynamodb_chunk_repository import (
+        DynamoDbChunkRepository,
+    )
+    from src.infrastructure.clock import SystemClock
+
+    book_repo = DynamoDbBookRepository(table=dynamodb_table)
+    chunk_repo = DynamoDbChunkRepository(table=dynamodb_table)
+    book = Book.create(id=BOOK_ID, user_id=USER_ID, title_raw="Real Book", now=SystemClock().now())
+    book.chunks_total = 1
+    book_repo.save(book)
+    chunk_repo.save(
+        Chunk(
+            book_id=BOOK_ID,
+            index=0,
+            user_id=USER_ID,
+            text="Some real chunk text to synthesize.",
+            char_start=0,
+            char_end=36,
+            audio_key=None,
+            marks_key=None,
+            status=ChunkStatus.PENDING,
+        )
+    )
+
+    sqs = boto3.client("sqs", region_name="us-east-1")
+    queue_url = sqs.create_queue(QueueName="bookloud-test-synthesize")["QueueUrl"]
+    monkeypatch.setattr(config.settings, "synthesize_queue_url", queue_url)
+    sqs.send_message(QueueUrl=queue_url, MessageBody=_body(chunk_index=0))
+
+    scheduled_handler({}, _FakeLambdaContext())
+
+    updated_chunk = chunk_repo.get(BOOK_ID, 0)
+    assert updated_chunk.status == ChunkStatus.FAILED  # stub environment (§0)
+
+    remaining = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=0)
+    assert remaining.get("Messages", []) == []

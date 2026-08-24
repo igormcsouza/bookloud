@@ -64,6 +64,12 @@ on:
         value: ${{ jobs.deploy.outputs.user_pool_id }}
       user_pool_client_id:
         value: ${{ jobs.deploy.outputs.user_pool_client_id }}
+      extract_function_name:
+        value: ${{ jobs.deploy.outputs.extract_function_name }}
+      synthesize_function_name:
+        value: ${{ jobs.deploy.outputs.synthesize_function_name }}
+      stitch_function_name:
+        value: ${{ jobs.deploy.outputs.stitch_function_name }}
       login_username:
         value: ${{ jobs.deploy.outputs.login_username }}
       login_password:
@@ -91,6 +97,9 @@ jobs:
       chat_url: ${{ steps.deploy-backend.outputs.chat_url }}
       user_pool_id: ${{ steps.deploy-backend.outputs.user_pool_id }}
       user_pool_client_id: ${{ steps.deploy-backend.outputs.user_pool_client_id }}
+      extract_function_name: ${{ steps.deploy-backend.outputs.extract_function_name }}
+      synthesize_function_name: ${{ steps.deploy-backend.outputs.synthesize_function_name }}
+      stitch_function_name: ${{ steps.deploy-backend.outputs.stitch_function_name }}
       login_username: ${{ steps.seed-users.outputs.login_username }}
       login_password: ${{ steps.seed-users.outputs.login_password }}
       newuser_username: ${{ steps.seed-users.outputs.newuser_username }}
@@ -161,10 +170,17 @@ jobs:
           env_name = os.environ["ENV_NAME"]
           api = outputs.get(f"BookloudApi-{env_name}", {})
           auth = outputs.get(f"BookloudAuth-{env_name}", {})
+          pipeline = outputs.get(f"BookloudPipeline-{env_name}", {})
           print(f"api_url={api.get('ApiUrl', '').rstrip('/')}")
           print(f"chat_url={api.get('ChatUrl', '').rstrip('/')}")
           print(f"user_pool_id={auth.get('UserPoolId', '')}")
           print(f"user_pool_client_id={auth.get('UserPoolClientId', '')}")
+          # The smoke test invokes these directly instead of waiting on their
+          # own EventBridge Rule schedule (infra/stacks/pipeline_stack.py's
+          # _add_scheduled_pollers) -- see local/smoke_test.py's docstring.
+          print(f"extract_function_name={pipeline.get('ExtractFunctionName', '')}")
+          print(f"synthesize_function_name={pipeline.get('SynthesizeFunctionName', '')}")
+          print(f"stitch_function_name={pipeline.get('StitchFunctionName', '')}")
           PY
 
       # Self-signup is disabled on the pool (admin-only provisioning, see
@@ -188,16 +204,37 @@ jobs:
           NEWUSER="smoke-newuser-${GITHUB_RUN_ID}"
           NEWUSER_TEMP_PASS="Temp-$(openssl rand -hex 8)!A1"
 
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
-            --message-action SUPPRESS >/dev/null
+          # Tolerate "already exists" here too, same rule and same reasoning
+          # as the fixed "admin" user below -- but for a different trigger:
+          # GITHUB_RUN_ID (normally unique per run) is stable across `gh run
+          # rerun`, so a rerun that gets this far again would otherwise hit
+          # UsernameExistsException on a user THIS SAME run already created.
+          # admin-set-user-password runs unconditionally either way, so a
+          # pre-existing user still ends up with this run's fresh password.
+          if ! create_err=$(aws cognito-idp admin-create-user \
+                --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
+                --message-action SUPPRESS 2>&1 >/dev/null); then
+            case "$create_err" in
+              *UsernameExistsException*)
+                echo "$LOGIN_USER already exists (rerun of this same run) -- resetting its password" ;;
+              *)
+                echo "$create_err" >&2; exit 1 ;;
+            esac
+          fi
           aws cognito-idp admin-set-user-password \
             --user-pool-id "$USER_POOL_ID" --username "$LOGIN_USER" \
             --password "$LOGIN_PASS" --permanent >/dev/null
 
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
-            --message-action SUPPRESS >/dev/null
+          if ! create_err=$(aws cognito-idp admin-create-user \
+                --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
+                --message-action SUPPRESS 2>&1 >/dev/null); then
+            case "$create_err" in
+              *UsernameExistsException*)
+                echo "$NEWUSER already exists (rerun of this same run) -- resetting its password" ;;
+              *)
+                echo "$create_err" >&2; exit 1 ;;
+            esac
+          fi
           aws cognito-idp admin-set-user-password \
             --user-pool-id "$USER_POOL_ID" --username "$NEWUSER" \
             --password "$NEWUSER_TEMP_PASS" >/dev/null
@@ -256,7 +293,10 @@ jobs:
             --login-username "${{ steps.seed-users.outputs.login_username }}" \
             --login-password "${{ steps.seed-users.outputs.login_password }}" \
             --newuser-username "${{ steps.seed-users.outputs.newuser_username }}" \
-            --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}"
+            --newuser-temp-password "${{ steps.seed-users.outputs.newuser_temp_password }}" \
+            --extract-function-name "${{ steps.deploy-backend.outputs.extract_function_name }}" \
+            --synthesize-function-name "${{ steps.deploy-backend.outputs.synthesize_function_name }}" \
+            --stitch-function-name "${{ steps.deploy-backend.outputs.stitch_function_name }}"
 
       - name: Smoke test (minimal) the deployed stack
         if: ${{ !inputs.seed_users }}

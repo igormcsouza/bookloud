@@ -43,47 +43,37 @@ class Config:
     # perfectly good chunks on a large book. Kept in lockstep with
     # backend/src/config.py's synthesize_max_receive_count.
     SYNTHESIZE_MAX_RECEIVE_COUNT = 5
-    # The ESM's max_concurrency -- the real throttle on concurrent synthesize
-    # invocations (see pipeline_stack.py's reserved-concurrency comment for
-    # the full reasoning). A single named constant so it's a one-line change
-    # if the 403 rate from edge-tts's free endpoint stays at zero.
-    #
-    # Lowered 5 -> 2 in phase 5 (PLANS/phase-5.md OQ-2). The account's *total*
-    # Lambda concurrency is 10. With the stitch function now competing too, a
-    # large book in flight could consume 5 (synthesize) + 1 (extract) +
-    # 2 (stitch) = 8, leaving 2 for the API Lambda and the frontend SSR
-    # Lambda combined -- so the user's own status polling would get throttled
-    # precisely while their book is processing.
-    #
-    # 2 is the deliberate FLOOR, not a tuned value: start minimal, measure a
-    # real prod book, bump once there is data. Nothing has ever run the real
-    # edge-tts engine, so per-chunk latency is unmeasured and any "tuned"
-    # number here would be invented. 2 + 1 + 2 = 5 leaves 5 for API + SSR.
-    #
-    # 2 rather than 1 because ScalingConfig.MaximumConcurrency's minimum
-    # accepted value is 2 -- 1 is only expressible by dropping the
-    # ScalingConfig entirely, which would lose the poller back-off and let
-    # throttling burn ApproximateReceiveCount toward SYNTHESIZE_MAX_RECEIVE_
-    # COUNT, DLQ-ing chunks for backpressure rather than for any TTS failure.
-    #
-    # Signals that it is too low: time-to-READY on a real book, or chunks
-    # DLQ-ing under throttling. Bumping is this one line plus a deploy.
-    SYNTHESIZE_MAX_CONCURRENCY = 2
 
     # --- phase 5: stitch Lambda env vars, read by backend/src/config.py ---
     ENV_STITCH_QUEUE_URL = "STITCH_QUEUE_URL"
     ENV_STITCH_MAX_RECEIVE_COUNT = "STITCH_MAX_RECEIVE_COUNT"
 
     # 3, not 5 (unlike the synthesize queue): there is no ESM-throttle
-    # backpressure to burn attempts here -- max_concurrency 2 with one
-    # message per book means the poller essentially never throttles -- and
-    # each attempt costs up to 15 minutes. Kept in lockstep with
-    # backend/src/config.py's stitch_max_receive_count.
+    # backpressure to burn attempts here, and each attempt costs up to 15
+    # minutes. Kept in lockstep with backend/src/config.py's
+    # stitch_max_receive_count.
     STITCH_MAX_RECEIVE_COUNT = 3
-    # The ESM minimum. One book at a time is the real workload, and this is
-    # the memory-heaviest function in the system against a 10-execution
-    # account ceiling (PLANS/phase-5.md §6.3).
-    STITCH_MAX_CONCURRENCY = 2
+
+    # --- scheduled polling (replaces the extract/synthesize/stitch ESMs --
+    # see pipeline_stack.py's _add_scheduled_pollers) ---
+    #
+    # Each interval must clear its Lambda's own timeout with real margin: an
+    # EventBridge Rule has no "skip if the last invocation is still running"
+    # option, so if a tick fired while the previous one was still draining a
+    # backlog, two invocations could poll (and, on stitch, concatenate) the
+    # same queue concurrently. interval > timeout with headroom makes that
+    # physically impossible instead of relying on scheduling luck.
+    #
+    # extract: 120s timeout -> 5 min (2.5x). synthesize: 300s timeout -> 10
+    # min (2x). stitch: 900s timeout -> 20 min (~1.33x, the tightest margin
+    # since it's already at Lambda's own 15-minute ceiling).
+    #
+    # This is the throughput knob "increase later if needed" refers to --
+    # shortening any of these is a one-line change plus a deploy, no
+    # architecture change.
+    EXTRACT_POLL_INTERVAL_MINUTES = 5
+    SYNTHESIZE_POLL_INTERVAL_MINUTES = 10
+    STITCH_POLL_INTERVAL_MINUTES = 20
 
     # S3 key prefix for uploaded source PDFs -- must stay in lockstep with
     # backend/src/contexts/library/infrastructure/s3_keys.py's
