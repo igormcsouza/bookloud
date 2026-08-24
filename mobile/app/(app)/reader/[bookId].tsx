@@ -137,6 +137,13 @@ export default function Reader() {
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
   const viewportHeightRef = useRef(0);
+  // Last lines reported by `onTextLayout`. The outer `Text`'s line breaks
+  // don't change from tick to tick (only the highlighted span's styling
+  // does), so `onTextLayout` fires once per chunk, not once per word --
+  // this cache is what lets the `wordStart` effect below recompute the
+  // scroll target on every word without waiting for a layout event that
+  // isn't coming.
+  const linesRef = useRef<TextLine[]>([]);
 
   // Reset to the top of the pane on every chunk change -- covers both the
   // swipe-navigation case (already snappy without this) and, more
@@ -145,6 +152,7 @@ export default function Reader() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false });
     scrollYRef.current = 0;
+    linesRef.current = [];
   }, [chunkIndex]);
 
   const onScrollViewLayout = useCallback((e: LayoutChangeEvent) => {
@@ -155,29 +163,43 @@ export default function Reader() {
     scrollYRef.current = e.nativeEvent.contentOffset.y;
   }, []);
 
+  const followHighlightedWord = useCallback((wordStart: number) => {
+    if (wordStart < 0) return;
+    const lines = linesRef.current;
+    const lineIndex = findLineForOffset(lines, wordStart);
+    if (lineIndex < 0) return;
+    const line = lines[lineIndex];
+    const target = computeScrollTarget({
+      wordTop: line.y,
+      wordBottom: line.y + line.height,
+      scrollY: scrollYRef.current,
+      viewportHeight: viewportHeightRef.current,
+    });
+    // Only scroll when the word's line is actually near/past the visible
+    // edge -- avoids fighting the user's own scroll and avoids a scroll
+    // call (and its animation restart) on every single word tick when the
+    // current line is already comfortably on screen.
+    if (target !== null) {
+      scrollRef.current?.scrollTo({ y: target, animated: true });
+    }
+  }, []);
+
   const onParagraphTextLayout = useCallback(
     (e: { nativeEvent: { lines: TextLine[] } }, wordStart: number) => {
-      if (wordStart < 0) return;
-      const { lines } = e.nativeEvent;
-      const lineIndex = findLineForOffset(lines, wordStart);
-      if (lineIndex < 0) return;
-      const line = lines[lineIndex];
-      const target = computeScrollTarget({
-        wordTop: line.y,
-        wordBottom: line.y + line.height,
-        scrollY: scrollYRef.current,
-        viewportHeight: viewportHeightRef.current,
-      });
-      // Only scroll when the word's line is actually near/past the visible
-      // edge -- avoids fighting the user's own scroll and avoids a scroll
-      // call (and its animation restart) on every single word tick when the
-      // current line is already comfortably on screen.
-      if (target !== null) {
-        scrollRef.current?.scrollTo({ y: target, animated: true });
-      }
+      linesRef.current = e.nativeEvent.lines;
+      followHighlightedWord(wordStart);
     },
-    [],
+    [followHighlightedWord],
   );
+
+  // `onTextLayout` only fires when the outer `Text`'s own layout changes
+  // (line breaks), which doesn't happen from tick to tick since the
+  // highlighted word is a same-length swap within an unchanged total
+  // string -- so playback advancing word-by-word needs its own trigger to
+  // re-run the scroll check against the cached `lines`.
+  useEffect(() => {
+    followHighlightedWord(playback.state.wordStart);
+  }, [playback.state.wordStart, followHighlightedWord]);
 
   const activeChunk = useMemo(
     () => chunks.find((c) => c.index === chunkIndex) ?? chunks[0] ?? null,
