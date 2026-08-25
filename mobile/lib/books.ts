@@ -239,6 +239,16 @@ export async function resynthesize(bookId: string): Promise<ResynthesisResult> {
   return res.json();
 }
 
+/** Hard delete -- no undo (issue #12). 404 is folded into a no-op: a book
+ *  the server already doesn't have is exactly the caller's desired end
+ *  state, so retried/duplicate deletes (e.g. a fast double-swipe) succeed
+ *  silently rather than surfacing a spurious error. */
+export async function deleteBook(bookId: string): Promise<void> {
+  const res = await authFetch(apiUrl(`/books/${bookId}`), { method: "DELETE" });
+  if (res.status === 404) return;
+  if (!res.ok) throw await failure(res, "Could not delete this book.");
+}
+
 /**
  * The one request in the whole app that must NOT carry an Authorization
  * header: the presigned POST is self-authenticating, and an extra header is

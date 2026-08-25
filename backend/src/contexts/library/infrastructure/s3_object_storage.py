@@ -140,3 +140,22 @@ class S3ObjectStorage:
         return S3MultipartWriter(
             client=self._client, bucket=self._bucket, key=key, content_type=content_type
         )
+
+    def delete(self, *, key: str) -> None:
+        # Idempotent, like S3PdfStorage.delete -- a missing key is not an
+        # error.
+        self._client.delete_object(Bucket=self._bucket, Key=key)
+
+    def delete_many(self, *, keys: list[str]) -> None:
+        # DeleteObjects caps at 1000 keys per call (S3 hard limit) -- a book
+        # with more than 1000 chunks is far beyond anything this app
+        # produces (PLANS/phase-2.md §3.2's "tens of books" scale), but the
+        # batching keeps this correct rather than silently truncating.
+        if not keys:
+            return
+        for i in range(0, len(keys), 1000):
+            batch = keys[i : i + 1000]
+            self._client.delete_objects(
+                Bucket=self._bucket,
+                Delete={"Objects": [{"Key": key} for key in batch]},
+            )

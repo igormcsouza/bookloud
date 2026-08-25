@@ -105,6 +105,22 @@ def test_get_bytes_reraises_other_client_errors(monkeypatch: pytest.MonkeyPatch,
         storage.get_bytes(key="books/user-1/book-1/source.pdf")
 
 
+# --- delete (issue #12) --------------------------------------------------------
+
+
+def test_delete_removes_the_object(storage: S3PdfStorage, s3_bucket) -> None:
+    s3_bucket.put_object(Bucket=BUCKET, Key="books/user-1/book-1/source.pdf", Body=b"%PDF-1.4")
+
+    storage.delete(key="books/user-1/book-1/source.pdf")
+
+    with pytest.raises(NotFoundError):
+        storage.get_bytes(key="books/user-1/book-1/source.pdf")
+
+
+def test_delete_missing_key_is_not_an_error(storage: S3PdfStorage) -> None:
+    storage.delete(key="books/user-1/book-1/source.pdf")  # no raise
+
+
 # --- client construction / endpoint override -----------------------------------
 # The three endpoint-selection tests that lived here moved to
 # test_s3_audio_delivery.py when `_build_client` was promoted to

@@ -69,6 +69,8 @@ class PdfStorage(Protocol):
 
     def get_bytes(self, *, key: str) -> bytes: ...  # pragma: no cover
 
+    def delete(self, *, key: str) -> None: ...  # pragma: no cover
+
 
 class MultipartWriter(Protocol):
     """Streaming write port (PLANS/phase-5.md §7.4). Buffers until it has at
@@ -110,3 +112,7 @@ class ObjectStorage(Protocol):
     def open_multipart(
         self, *, key: str, content_type: str
     ) -> MultipartWriter: ...  # pragma: no cover
+
+    def delete(self, *, key: str) -> None: ...  # pragma: no cover
+
+    def delete_many(self, *, keys: list[str]) -> None: ...  # pragma: no cover

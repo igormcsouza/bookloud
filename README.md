@@ -394,7 +394,10 @@ comment).
 ```bash
 # S3_PUBLIC_HOST=<your-LAN-IP> makes presigned S3 URLs (upload/download)
 # reachable from a phone -- omit it and they default to localhost, which
-# only works for a browser/emulator on this same machine.
+# only works for a browser on this same machine. Running the Android
+# emulator instead of a phone? See "Running against the Android emulator"
+# below -- neither localhost nor your LAN-IP reaches the host from inside
+# it; it needs its own special address.
 S3_PUBLIC_HOST=<your-LAN-IP> make up
              # LocalStack + cognito-local + backend (uvicorn, hot reload) +
              # extract-worker, synthesize-worker and stitch-worker (poll
@@ -415,7 +418,52 @@ SYNTHESIS_STUB_MODE=edge_tts S3_PUBLIC_HOST=<your-LAN-IP> make up
 
 Gated on `ENVIRONMENT=local` exactly (`get_speech_synthesizer()`'s docstring) -- a `pr-N`/CI stack can never reach it even by accident, so the "no automated environment calls a live endpoint" guarantee is untouched. `edge-tts` needs no API key, so this is a manual opt-in with no quota/cost risk, just the usual flakiness of an unofficial endpoint. Don't run `make smoke` in this mode -- it asserts the deterministic `--expect-synthesis silent` outcome and will correctly complain about the mismatch.
 
-Run the Expo app against that backend separately -- `cd mobile && npx expo start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL`/`EXPO_PUBLIC_COGNITO_ENDPOINT` in `mobile/.env` pointed at `http://<your-LAN-IP>:1854{0,2,3}` (a phone/emulator can't reach `localhost` on the host). See "Mobile app" above.
+Run the Expo app against that backend separately -- `cd mobile && npx expo start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL`/`EXPO_PUBLIC_COGNITO_ENDPOINT` in `mobile/.env` pointed at `http://<your-LAN-IP>:1854{0,2,3}` (a phone can't reach `localhost` on the host). See "Mobile app" above.
+
+### Running against the Android emulator instead of a physical phone
+
+The emulator is not "a browser/emulator on this same machine" for networking
+purposes, despite running on the host: it's NAT'd behind its own virtual
+network, so neither `localhost` nor the host's real LAN-IP reaches the host
+from inside it. The one address that does is the emulator's fixed alias for
+the host loopback, `10.0.2.2` -- use it everywhere the instructions above say
+`<your-LAN-IP>`, for both the backend and the app:
+
+```bash
+# Repo root -- .env is read by docker-compose automatically, no need to
+# export S3_PUBLIC_HOST by hand every time.
+echo "S3_PUBLIC_HOST=10.0.2.2" > .env
+make up
+```
+
+```bash
+# mobile/.env
+EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:18540
+EXPO_PUBLIC_CHAT_BASE_URL=http://10.0.2.2:18542
+EXPO_PUBLIC_COGNITO_ENDPOINT=http://10.0.2.2:18543
+EXPO_PUBLIC_COGNITO_CLIENT_ID=<from `local/.cognito.env`, written by `make up`>
+EXPO_PUBLIC_COGNITO_REGION=us-east-1
+```
+
+Boot the AVD and start Expo pointed at it:
+
+```bash
+emulator -avd <your-avd-name> &          # e.g. pixel6; `emulator -list-avds`
+cd mobile && npx expo start --android
+```
+
+Skipping the `S3_PUBLIC_HOST` override above is the one mistake that looks
+like it works and isn't: `make up` still comes up green and `/health` still
+returns `ok`, because that endpoint never touches S3. It's `DELETE
+/books/{id}` (and any other call that writes/reads/deletes the source PDF
+server-side) that 500s, because the presigned-URL client defaults to
+`http://localhost:4566` for S3 -- correct for a real browser on the host,
+unreachable from inside the backend's own Docker container. If you see a PDF
+upload succeed but a later delete or extraction fail with an
+`EndpointConnectionError` to `localhost:4566` in `docker compose logs
+backend`, this is why -- set `S3_PUBLIC_HOST` and `make up` again (`docker
+compose up -d --no-deps --force-recreate backend` is enough to pick up an
+`.env` change without restarting the rest of the stack).
 
 `make up` seeds a local Cognito pool (via `jagregory/cognito-local`) with two
 users:
