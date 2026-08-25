@@ -263,6 +263,8 @@ def test_delete_book_removes_source_pdf_and_stitched_outputs(
         id="book-1", user_id=CLAIMS["sub"], title_raw="Mine", now=datetime.now(UTC),
         source_key=source_key,
     )
+    book.audio_key = audio_key
+    book.manifest_key = manifest_key
     repo.save(book)
 
     response = authed_app_client.delete("/books/book-1")

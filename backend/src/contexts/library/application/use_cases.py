@@ -196,11 +196,17 @@ class DeleteBook:
         if book.source_key is not None:
             self._pdf_storage.delete(key=book.source_key)
 
-        self._audio_storage.delete(key=book_audio_key(user_id, book_id))
+        # book_audio_key/book_manifest_key are gated the same way as
+        # source_key above: a book that never got past UPLOADED has no
+        # stitched output, so skip the no-op S3 calls rather than issuing
+        # them unconditionally.
+        if book.audio_key is not None:
+            self._audio_storage.delete(key=book_audio_key(user_id, book_id))
         self._audio_storage.delete_many(
             keys=[chunk_audio_key(user_id, book_id, chunk.index) for chunk in chunks]
         )
-        self._marks_storage.delete(key=book_manifest_key(user_id, book_id))
+        if book.manifest_key is not None:
+            self._marks_storage.delete(key=book_manifest_key(user_id, book_id))
         self._marks_storage.delete_many(
             keys=[chunk_marks_key(user_id, book_id, chunk.index) for chunk in chunks]
         )

@@ -355,6 +355,8 @@ def test_delete_book_deletes_chunks_then_book_in_order(
         now=FIXED_NOW,
         source_key="books/user-1/book-1/source.pdf",
     )
+    book.audio_key = "audio/user-1/book-1/book.mp3"
+    book.manifest_key = "marks/user-1/book-1/book.json"
     book_repo.save(book)
 
     DeleteBook(book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage).execute(
@@ -366,6 +368,30 @@ def test_delete_book_deletes_chunks_then_book_in_order(
     assert pdf_storage.deleted_keys == ["books/user-1/book-1/source.pdf"]
     assert audio_storage.deleted_keys == ["audio/user-1/book-1/book.mp3"]
     assert marks_storage.deleted_keys == ["marks/user-1/book-1/book.json"]
+
+
+def test_delete_book_never_stitched_skips_stitch_output_deletes(
+    book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage
+) -> None:
+    # No audio_key/manifest_key -- the everyday state for a book that never
+    # got past UPLOADED. Deleting nonexistent stitched outputs would be a
+    # no-op either way (S3 delete is idempotent), but the gate avoids the
+    # pointless calls, mirroring source_key's own None-guard.
+    book = Book.create(
+        id="book-1",
+        user_id="user-1",
+        title_raw="Title",
+        now=FIXED_NOW,
+        source_key="books/user-1/book-1/source.pdf",
+    )
+    book_repo.save(book)
+
+    DeleteBook(book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage).execute(
+        "user-1", "book-1"
+    )
+
+    assert audio_storage.deleted_keys == []
+    assert marks_storage.deleted_keys == []
 
 
 def test_delete_book_deletes_per_chunk_audio_and_marks(
