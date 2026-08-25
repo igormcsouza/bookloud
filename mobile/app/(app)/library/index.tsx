@@ -161,6 +161,7 @@ export default function Library() {
                 book={item}
                 retrying={retryingId === item.id}
                 reuploading={uploading}
+                deleting={deletingId === item.id}
                 onPress={() => {
                   if (item.status === "FAILED") return;
                   if (item.status === "READY" || item.status === "PARTIAL") {
