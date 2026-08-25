@@ -159,6 +159,58 @@ def test_multipart_declares_a_checksum_algorithm_on_every_call() -> None:
     assert parts == [{"ETag": '"etag"', "PartNumber": 1, "ChecksumCRC32": "abc123=="}]
 
 
+# --- delete / delete_many (issue #12) ----------------------------------------
+
+
+def test_delete_removes_the_object(s3_bucket) -> None:
+    storage = S3ObjectStorage(bucket=BUCKET, s3_client=s3_bucket)
+    storage.put_bytes(key="audio/u/b/000000.mp3", data=b"x", content_type="audio/mpeg")
+
+    storage.delete(key="audio/u/b/000000.mp3")
+
+    with pytest.raises(NotFoundError):
+        storage.get_bytes(key="audio/u/b/000000.mp3")
+
+
+def test_delete_missing_key_is_not_an_error(s3_bucket) -> None:
+    storage = S3ObjectStorage(bucket=BUCKET, s3_client=s3_bucket)
+    storage.delete(key="audio/u/b/999999.mp3")  # no raise
+
+
+def test_delete_many_removes_all_given_keys(s3_bucket) -> None:
+    storage = S3ObjectStorage(bucket=BUCKET, s3_client=s3_bucket)
+    storage.put_bytes(key="marks/u/b/000000.json", data=b"{}", content_type="application/json")
+    storage.put_bytes(key="marks/u/b/000001.json", data=b"{}", content_type="application/json")
+
+    storage.delete_many(keys=["marks/u/b/000000.json", "marks/u/b/000001.json"])
+
+    with pytest.raises(NotFoundError):
+        storage.get_bytes(key="marks/u/b/000000.json")
+    with pytest.raises(NotFoundError):
+        storage.get_bytes(key="marks/u/b/000001.json")
+
+
+def test_delete_many_with_empty_list_makes_no_call() -> None:
+    stub_client = MagicMock()
+    storage = S3ObjectStorage(bucket=BUCKET, s3_client=stub_client)
+    storage.delete_many(keys=[])
+    stub_client.delete_objects.assert_not_called()
+
+
+def test_delete_many_batches_over_one_thousand_keys() -> None:
+    stub_client = MagicMock()
+    storage = S3ObjectStorage(bucket=BUCKET, s3_client=stub_client)
+    keys = [f"marks/u/b/{i:06d}.json" for i in range(1500)]
+
+    storage.delete_many(keys=keys)
+
+    assert stub_client.delete_objects.call_count == 2
+    first_batch = stub_client.delete_objects.call_args_list[0].kwargs["Delete"]["Objects"]
+    second_batch = stub_client.delete_objects.call_args_list[1].kwargs["Delete"]["Objects"]
+    assert len(first_batch) == 1000
+    assert len(second_batch) == 500
+
+
 def test_multipart_tolerates_a_backend_that_returns_no_checksum() -> None:
     stub_client = MagicMock()
     stub_client.create_multipart_upload.return_value = {"UploadId": "upload-1"}

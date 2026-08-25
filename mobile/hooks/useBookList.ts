@@ -31,6 +31,9 @@ export type UseBookList = {
    *  poll -- and, crucially, so the list starts polling immediately (the new
    *  book is UPLOADED, i.e. non-terminal). */
   insert: (book: Book) => void;
+  /** Optimistic removal after a successful delete, so the row disappears
+   *  immediately rather than waiting on the next poll. */
+  remove: (bookId: string) => void;
 };
 
 export function useBookList(): UseBookList {
@@ -102,5 +105,9 @@ export function useBookList(): UseBookList {
     kick.current?.();
   }, []);
 
-  return { books, loading, error, refresh: load, insert };
+  const remove = useCallback((bookId: string) => {
+    setBooks((previous) => previous.filter((existing) => existing.id !== bookId));
+  }, []);
+
+  return { books, loading, error, refresh: load, insert, remove };
 }

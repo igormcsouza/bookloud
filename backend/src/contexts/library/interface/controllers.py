@@ -34,6 +34,7 @@ from src.contexts.library.application.delivery import (
 )
 from src.contexts.library.application.resynthesis import ResynthesizeBook
 from src.contexts.library.application.use_cases import (
+    DeleteBook,
     GetBook,
     ListBookChunks,
     ListBooks,
@@ -48,6 +49,7 @@ from src.contexts.library.domain.chat import ChatModel
 from src.contexts.library.domain.repository import ChatQuotaRepository
 from src.contexts.library.interface.dependencies import (
     get_audio_delivery,
+    get_audio_storage,
     get_book_repository,
     get_chunk_repository,
     get_clock,
@@ -134,6 +136,25 @@ def get_book(
 ) -> dict:
     book = GetBook(book_repository).execute(user.sub, book_id)
     return book_to_dict(book)
+
+
+@router.delete("/books/{book_id}", status_code=204)
+def delete_book(
+    book_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    book_repository: BookRepository = Depends(get_book_repository),
+    chunk_repository: ChunkRepository = Depends(get_chunk_repository),
+    pdf_storage: PdfStorage = Depends(get_pdf_storage),
+    audio_storage: ObjectStorage = Depends(get_audio_storage),
+    marks_storage: ObjectStorage = Depends(get_marks_storage),
+) -> Response:
+    """Issue #12: hard delete, no special-casing a mid-pipeline book -- the
+    pipeline already tolerates a missing book row (phase-5's stranded-book
+    handling), so deleting whatever exists needs no extra state machine.
+    A foreign or missing book is a 404, never a 403 (§6 Rule 2)."""
+    use_case = DeleteBook(book_repository, chunk_repository, pdf_storage, audio_storage, marks_storage)
+    use_case.execute(user.sub, book_id)
+    return Response(status_code=204)
 
 
 @router.get("/books/{book_id}/status")

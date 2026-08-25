@@ -102,10 +102,11 @@ class SpyChunkRepository:
 
 
 class FakePdfStorage:
-    """Records every ``presigned_upload`` key requested."""
+    """Records every ``presigned_upload``/``delete`` key requested."""
 
     def __init__(self) -> None:
         self.presigned_calls: list[str] = []
+        self.deleted_keys: list[str] = []
 
     def presigned_upload(self, *, key: str) -> PresignedUpload:
         self.presigned_calls.append(key)
@@ -119,6 +120,31 @@ class FakePdfStorage:
 
     def get_bytes(self, *, key: str) -> bytes:
         raise NotImplementedError
+
+    def delete(self, *, key: str) -> None:
+        self.deleted_keys.append(key)
+
+
+class FakeObjectStorage:
+    """Records every ``delete``/``delete_many`` key requested."""
+
+    def __init__(self) -> None:
+        self.deleted_keys: list[str] = []
+
+    def put_bytes(self, *, key: str, data: bytes, content_type: str) -> None:
+        raise NotImplementedError
+
+    def get_bytes(self, *, key: str) -> bytes:
+        raise NotImplementedError
+
+    def open_multipart(self, *, key: str, content_type: str):
+        raise NotImplementedError
+
+    def delete(self, *, key: str) -> None:
+        self.deleted_keys.append(key)
+
+    def delete_many(self, *, keys: list[str]) -> None:
+        self.deleted_keys.extend(keys)
 
 
 @pytest.fixture
@@ -134,6 +160,16 @@ def chunk_repo() -> SpyChunkRepository:
 @pytest.fixture
 def pdf_storage() -> FakePdfStorage:
     return FakePdfStorage()
+
+
+@pytest.fixture
+def audio_storage() -> FakeObjectStorage:
+    return FakeObjectStorage()
+
+
+@pytest.fixture
+def marks_storage() -> FakeObjectStorage:
+    return FakeObjectStorage()
 
 
 # --- RequestBookUpload ---------------------------------------------------------
@@ -309,24 +345,64 @@ def test_list_book_chunks_for_owned_book_returns_chunks(book_repo, chunk_repo) -
 # --- DeleteBook ----------------------------------------------------------------
 
 
-def test_delete_book_deletes_chunks_then_book_in_order(book_repo, chunk_repo) -> None:
-    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+def test_delete_book_deletes_chunks_then_book_in_order(
+    book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage
+) -> None:
+    book = Book.create(
+        id="book-1",
+        user_id="user-1",
+        title_raw="Title",
+        now=FIXED_NOW,
+        source_key="books/user-1/book-1/source.pdf",
+    )
     book_repo.save(book)
 
-    DeleteBook(book_repo, chunk_repo).execute("user-1", "book-1")
+    DeleteBook(book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage).execute(
+        "user-1", "book-1"
+    )
 
-    assert chunk_repo.calls == [("delete_for_book", ("book-1",))]
+    assert chunk_repo.calls[-1] == ("delete_for_book", ("book-1",))
     assert book_repo.get("user-1", "book-1") is None
+    assert pdf_storage.deleted_keys == ["books/user-1/book-1/source.pdf"]
+    assert audio_storage.deleted_keys == ["audio/user-1/book-1/book.mp3"]
+    assert marks_storage.deleted_keys == ["marks/user-1/book-1/book.json"]
+
+
+def test_delete_book_deletes_per_chunk_audio_and_marks(
+    book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage
+) -> None:
+    book = Book.create(id="book-1", user_id="user-1", title_raw="Title", now=FIXED_NOW)
+    book_repo.save(book)
+    chunks = [
+        Chunk.create(book_id="book-1", user_id="user-1", index=i, text="t", char_start=0, char_end=1)
+        for i in range(2)
+    ]
+    chunk_repo.save_all(chunks)
+
+    DeleteBook(book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage).execute(
+        "user-1", "book-1"
+    )
+
+    assert "audio/user-1/book-1/000000.mp3" in audio_storage.deleted_keys
+    assert "audio/user-1/book-1/000001.mp3" in audio_storage.deleted_keys
+    assert "marks/user-1/book-1/000000.json" in marks_storage.deleted_keys
+    assert "marks/user-1/book-1/000001.json" in marks_storage.deleted_keys
 
 
 def test_delete_book_for_another_users_book_raises_and_deletes_nothing(
-    book_repo, chunk_repo
+    book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage
 ) -> None:
     book = Book.create(id="book-1", user_id="user-a", title_raw="Title", now=FIXED_NOW)
     book_repo.save(book)
 
     with pytest.raises(NotFoundError):
-        DeleteBook(book_repo, chunk_repo).execute("user-b", "book-1")
+        DeleteBook(book_repo, chunk_repo, pdf_storage, audio_storage, marks_storage).execute(
+            "user-b", "book-1"
+        )
+    assert chunk_repo.calls == []
+    assert pdf_storage.deleted_keys == []
+    assert audio_storage.deleted_keys == []
+    assert marks_storage.deleted_keys == []
 
     assert chunk_repo.calls == []
     assert book_repo.get("user-a", "book-1") is not None

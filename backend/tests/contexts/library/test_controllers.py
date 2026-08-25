@@ -230,6 +230,75 @@ def test_get_book_for_nonexistent_id_returns_404(authed_app_client) -> None:
     assert response.status_code == 404
 
 
+# --- DELETE /books/{id} -----------------------------------------------------------
+
+
+def test_delete_book_returns_204_and_removes_the_book(
+    authed_app_client, pdf_bucket, audio_buckets, dynamodb_table
+) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id=CLAIMS["sub"], title="Mine")
+
+    response = authed_app_client.delete("/books/book-1")
+    assert response.status_code == 204
+
+    assert repo.get(CLAIMS["sub"], "book-1") is None
+    assert authed_app_client.get("/books/book-1").status_code == 404
+
+
+def test_delete_book_removes_source_pdf_and_stitched_outputs(
+    authed_app_client, pdf_bucket, audio_buckets, dynamodb_table
+) -> None:
+    from src.contexts.library.domain.book import Book
+
+    source_key = f"books/{CLAIMS['sub']}/book-1/source.pdf"
+    pdf_bucket.put_object(Bucket=PDF_BUCKET, Key=source_key, Body=b"%PDF-1.4")
+    audio_key = f"audio/{CLAIMS['sub']}/book-1/book.mp3"
+    manifest_key = f"marks/{CLAIMS['sub']}/book-1/book.json"
+    audio_buckets.put_object(Bucket=AUDIO_BUCKET, Key=audio_key, Body=b"\xff\xf3\x00\x00")
+    audio_buckets.put_object(Bucket=MARKS_BUCKET, Key=manifest_key, Body=b"{}")
+
+    repo = _book_repo(dynamodb_table)
+    book = Book.create(
+        id="book-1", user_id=CLAIMS["sub"], title_raw="Mine", now=datetime.now(UTC),
+        source_key=source_key,
+    )
+    repo.save(book)
+
+    response = authed_app_client.delete("/books/book-1")
+    assert response.status_code == 204
+
+    with pytest.raises(Exception):
+        pdf_bucket.get_object(Bucket=PDF_BUCKET, Key=source_key)
+    with pytest.raises(Exception):
+        audio_buckets.get_object(Bucket=AUDIO_BUCKET, Key=audio_key)
+    with pytest.raises(Exception):
+        audio_buckets.get_object(Bucket=MARKS_BUCKET, Key=manifest_key)
+
+
+def test_delete_book_for_another_users_book_returns_404(
+    authed_app_client, pdf_bucket, audio_buckets, dynamodb_table
+) -> None:
+    repo = _book_repo(dynamodb_table)
+    seed_book(repo, id="book-1", user_id="someone-else", title="Not Mine")
+
+    response = authed_app_client.delete("/books/book-1")
+    assert response.status_code == 404
+    assert repo.get("someone-else", "book-1") is not None
+
+
+def test_delete_book_for_nonexistent_id_returns_404(
+    authed_app_client, pdf_bucket, audio_buckets
+) -> None:
+    response = authed_app_client.delete("/books/no-such-book")
+    assert response.status_code == 404
+
+
+def test_delete_book_anonymous_returns_401(app_client, pdf_bucket, audio_buckets) -> None:
+    response = app_client.delete("/books/book-1")
+    assert response.status_code == 401
+
+
 # --- GET /books/{id}/chunks --------------------------------------------------------
 
 

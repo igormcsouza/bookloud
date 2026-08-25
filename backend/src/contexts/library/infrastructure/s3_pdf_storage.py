@@ -65,3 +65,9 @@ class S3PdfStorage:
                 raise NotFoundError(f"No object at key: {key}") from exc
             raise
         return response["Body"].read()
+
+    def delete(self, *, key: str) -> None:
+        # S3 DeleteObject is idempotent -- a missing key is not an error,
+        # matching the "delete whatever exists" behaviour DeleteBook needs
+        # for a book that never finished uploading.
+        self._client.delete_object(Bucket=self._bucket, Key=key)

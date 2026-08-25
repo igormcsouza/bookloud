@@ -6,8 +6,11 @@ import * as DocumentPicker from "expo-document-picker";
 import { Plus } from "lucide-react-native";
 import { useBookList } from "@/hooks/useBookList";
 import { BookCard } from "@/components/BookCard";
+import { SwipeToDelete } from "@/components/SwipeToDelete";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   createBook,
+  deleteBook,
   reissueUpload,
   resynthesize,
   uploadToS3,
@@ -30,9 +33,11 @@ async function pickPdf(): Promise<PickedFile | null> {
 export default function Library() {
   const router = useRouter();
   const theme = useTheme();
-  const { books, loading, error, refresh, insert } = useBookList();
+  const { books, loading, error, refresh, insert, remove } = useBookList();
   const [uploading, setUploading] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Book | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   async function handleUpload() {
@@ -93,6 +98,19 @@ export default function Library() {
     }
   }
 
+  async function handleDelete(book: Book) {
+    setDeletingId(book.id);
+    setActionError(null);
+    try {
+      await deleteBook(book.id);
+      remove(book.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not delete this book.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const needsAttention = books.filter((b) => b.status === "PARTIAL" || b.status === "FAILED").length;
 
   return (
@@ -135,21 +153,26 @@ export default function Library() {
           onRefresh={refresh}
           refreshing={loading}
           renderItem={({ item }) => (
-            <BookCard
-              book={item}
-              retrying={retryingId === item.id}
-              reuploading={uploading}
-              onPress={() => {
-                if (item.status === "FAILED") return;
-                if (item.status === "READY" || item.status === "PARTIAL") {
-                  router.push(`/reader/${item.id}`);
-                } else {
-                  router.push(`/library/add?bookId=${item.id}`);
-                }
-              }}
-              onRetry={() => handleRetry(item)}
-              onReupload={() => handleReupload(item)}
-            />
+            <SwipeToDelete
+              disabled={deletingId === item.id}
+              onDelete={() => setPendingDelete(item)}
+            >
+              <BookCard
+                book={item}
+                retrying={retryingId === item.id}
+                reuploading={uploading}
+                onPress={() => {
+                  if (item.status === "FAILED") return;
+                  if (item.status === "READY" || item.status === "PARTIAL") {
+                    router.push(`/reader/${item.id}`);
+                  } else {
+                    router.push(`/library/add?bookId=${item.id}`);
+                  }
+                }}
+                onRetry={() => handleRetry(item)}
+                onReupload={() => handleReupload(item)}
+              />
+            </SwipeToDelete>
           )}
         />
       )}
@@ -162,6 +185,23 @@ export default function Library() {
       >
         <Plus size={26} color={theme.accentInk} strokeWidth={2.5} />
       </Pressable>
+
+      <ConfirmDialog
+        visible={pendingDelete !== null}
+        title="Delete this book?"
+        message={
+          pendingDelete
+            ? `"${pendingDelete.title}" and its audio will be permanently deleted. This can't be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          const book = pendingDelete;
+          setPendingDelete(null);
+          if (book) void handleDelete(book);
+        }}
+      />
     </SafeAreaView>
   );
 }
