@@ -56,7 +56,7 @@ function ChunkPeek({ chunk, width }: { chunk: Chunk | null; width: number }) {
 }
 
 export default function Reader() {
-  const { bookId } = useLocalSearchParams<{ bookId: string }>();
+  const { bookId, title } = useLocalSearchParams<{ bookId: string; title?: string }>();
   const router = useRouter();
   const theme = useTheme();
   const sheetRef = useRef<BottomSheet>(null);
@@ -95,7 +95,7 @@ export default function Reader() {
   const hasAudio = Boolean(manifest?.audioKey);
   const isPartial = manifest?.status === "PARTIAL";
 
-  const playback = usePlayback(bookId ?? "", manifest);
+  const playback = usePlayback(bookId ?? "", manifest, title);
   const progress = useReadingProgress(bookId);
 
   // The chunk currently shown in the reading pane. Normally this just
