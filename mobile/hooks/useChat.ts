@@ -22,6 +22,11 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
   const bufferRef = useRef("");
   const frameRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Bumped on every sendQuestion call; a background reconcile fetch checks
+  // this before applying its result so a slow/stale response from an older
+  // question can never clobber a newer answer that already landed.
+  const generationRef = useRef(0);
+  const metaModelRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +58,7 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
 
       const tempId = `temp-${Date.now()}`;
       const anchorChunk = anchorRef.current;
+      const generation = ++generationRef.current;
 
       const userMsg: ChatMessage = {
         id: tempId,
@@ -92,6 +98,7 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
           {
             onMeta: (meta) => {
               receivedAnyBytes = true;
+              metaModelRef.current = meta.model;
               setStreamingAnchorChunk(meta.anchorChunk);
               setChat((prev) =>
                 prev ? { ...prev, enabled: meta.enabled, reason: meta.reason, model: meta.model } : prev,
@@ -107,21 +114,47 @@ export function useChat(bookId: string, anchorRef: React.MutableRefObject<number
                 });
               }
             },
-            onDone: (finishReason) => {
+            onDone: (finishReason, usage) => {
               setStreamingFinishReason(finishReason);
-              // isStreaming stays true until the refetched messages are
-              // actually in hand: flipping it false here would unmount the
-              // streaming bubble a render before the real completed message
-              // exists, producing a visible flash of nothing in between.
+              // The completed answer becomes part of `messages` immediately,
+              // from data we already have locally -- it must never depend on
+              // a round trip back to the server to stay on screen. A stray
+              // eventually-consistent read of a just-written DynamoDB item
+              // (or a slow response) used to make the just-streamed answer
+              // vanish for anyone still looking at it.
+              const assistantMsg: ChatMessage = {
+                id: `temp-assistant-${Date.now()}`,
+                role: "assistant",
+                content: bufferRef.current,
+                anchoredChunk: anchorChunk,
+                createdAt: new Date().toISOString(),
+                positionMs,
+                model: metaModelRef.current,
+                finishReason,
+                inputTokens: usage?.inputTokens ?? null,
+                outputTokens: usage?.outputTokens ?? null,
+                cachedInputTokens: usage?.cachedInputTokens ?? null,
+              };
+              setMessages((prev) => [...prev, assistantMsg]);
+              setStreamingText("");
+              setIsStreaming(false);
+
+              // Fire-and-forget reconcile with the server's canonical copy
+              // (real ids/timestamps/usage). Only applied if it's still the
+              // latest question and it actually contains an answer to it --
+              // never used to remove what's already showing.
               listChat(bookId)
                 .then((data) => {
+                  if (generationRef.current !== generation) return;
+                  const hasAssistantReply = data.messages.some(
+                    (m) => m.role === "assistant" && m.content === bufferRef.current,
+                  );
+                  if (!hasAssistantReply) return;
                   setMessages(data.messages);
                   setChat(data.chat);
-                  setIsStreaming(false);
                 })
                 .catch((err) => {
                   console.error(err);
-                  setIsStreaming(false);
                 });
             },
             onError: (code, message) => {

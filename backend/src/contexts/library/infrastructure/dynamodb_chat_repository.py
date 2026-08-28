@@ -21,6 +21,7 @@ class DynamoDbChatRepository(ChatRepository):
             KeyConditionExpression=Key("PK").eq(pk_book(book_id)) & Key("SK").begins_with(CHAT_PREFIX),
             ScanIndexForward=False,  # Descending to get latest messages first
             Limit=limit,
+            ConsistentRead=True,
         )
         
         items = response.get("Items", [])
