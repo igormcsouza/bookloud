@@ -11,6 +11,7 @@ import type { BookManifest } from "@/lib/manifest";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useReadingAnchor } from "@/hooks/useReadingAnchor";
 import { useReadingProgress } from "@/hooks/useReadingProgress";
+import { canApplyRestore } from "@/lib/readerReady";
 import { computeScrollTarget, findLineForOffset, type TextLine } from "@/lib/autoscroll";
 import { MiniPlayer } from "@/components/MiniPlayer";
 import { ChatSheet } from "@/components/ChatSheet";
@@ -35,6 +36,14 @@ const SWIPE_THRESHOLD = 50;
 /** Settle-animation duration (ms), both for completing a swipe past
  *  `SWIPE_THRESHOLD` and for snapping back when it falls short. */
 const SWIPE_SETTLE_MS = 220;
+
+/** How long the reader will wait for the saved position to be restorable
+ *  (issue #32) before revealing the screen anyway, so a stuck/slow audio
+ *  load never leaves the user staring at "Loading…" forever. Restoration
+ *  itself keeps running in the background past this point and still
+ *  corrects the chunk/position (and seeks audio) the moment it can --
+ *  this only bounds how long the *screen* waits. */
+const CONTENT_REVEAL_TIMEOUT_MS = 6000;
 
 /** A neighboring chunk's opening text, peeking in from off-screen while its
  *  pane is being dragged into view. Not interactive (no scrolling, no word
@@ -65,6 +74,15 @@ export default function Reader() {
   const [manifestLoaded, setManifestLoaded] = useState(false);
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Sticky "the saved position has been restored (or determined there was
+  // none to restore)" flag (issue #32) -- separate from `manifestLoaded`,
+  // which only reflects text having loaded. Gates revealing the reader so
+  // it never shows a book at the wrong chunk/position before snapping to
+  // the right one.
+  const [restored, setRestored] = useState(false);
+  // Safety valve for `restored` never arriving (a stuck audio load) -- see
+  // `CONTENT_REVEAL_TIMEOUT_MS`.
+  const [revealTimedOut, setRevealTimedOut] = useState(false);
 
   useEffect(() => {
     if (!bookId) return;
@@ -77,6 +95,8 @@ export default function Reader() {
     setManifestLoaded(false);
     setManifest(null);
     setChunks([]);
+    setRestored(false);
+    setRevealTimedOut(false);
     Promise.all([getManifest(bookId), getBookChunks(bookId)])
       .then(([m, c]) => {
         if (cancelled) return;
@@ -90,6 +110,12 @@ export default function Reader() {
     return () => {
       cancelled = true;
     };
+  }, [bookId]);
+
+  useEffect(() => {
+    if (!bookId) return;
+    const timer = setTimeout(() => setRevealTimedOut(true), CONTENT_REVEAL_TIMEOUT_MS);
+    return () => clearTimeout(timer);
   }, [bookId]);
 
   const hasAudio = Boolean(manifest?.audioKey);
@@ -111,25 +137,43 @@ export default function Reader() {
   }, [playback.state.chunkIndex]);
 
   // Resume where the reader last left off (issue #22). Applied once per
-  // book, as soon as the saved position, the chunk list, AND (when there's
-  // audio) the player itself are ready. Waiting for `playback.state.ready`
-  // matters: `chunks` loads independently of the `Audio.Sound` inside
-  // `usePlayback`, and calling `seekMs` before that sound exists is a
-  // silent no-op (every native call in that path swallows its own
-  // rejection) -- so firing the restore off `chunks` alone would mark it
-  // "done" via `restoredRef` while never actually seeking.
+  // book, gated by `canApplyRestore` (lib/readerReady.ts): immediately when
+  // there's nothing saved, otherwise once the chunk list and (when there's
+  // audio) the player are ready -- or the player has given up with a
+  // terminal error, so a broken audio load still corrects the *text*
+  // position instead of stalling it forever. Calling `seekMs` before the
+  // native sound exists is a silent no-op (every native call in that path
+  // swallows its own rejection), which is exactly why this waits on
+  // `playback.state.ready` rather than firing off `chunks` alone.
+  //
+  // This keeps running even after the reader has already been revealed via
+  // `revealTimedOut` below -- `restored`/`setChunkIndex`/`seekMs` still
+  // land whenever the player does become ready, correcting a book that was
+  // shown early rather than giving up on the resume position entirely.
   const restoredRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!bookId || progress.saved === undefined || chunks.length === 0) return;
-    if (hasAudio && !playback.state.ready) return;
-    if (restoredRef.current === bookId) return;
+    if (!bookId || restoredRef.current === bookId) return;
+    if (
+      !canApplyRestore({
+        hasChunks: chunks.length > 0,
+        savedProgress: progress.saved,
+        hasAudio,
+        playbackReady: playback.state.ready,
+        playbackError: playback.state.error,
+      })
+    ) {
+      return;
+    }
     restoredRef.current = bookId;
     const saved = progress.saved;
-    if (!saved) return;
-    const target = chunks.find((c) => c.index === saved.chunkIndex);
-    if (!target) return;
-    setChunkIndex(target.index);
-    if (hasAudio) playback.seekMs(saved.positionMs);
+    if (saved) {
+      const target = chunks.find((c) => c.index === saved.chunkIndex);
+      if (target) {
+        setChunkIndex(target.index);
+        if (hasAudio) playback.seekMs(saved.positionMs);
+      }
+    }
+    setRestored(true);
   }, [bookId, progress.saved, chunks, hasAudio, playback]);
 
   // Persist on every meaningful change: chunk turns (text-only books too)
@@ -363,6 +407,12 @@ export default function Reader() {
     ? splitAtWord(activeChunk.text, playback.state.wordStart, playback.state.wordEnd)
     : { before: "", word: "", after: "" };
 
+  // Never reveal the reader before the saved position is either restored
+  // or known to not exist (issue #32) -- unless the reveal timeout has
+  // given up waiting, in which case the restore effect above keeps trying
+  // in the background and corrects the screen once it lands.
+  const showContent = manifestLoaded && (restored || revealTimedOut);
+
   return (
     <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg px-6 pt-4 pb-3">
       <View className="flex-row items-center justify-between mb-2">
@@ -370,7 +420,7 @@ export default function Reader() {
           <ChevronLeft size={18} color={theme.textMuted} strokeWidth={2} />
           <Text className="text-ink-muted dark:text-dink-muted">Library</Text>
         </Pressable>
-        {chunks.length > 0 && chunkPosition >= 0 && (
+        {showContent && chunks.length > 0 && chunkPosition >= 0 && (
           <Text
             className="text-[11px] text-ink-faint dark:text-dink-faint"
             style={{ fontFamily: "IBMPlexMono_500Medium" }}
@@ -389,7 +439,7 @@ export default function Reader() {
         </Pressable>
       </View>
 
-      {!manifestLoaded ? (
+      {!showContent ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-ink-muted dark:text-dink-muted">Loading…</Text>
         </View>

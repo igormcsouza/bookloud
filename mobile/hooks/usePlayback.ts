@@ -32,6 +32,38 @@ import { MarksCache, canSkipSync, locateWord, type MarksEntry } from "@/lib/mark
 /** §3.3: bounded so a genuinely deleted object doesn't loop forever. */
 export const MAX_URL_REFRESH_ATTEMPTS = 3;
 
+/** Base delay for the exponential backoff between retries (issue #32): 2s,
+ *  4s, 8s for attempts 1-3. */
+const RETRY_BASE_DELAY_MS = 2000;
+
+/** If the audio pipeline (URL fetch -> native load -> decoded) hasn't
+ *  reached `ready` within this long and hasn't already errored, issue #32
+ *  treats it as a failed attempt and retries -- otherwise a hung fetch or a
+ *  native call that never resolves or rejects would leave `ready` false
+ *  forever with no error ever surfacing. */
+const AUDIO_LOAD_WATCHDOG_MS = 6000;
+
+/** Races `promise` against a timer so a hung request (never resolves,
+ *  never rejects) fails after `ms` instead of leaving its caller waiting
+ *  forever -- issue #32. Clears the timer either way so a late resolution
+ *  of `promise` after the timeout already won never becomes an unhandled
+ *  rejection. */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export type PlaybackError = "NO_AUDIO" | "URL_EXPIRED" | "DECODE_FAILED";
 
 export type PlaybackState = {
@@ -124,9 +156,22 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
   // Position/playing-state to restore once a refreshed URL's Sound has
   // loaded, set right before triggering that refresh (see onStatus below).
   const pendingResumeRef = useRef<{ ms: number; playing: boolean } | null>(null);
+  // A pending backoff-retry timer (scheduleRetry below) -- kept as a ref so
+  // it can be cancelled on unmount/book change even though it outlives any
+  // single effect run.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Indirection so both `loadUrl` (declared first, since `scheduleRetry`
+  // itself calls `loadUrl`) and the sound-creation effect below can trigger
+  // a retry without needing `scheduleRetry`'s own identity in their
+  // dependencies -- `scheduleRetry` gets a new identity on every `bookId`
+  // change (it depends on `loadUrl`, which depends on `bookId`), and that
+  // effect must stay keyed on `[audioUrl]` alone or a book switch would
+  // re-run it against the still-stale previous book's URL before the new
+  // fetch resolves. Kept current by the plain assignment right after
+  // `scheduleRetry` is created below (same trick as `segmentsRef` above).
+  const scheduleRetryRef = useRef<() => void>(() => {});
 
   const segments = useMemo(() => manifest?.segments ?? [], [manifest]);
-  const hasAudio = Boolean(manifest?.audioKey);
 
   // Read through a ref, not the closure, so the loader never captures a
   // stale (or, on first mount, empty) segments array permanently -- see
@@ -150,7 +195,11 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
 
   const loadUrl = useCallback(async (): Promise<string | null> => {
     try {
-      const audio = await getAudioUrl(bookId);
+      const audio = await withTimeout(
+        getAudioUrl(bookId),
+        AUDIO_LOAD_WATCHDOG_MS,
+        "timed out fetching the audio URL",
+      );
       setAudioUrl(audio.url);
       setState((previous) => ({ ...previous, error: null }));
       return audio.url;
@@ -158,24 +207,61 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
       if (error instanceof NoAudioError) {
         setAudioUrl(null);
         setState((previous) => ({ ...previous, error: "NO_AUDIO", ready: false }));
+      } else {
+        // A network-level failure or a hang (the `withTimeout` case) --
+        // not "this book has no audio" -- so retry with backoff like every
+        // other load failure below, instead of silently leaving `audioUrl`
+        // null and `state.error` untouched forever.
+        scheduleRetryRef.current();
       }
       return null;
     }
   }, [bookId]);
 
-  useEffect(() => {
-    if (!hasAudio) {
-      setAudioUrl(null);
-      setState((previous) => ({
-        ...previous,
-        error: "NO_AUDIO",
-        durationMs: manifest?.durationMs ?? 0,
-      }));
+  // Retries `loadUrl()` with exponential backoff (2s, 4s, 8s), up to
+  // `MAX_URL_REFRESH_ATTEMPTS`, then gives up with a visible error --
+  // issue #32. The single place all three failure modes below (native
+  // creation throwing, a mid-load `status.error`, and the load-watchdog
+  // firing on a hang) go through, so they share one counter/backoff
+  // schedule instead of three near-identical copies of the same logic.
+  const scheduleRetry = useCallback(() => {
+    if (retryTimerRef.current) return;
+    if (refreshAttempts.current >= MAX_URL_REFRESH_ATTEMPTS) {
+      setState((previous) => ({ ...previous, error: "URL_EXPIRED", playing: false }));
       return;
     }
+    const delay = RETRY_BASE_DELAY_MS * 2 ** refreshAttempts.current;
+    refreshAttempts.current += 1;
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      void loadUrl();
+    }, delay);
+  }, [loadUrl]);
+  scheduleRetryRef.current = scheduleRetry;
+
+  // Fires as soon as `bookId` is known -- not gated on the `manifest` prop
+  // resolving first (issue #32). The old version derived "does this book
+  // have audio" from `manifest?.audioKey`, and `manifest` starts `null`, so
+  // this fetch waited on a full manifest+chunks round trip before even
+  // starting. A book with no audio just gets the existing
+  // NoAudioError/409 handling in `loadUrl` above -- no slower than before,
+  // but every book's audio URL now fetches in parallel with its
+  // manifest/chunks instead of strictly after them.
+  useEffect(() => {
+    if (!bookId) return;
     refreshAttempts.current = 0;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     void loadUrl();
-  }, [hasAudio, loadUrl, manifest?.durationMs]);
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [bookId, loadUrl]);
 
   useEffect(() => {
     setState((previous) => ({ ...previous, durationMs: manifest?.durationMs ?? 0 }));
@@ -314,28 +400,44 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
   useEffect(() => {
     if (!audioUrl) return;
     let cancelled = false;
+    // Set once this attempt's outcome (success, a definitive error, or the
+    // watchdog giving up) has been decided, so a signal that arrives after
+    // that point -- e.g. a native `createAsync` call that finally resolves
+    // *after* the watchdog already retried on a fresh URL -- is ignored
+    // instead of resurrecting an abandoned attempt (issue #32).
+    let gaveUp = false;
     let sound: Audio.Sound | null = null;
 
+    // Without this, a hung URL fetch or a native `createAsync` call that
+    // never resolves or rejects would leave `ready` false forever with no
+    // error ever surfacing -- see AUDIO_LOAD_WATCHDOG_MS's docstring.
+    const watchdog = setTimeout(() => {
+      if (cancelled || gaveUp) return;
+      gaveUp = true;
+      stopLoop();
+      scheduleRetryRef.current();
+    }, AUDIO_LOAD_WATCHDOG_MS);
+
     const onStatus = (status: AVPlaybackStatus) => {
+      if (cancelled || gaveUp) return;
       if (!status.isLoaded) {
         if (status.error) {
-          stopLoop();
           // expo-av's status error carries no code distinguishing "the
           // decoded bytes are bad" from "the presigned URL just expired
           // mid-playback" (unlike the web `<audio>` element's
           // MediaError.code) -- so, mirroring the web version's handling of
           // every *other* error there, try refreshing the URL and resuming
           // before giving up. §3.3 / MAX_URL_REFRESH_ATTEMPTS.
-          if (refreshAttempts.current < MAX_URL_REFRESH_ATTEMPTS) {
-            refreshAttempts.current += 1;
-            pendingResumeRef.current = { ms: lastKnownMs.current, playing: isPlayingRef.current };
-            void loadUrl();
-            return;
-          }
-          setState((previous) => ({ ...previous, error: "URL_EXPIRED", playing: false }));
+          gaveUp = true;
+          clearTimeout(watchdog);
+          stopLoop();
+          pendingResumeRef.current = { ms: lastKnownMs.current, playing: isPlayingRef.current };
+          scheduleRetryRef.current();
         }
         return;
       }
+
+      clearTimeout(watchdog);
 
       lastKnownMs.current = status.positionMillis;
       lastUpdateWallClock.current = Date.now();
@@ -375,7 +477,7 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
           { progressUpdateIntervalMillis: 150, rate: rateRef.current, shouldCorrectPitch: true },
           onStatus,
         );
-        if (cancelled) {
+        if (cancelled || gaveUp) {
           await created.unloadAsync();
           return;
         }
@@ -383,6 +485,7 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
         soundRef.current = created;
 
         if (status.isLoaded) {
+          clearTimeout(watchdog);
           const durationMs = status.durationMillis ?? manifest?.durationMs ?? 0;
           const imprecise = durationDriftExceedsTolerance(durationMs / 1000, manifest?.durationMs ?? 0);
           if (imprecise) {
@@ -404,17 +507,16 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
           sync(true);
         }
       } catch {
-        if (refreshAttempts.current >= MAX_URL_REFRESH_ATTEMPTS) {
-          setState((previous) => ({ ...previous, error: "URL_EXPIRED", playing: false }));
-          return;
-        }
-        refreshAttempts.current += 1;
-        void loadUrl();
+        if (cancelled || gaveUp) return;
+        gaveUp = true;
+        clearTimeout(watchdog);
+        scheduleRetryRef.current();
       }
     })();
 
     return () => {
       cancelled = true;
+      clearTimeout(watchdog);
       stopLoop();
       soundRef.current = null;
       if (sound) void sound.unloadAsync();
