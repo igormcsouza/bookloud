@@ -22,16 +22,20 @@ jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
 
-// This expo-audio version's `AudioStatus` carries no error field (see
-// usePlayback.ts's comment where the status listener is registered) -- a
-// real decode/network failure is only ever caught by the load watchdog. To
-// keep this test's timing fast and deterministic without waiting out that
-// watchdog on every attempt, `createAudioPlayer` itself throws synchronously
-// here, standing in for a native init failure -- a real failure mode too,
-// and one that exercises the exact same give-up/retry path.
 const mockLoad = jest.fn();
+// Set by a test to make `createAudioPlayer` throw synchronously, standing in
+// for a native init failure (see the retry test below). Reset in
+// `beforeEach` so it never leaks between tests.
+let mockPlayerLoadShouldThrow = false;
+// Captures the `playbackStatusUpdate` callback usePlayback.ts registers, so
+// a test can drive it directly -- native status updates never arrive on
+// their own under Jest.
+const mockStatusListeners: ((status: unknown) => void)[] = [];
 const mockPlayer = {
-  addListener: jest.fn(() => ({ remove: jest.fn() })),
+  addListener: jest.fn((event: string, cb: (status: unknown) => void) => {
+    if (event === "playbackStatusUpdate") mockStatusListeners.push(cb);
+    return { remove: jest.fn() };
+  }),
   replace: jest.fn(),
   play: jest.fn(),
   pause: jest.fn(),
@@ -45,7 +49,15 @@ jest.mock("expo-audio", () => ({
   __esModule: true,
   createAudioPlayer: (...args: unknown[]) => {
     mockLoad(...args);
-    throw new Error("native load failed");
+    // This expo-audio version's `AudioStatus` carries no error field (see
+    // usePlayback.ts's comment where the status listener is registered) -- a
+    // real decode/network failure is only ever caught by the load watchdog.
+    // To keep the retry test's timing fast and deterministic without
+    // waiting out that watchdog, `createAudioPlayer` itself throws
+    // synchronously here when asked to -- a real failure mode too, and one
+    // that exercises the exact same give-up/retry path.
+    if (mockPlayerLoadShouldThrow) throw new Error("native load failed");
+    return mockPlayer;
   },
   setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
 }));
@@ -63,6 +75,7 @@ jest.mock("@/lib/books", () => ({
 
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import { NoAudioError } from "@/lib/books";
+import type { BookManifest } from "@/lib/manifest";
 import { MAX_URL_REFRESH_ATTEMPTS, usePlayback } from "@/hooks/usePlayback";
 
 const AUDIO = {
@@ -79,6 +92,8 @@ describe("usePlayback", () => {
     mockGetMarksDocument.mockReset();
     mockPlayer.addListener.mockClear();
     mockPlayer.replace.mockClear();
+    mockPlayerLoadShouldThrow = false;
+    mockStatusListeners.length = 0;
   });
 
   it("fetches the audio URL as soon as bookId is known, without waiting on the manifest", async () => {
@@ -97,6 +112,7 @@ describe("usePlayback", () => {
   it(
     "retries a failing native load with exponential backoff, then gives up",
     async () => {
+      mockPlayerLoadShouldThrow = true;
       // A fresh URL each call, like a real presigned S3 URL would be --
       // returning the same string twice would make React bail out of
       // re-running the track-loading effect (no state change), masking the
@@ -128,6 +144,88 @@ describe("usePlayback", () => {
     await waitFor(() => expect(result.current.state.error).toBe("NO_AUDIO"));
 
     expect(mockLoad).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  // Regression: the highlight/auto-scroll would freeze mid-playback (while
+  // still correcting itself once, briefly, whenever the app backgrounded and
+  // came back) whenever the audio URL happened to resolve -- and so register
+  // the native `playbackStatusUpdate` listener -- before the manifest did.
+  // `usePlayback` fires the URL fetch as soon as `bookId` is known (issue
+  // #32), independent of the manifest, so that race is the everyday case,
+  // not an edge case. The listener is registered inside an effect keyed on
+  // `[audioUrl]` alone and is never re-subscribed, so it must keep resyncing
+  // against the CURRENT `segments` (populated once the manifest arrives)
+  // rather than whatever `segments` looked like -- `[]` -- at registration
+  // time.
+  it("keeps resyncing against the current manifest after the audio URL resolves first", async () => {
+    mockGetAudioUrl.mockResolvedValue(AUDIO);
+    mockGetMarksDocument.mockResolvedValue({
+      version: 1,
+      bookId: "book-1",
+      chunkIndex: 0,
+      source: "edge-tts",
+      voice: "test",
+      timing: "measured",
+      audioKey: "audio/000000.mp3",
+      charStart: 0,
+      charEnd: 11,
+      durationMs: 5000,
+      wordCount: 2,
+      words: [
+        { t: 0, d: 400, s: 0, e: 5, w: "Hello" },
+        { t: 400, d: 400, s: 6, e: 11, w: "world" },
+      ],
+    });
+
+    const { result, rerender, unmount } = await renderHook(
+      ({ manifest }: { manifest: BookManifest | null }) => usePlayback("book-1", manifest),
+      { initialProps: { manifest: null } },
+    );
+
+    // The URL resolves, and the player (with its status listener) gets set
+    // up, while `manifest` -- and so `segments` -- is still empty.
+    await waitFor(() => expect(mockStatusListeners.length).toBe(1));
+
+    const manifest: BookManifest = {
+      version: 1,
+      bookId: "book-1",
+      status: "READY",
+      audioKey: "audio/book.mp3",
+      durationMs: 5000,
+      chunksTotal: 1,
+      chunksDone: 1,
+      chunksFailed: 0,
+      sampleRateHz: null,
+      segments: [
+        { i: 0, t: 0, d: 5000, s: 0, e: 11, audioKey: "audio/000000.mp3", marksKey: "marks/000000.json" },
+      ],
+      missing: [],
+    };
+    // The manifest arrives after the listener already exists -- this is the
+    // moment `sync`'s identity changes underneath it.
+    rerender({ manifest });
+    await act(async () => {});
+
+    // A native progress tick while playing -- exactly what drives the
+    // highlight during real playback, independent of the rAF loop (see
+    // usePlayback.ts's "Defense in depth" comment on this same call).
+    await act(async () => {
+      mockStatusListeners[0]({ playing: true, currentTime: 0.2, isLoaded: true, duration: 5 });
+    });
+    await waitFor(() => expect(mockGetMarksDocument).toHaveBeenCalled());
+
+    // The next tick, now that the marks fetch above has resolved, is what
+    // should land the highlight -- proving the listener is resyncing against
+    // the up-to-date `segments`, not the empty array it saw at registration.
+    await act(async () => {
+      mockStatusListeners[0]({ playing: true, currentTime: 0.2, isLoaded: true, duration: 5 });
+    });
+
+    await waitFor(() => expect(result.current.state.chunkIndex).toBe(0));
+    expect(result.current.state.wordStart).toBe(0);
+    expect(result.current.state.wordEnd).toBe(5);
+
     unmount();
   });
 });
