@@ -320,7 +320,7 @@ book_id)` before ever calling into `ChunkRepository`.
 
 `mobile/` is an Expo (React Native + TypeScript) Android app talking to the backend API above. Expo Router + NativeWind, matching the stack of this user's other Expo apps. Roughly: an auth screen driving Cognito's username/password + forced-first-login challenge flow, a library screen (book list, upload, retry/re-upload), and a reader screen (word-level highlight sync, mini-player, an "Ask" chat sheet).
 
-Background audio uses `expo-av` with `staysActiveInBackground` for lock-screen/Now-Playing presence; a fully custom lock-screen transport (remote play/pause/seek) is native-module territory beyond expo-av's surface and is a known follow-up, not claimed here. Chat's SSE transport uses `react-native-sse` rather than `fetch().body.getReader()`, which RN/Hermes doesn't reliably support.
+Background audio uses `expo-audio` (issue #31), whose native `AudioControlsService` owns a MediaSession-backed Android notification with full remote transport (play/pause/seek from the lock screen / notification shade / Samsung's "Now Bar" -- no Samsung-specific API, any OEM chrome that mirrors MediaSession state gets this for free). `expo-audio` was picked over `react-native-track-player` after RNTP turned out to never deliver its playback events to JS under this app's React Native version (New Architecture/Bridgeless): `expo-audio` is a first-party Expo module built for that runtime from the start. Because of that native module, the app cannot run inside Expo Go -- it needs a custom dev-client build (`npx expo run:android`); see "Running against the Android emulator" below. Chat's SSE transport uses `react-native-sse` rather than `fetch().body.getReader()`, which RN/Hermes doesn't reliably support.
 
 Local dev: `cd mobile && npx expo start`, pointed at a running `make up` backend or a deployed `pr-N` API via `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` (see `mobile/.env.example`). Real Android builds are triggered by publishing a GitHub release (`mobile-release.yml`, EAS Build, APK attached to the release -- sideload distribution, no Play Console). PR environments deploy backend only; there is no per-PR mobile build.
 
@@ -445,11 +445,38 @@ EXPO_PUBLIC_COGNITO_CLIENT_ID=<from `local/.cognito.env`, written by `make up`>
 EXPO_PUBLIC_COGNITO_REGION=us-east-1
 ```
 
-Boot the AVD and start Expo pointed at it:
+Because of `expo-audio` (see "Mobile app" above), the app needs a custom
+dev-client build -- it cannot run inside Expo Go. Boot the AVD, then build
+and install that dev client (first run only; after that, `npx expo start`
+alone is enough as long as the app is still installed):
 
 ```bash
 emulator -avd <your-avd-name> &          # e.g. pixel6; `emulator -list-avds`
-cd mobile && npx expo start --android
+cd mobile && npx expo run:android        # builds, installs, and launches
+                                          # the dev client; also starts Metro
+```
+
+The dev client's *native* build has its own dev-server port baked in at
+build time (`8081` by default -- Expo's own default, independent of this
+repo's `1854X` ports/`mobile/package.json`'s `start`/`android` scripts,
+which serve Metro on `18541`), so a plain `npx expo start --port 18541`
+alone leaves the app unable to find it. Two ways to reconcile that:
+
+```bash
+# Either start Metro on the port the dev client actually expects...
+cd mobile && npx expo start --port 8081
+
+# ...or forward that port from the emulator to wherever Metro really runs
+adb reverse tcp:8081 tcp:18541
+cd mobile && npx expo start --port 18541
+```
+
+If the app was already running when the backend or Metro restarted, force-stop
+and relaunch it rather than waiting for it to reconnect on its own:
+
+```bash
+adb shell am force-stop com.igormcsouza.bookloud
+adb shell monkey -p com.igormcsouza.bookloud -c android.intent.category.LAUNCHER 1
 ```
 
 Skipping the `S3_PUBLIC_HOST` override above is the one mistake that looks
