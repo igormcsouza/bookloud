@@ -1,26 +1,14 @@
 name: Deploy Stack
 
-# Reusable workflow factoring the "push code -> CDK deploy backend -> smoke
-# test -> (optional) Playwright e2e" sequence shared by deploy-pr.yml
-# (ephemeral pr-N environments) and deploy-prod.yml (the ephemeral staging
-# environment gate, and the prod deploy itself).
+# Reusable workflow for the "CDK deploy backend -> smoke test" sequence,
+# called by deploy-prod.yml for both the ephemeral `staging` gate and the
+# prod deploy itself. Backend only -- the Expo Android app in `mobile/`
+# builds and ships separately via mobile-release.yml, not through this
+# pipeline; mobile testing points a local `expo start` dev client at this
+# stack's API URL.
 #
-# Issue #10: the frontend build/deploy steps this workflow used to run
-# (OpenNext build, `BookloudFrontend-*` CDK deploy, frontend URL output) are
-# gone -- the Next.js frontend they built is gone too, replaced by the Expo
-# Android app in `mobile/`, which is not part of this deploy pipeline (it
-# builds separately, via mobile-release.yml, on GitHub release). PR/staging
-# environments deploy backend only; mobile testing points a local `expo
-# start` dev client at this stack's API URL. The Playwright e2e step below
-# is likewise gone -- it exercised the frontend, which no longer exists; a
-# mobile e2e replacement (Detox/Maestro) is an explicitly deferred follow-up
-# to issue #10, not part of it.
-#
-# Phase 8 (IMPLEMENTATION_PLAN.md): deploy-pr.yml and deploy-prod.yml used to
-# carry this sequence duplicated byte-for-byte, deliberately so (see the old
-# comment in deploy-prod.yml) until there was a second real caller that
-# needed it with different knobs -- the staging gate below is that caller.
-# Do not re-duplicate this again; add an input instead.
+# Both callers share this file rather than duplicating the sequence; add an
+# input here instead of forking it for a new caller.
 #
 # `seed_users` provisions throwaway Cognito credentials the (login-gated)
 # smoke test uses -- prod deploys leave it off.

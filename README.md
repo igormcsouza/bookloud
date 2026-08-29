@@ -350,7 +350,7 @@ book_id)` before ever calling into `ChunkRepository`.
 
 Background audio uses `expo-audio` (issue #31), whose native `AudioControlsService` owns a MediaSession-backed Android notification with full remote transport (play/pause/seek from the lock screen / notification shade / Samsung's "Now Bar" -- no Samsung-specific API, any OEM chrome that mirrors MediaSession state gets this for free). `expo-audio` was picked over `react-native-track-player` after RNTP turned out to never deliver its playback events to JS under this app's React Native version (New Architecture/Bridgeless): `expo-audio` is a first-party Expo module built for that runtime from the start. Because of that native module, the app cannot run inside Expo Go -- it needs a custom dev-client build (`npx expo run:android`); see "Running against the Android emulator" below. Chat's SSE transport uses `react-native-sse` rather than `fetch().body.getReader()`, which RN/Hermes doesn't reliably support.
 
-Local dev: `cd mobile && npx expo start`, pointed at a running `make up` backend or a deployed `pr-N` API via `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` (see `mobile/.env.example`). Real Android builds are triggered by publishing a GitHub release (`mobile-release.yml`, EAS Build, APK attached to the release -- sideload distribution, no Play Console). PR environments deploy backend only; there is no per-PR mobile build.
+Local dev: `cd mobile && npx expo start`, pointed at a running `make up` backend via `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` (see `mobile/.env.example`). Real Android builds are triggered by publishing a GitHub release (`mobile-release.yml`, EAS Build, APK attached to the release -- sideload distribution, no Play Console). There is no per-PR backend deploy or per-PR mobile build.
 
 ### Highlight sync
 
@@ -546,23 +546,23 @@ The general shape, not an exact listing (it will drift -- see the actual directo
 - **`infra/`** -- the CDK app (Python), one stack per concern (auth, storage, the SQS pipeline, the API), synthesized per environment via CDK context rather than hand-maintained per-env config.
 - **`local/`** -- docker-compose helper scripts (LocalStack/Cognito bootstrap, the stdlib-only smoke test used locally, in CI, and against every deployed environment).
 - **`docs/`** -- operational runbooks (e.g. rollback) that outlive any one feature.
-- **`.github/workflows/`** -- CI (unit tests + local smoke) and CD (per-PR ephemeral deploy/teardown, prod deploy, mobile release) pipelines.
+- **`.github/workflows/`** -- CI (unit tests + local smoke, on every PR) and CD (prod deploy via a staging gate, mobile release) pipelines.
 - `docker-compose.yml`, `Makefile` at the root drive local dev.
 
 ## Deploy model
 
-A single AWS account hosts prod and every ephemeral PR environment, distinguished by resource name and (deliberately) by region: prod runs closer to its one real user, while PR/staging environments share a separate region to stay off prod's account-level service quotas. A CDK context value, `environment`, drives every stack/resource name:
+A single AWS account hosts prod and the ephemeral `staging` gate, distinguished by resource name and (deliberately) by region: prod runs closer to its one real user, while `staging` uses a separate region to stay off prod's account-level service quotas. A CDK context value, `environment`, drives every stack/resource name:
 
 | `environment`   | when              | stack names (example)             |
 |------------------|-------------------|------------------------------------|
 | `dev`            | local default      | `BookloudApi-dev`                  |
-| `pr-<N>`         | per-PR ephemeral   | `BookloudApi-pr-42`                |
 | `staging`        | pre-prod CD gate   | `BookloudApi-staging`              |
 | `prod`           | push to `main`     | `BookloudApi-prod`                 |
 
-- **On every PR**: CI runs backend/mobile/infra unit tests plus a local compose smoke test, then deploys the full stack set suffixed `pr-<N>` and runs the smoke test against the live API. The stack is left standing (that's the point of an ephemeral environment) and a PR comment links to its API URL -- there is no per-PR mobile build; point a local `expo start` dev client at that URL to test against it.
-- **On PR close/merge**: the `pr-<N>` stacks are torn down in reverse dependency order.
-- **On push to `main`**: the same test-then-deploy sequence runs against an ephemeral `staging` stack first (full smoke test, login-gated), then deploys to `prod` only if that gate passes.
+There is no automatic or ad hoc per-PR deploy. CI (unit + integration + the local compose smoke test) is what gates a PR.
+
+- **On every PR**: CI runs backend/mobile/infra unit tests plus a local compose smoke test against `main`. No AWS deploy happens.
+- **On push to `main`**: a test-then-deploy sequence runs against an ephemeral `staging` stack first (full smoke test, login-gated) and tears it down after, then deploys to `prod` only if that gate passes.
 - **On a GitHub release**: the Android APK is built via EAS and attached to the release -- independent of the backend deploy pipeline above.
 
 Removal policy: `RETAIN` for `environment == "prod"`, `DESTROY` (+ `auto_delete_objects`) otherwise -- PR/staging environments vanish completely on teardown; prod data survives a stack deletion. See `docs/rollback.md` for the procedure to undo a bad prod deploy.

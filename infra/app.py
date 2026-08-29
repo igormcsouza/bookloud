@@ -11,14 +11,14 @@ from stacks.storage_stack import StorageStack
 
 app = cdk.App()
 
-# Region is deliberately NOT branched on `environment` here (issue #8) --
-# every stack just follows whatever CDK_DEFAULT_REGION the CLI resolves at
-# synth time from the active AWS credentials/profile. The split between
-# prod (sa-east-1) and PR environments (us-east-1) lives entirely in
-# .github/workflows/deploy-prod.yml vs deploy-pr.yml's
-# configure-aws-credentials + `cdk bootstrap` region, via separate secrets
-# (AWS_REGION_PROD vs AWS_REGION). Locally, CDK_DEFAULT_REGION comes from
-# whatever the developer's AWS CLI/profile defaults to.
+# Region is deliberately NOT branched on `environment` here -- every stack
+# just follows whatever CDK_DEFAULT_REGION the CLI resolves at synth time
+# from the active AWS credentials/profile. The split between prod
+# (sa-east-1) and staging (us-east-1) lives entirely in
+# .github/workflows/deploy-prod.yml's per-job configure-aws-credentials +
+# `cdk bootstrap` region, via separate secrets (AWS_REGION_PROD vs
+# AWS_REGION). Locally, CDK_DEFAULT_REGION comes from whatever the
+# developer's AWS CLI/profile defaults to.
 #
 # Every downstream stack that needs the deployed region at runtime reads it
 # off `cdk.Stack.of(self).region`, which CDK resolves from this same `env`
