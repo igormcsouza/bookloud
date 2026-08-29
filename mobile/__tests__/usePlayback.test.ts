@@ -4,10 +4,13 @@
 // exponential backoff a bounded number of times, then give up with a
 // visible error, rather than hanging or silently stranding the user.
 //
-// Issue #31 swapped the native engine to react-native-track-player (for its
-// media-notification / lock-screen support); these tests moved with it, but
-// the intent -- and, on purpose, the real-timers-throughout approach for
-// exercising the backoff schedule -- is unchanged from before that swap.
+// Issue #31 needed a lock-screen/notification transport, which led first to
+// react-native-track-player and then -- once RNTP turned out to never
+// deliver its playback events to JS under this app's React Native version
+// (see usePlayback.ts's file header) -- to expo-audio, a first-party Expo
+// module built for that runtime from the start. These tests moved with each
+// swap, but the intent -- and, on purpose, the real-timers-throughout
+// approach for exercising the backoff schedule -- is unchanged.
 //
 // Real timers throughout, on purpose: the backoff schedule (2s/4s/8s) is
 // exercised at real wall-clock speed via `waitFor` rather than mocked with
@@ -19,32 +22,32 @@ jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
 
+// This expo-audio version's `AudioStatus` carries no error field (see
+// usePlayback.ts's comment where the status listener is registered) -- a
+// real decode/network failure is only ever caught by the load watchdog. To
+// keep this test's timing fast and deterministic without waiting out that
+// watchdog on every attempt, `createAudioPlayer` itself throws synchronously
+// here, standing in for a native init failure -- a real failure mode too,
+// and one that exercises the exact same give-up/retry path.
 const mockLoad = jest.fn();
-const mockSetupPlayer = jest.fn().mockResolvedValue(undefined);
-const mockUpdateOptions = jest.fn().mockResolvedValue(undefined);
-const mockGetProgress = jest.fn().mockResolvedValue({ position: 0, duration: 60, buffered: 0 });
-jest.mock("react-native-track-player", () => ({
+const mockPlayer = {
+  addListener: jest.fn(() => ({ remove: jest.fn() })),
+  replace: jest.fn(),
+  play: jest.fn(),
+  pause: jest.fn(),
+  seekTo: jest.fn().mockResolvedValue(undefined),
+  setPlaybackRate: jest.fn(),
+  setActiveForLockScreen: jest.fn(),
+  updateLockScreenMetadata: jest.fn(),
+  remove: jest.fn(),
+};
+jest.mock("expo-audio", () => ({
   __esModule: true,
-  default: {
-    setupPlayer: (...args: unknown[]) => mockSetupPlayer(...args),
-    updateOptions: (...args: unknown[]) => mockUpdateOptions(...args),
-    load: (...args: unknown[]) => mockLoad(...args),
-    reset: jest.fn().mockResolvedValue(undefined),
-    play: jest.fn().mockResolvedValue(undefined),
-    pause: jest.fn().mockResolvedValue(undefined),
-    seekTo: jest.fn().mockResolvedValue(undefined),
-    setRate: jest.fn().mockResolvedValue(undefined),
-    getProgress: (...args: unknown[]) => mockGetProgress(...args),
-    updateNowPlayingMetadata: jest.fn().mockResolvedValue(undefined),
-    addEventListener: jest.fn().mockReturnValue({ remove: jest.fn() }),
+  createAudioPlayer: (...args: unknown[]) => {
+    mockLoad(...args);
+    throw new Error("native load failed");
   },
-  Event: {
-    PlaybackError: "playback-error",
-    PlaybackState: "playback-state",
-    PlaybackProgressUpdated: "playback-progress-updated",
-  },
-  State: { None: "none", Ready: "ready", Playing: "playing", Paused: "paused", Ended: "ended" },
-  Capability: { Play: 0, Pause: 1, SeekTo: 2, Stop: 3 },
+  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockGetAudioUrl = jest.fn();
@@ -74,9 +77,8 @@ describe("usePlayback", () => {
     mockLoad.mockReset();
     mockGetAudioUrl.mockReset();
     mockGetMarksDocument.mockReset();
-    mockSetupPlayer.mockClear();
-    mockUpdateOptions.mockClear();
-    mockGetProgress.mockClear();
+    mockPlayer.addListener.mockClear();
+    mockPlayer.replace.mockClear();
   });
 
   it("fetches the audio URL as soon as bookId is known, without waiting on the manifest", async () => {
@@ -103,8 +105,6 @@ describe("usePlayback", () => {
       mockGetAudioUrl.mockImplementation(() =>
         Promise.resolve({ ...AUDIO, url: `${AUDIO.url}?attempt=${call++}` }),
       );
-      mockLoad.mockRejectedValue(new Error("native load failed"));
-
       const { result, unmount } = await renderHook(() => usePlayback("book-1", null));
 
       await waitFor(() => expect(mockLoad).toHaveBeenCalledTimes(1));
