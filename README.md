@@ -289,6 +289,34 @@ aws secretsmanager create-secret \
 With the secret absent (the default everywhere today), the synthesize Lambda
 runs edge-tts alone and logs a single INFO at startup.
 
+**Enabling chat** (optional, prod-only, currently dormant by default):
+`get_chat_model()` (`backend/src/contexts/library/interface/dependencies.py`)
+gates the real OpenAI-backed chat model behind the same two checks the
+Google TTS fallback uses above -- `ENVIRONMENT != "prod"` first and
+unconditionally (so no PR/staging/local stack can ever reach it), then
+whether `OPENAI_SECRET_NAME` is set. Both gates fail open to a
+`StubChatModel` rather than an error: `NON_PROD` outside prod, or
+`NOT_CONFIGURED` in prod with no secret name -- either way the chat sheet's
+`meta` frame reports `enabled: false` and the reason, and the UI surfaces
+"Chat isn't set up for this deployment yet" rather than pretending the
+feature doesn't exist. `.github/workflows/deploy-stack.yml`'s `cdk deploy`
+call (used for both prod and PR deploys) never passes an
+`openai_secret_name` context value, so this is off everywhere, prod
+included, until turned on by hand:
+
+```bash
+aws secretsmanager create-secret \
+  --name bookloud/openai-api-key --secret-string '<key>'
+```
+
+then redeploy the `Api` stack with
+`-c openai_secret_name=bookloud/openai-api-key` (`infra/app.py` threads that
+context value straight into `ApiStack`'s `openai_secret_name` -- see its own
+comment for why the override alone still can't turn on real calls outside
+prod). Seeing `NON_PROD` on a PR/staging/local deployment is expected, not a
+bug -- same as `PARTIAL`/`NO_AUDIO` books there; only `NOT_CONFIGURED` on a
+prod deployment means the secret step above hasn't been done yet.
+
 **Single-table key patterns** (table: `bookloud-<env>`, PK/SK both strings):
 
 | item | PK | SK |

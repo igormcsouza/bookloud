@@ -402,11 +402,33 @@ export function usePlayback(
     }
   }, []);
 
+  // The playbackStatusUpdate listener below is registered inside an effect
+  // keyed on `[audioUrl]` alone (deliberately -- see that effect's own
+  // comment), so its closure is fixed to whatever `sync`/`startLoop` were at
+  // the moment `audioUrl` last changed. `sync` is NOT referentially stable
+  // (it depends on `segments`, which starts `[]` and updates once the
+  // manifest resolves, and on `estimatedPositionMs`, which depends on
+  // `state.durationMs`) -- so if the audio URL happens to resolve before the
+  // manifest, that effect captures a `sync` closed over an empty `segments`
+  // array, permanently: `locateSegment([], tMs)` is always `-1`, so neither
+  // the highlight nor the auto-scroll (which is driven off the resulting
+  // state) ever advances again for that player session, even after the
+  // manifest arrives and `segments` is populated. The AppState "active"
+  // listener elsewhere in this hook depends on `[sync]` directly, so it
+  // always calls the *current* `sync` -- which is exactly why returning to
+  // the foreground resyncs to the right word once, while continued playback
+  // (driven by the stale native listener/rAF loop) stays frozen. Routing
+  // through refs, same pattern as `scheduleRetryRef` above, keeps that
+  // listener's calls always hitting the latest closures without having to
+  // re-subscribe the native listener on every `sync` identity change.
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+
   const startLoop = useCallback(() => {
     if (rafRef.current !== null) return;
     const frame = () => {
       try {
-        sync(false);
+        syncRef.current(false);
       } catch (err) {
         // Defense in depth (issue #13's actual bug is in `sync` itself --
         // see its comment): a throw here must never permanently kill the
@@ -421,7 +443,11 @@ export function usePlayback(
       rafRef.current = requestAnimationFrame(frame);
     };
     rafRef.current = requestAnimationFrame(frame);
-  }, [sync]);
+    // `syncRef` (not `sync`) is what `frame` actually reads, so this has no
+    // real dependency on `sync`'s identity -- keeping this stable across
+    // re-renders avoids proliferating unused closures every time `segments`
+    // or `state.durationMs` changes.
+  }, []);
 
   // --- imperative controls (declared early: the status listener below
   // needs a stable reference to `sync`, `startLoop`, `stopLoop`) -----------
@@ -566,7 +592,7 @@ export function usePlayback(
           // so resyncing here too gives chunk/word advancement a second,
           // more reliable clock to fall back on. The rAF loop remains for
           // smoother between-update interpolation when it's running.
-          sync(false);
+          syncRef.current(false);
         });
       } catch {
         if (cancelled || gaveUp) return;
