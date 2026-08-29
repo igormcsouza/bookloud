@@ -17,9 +17,9 @@ make synth   # cdk synth -c environment=dev, a local sanity check of every
 make down
 ```
 
-Run the mobile app separately: `cd mobile && npx expo start`, pointed at a running `make up` backend or a deployed `pr-N` API (see `mobile/.env.example` and README's Quickstart for the exact env vars and LAN-IP caveat).
+Run the mobile app separately: `cd mobile && npx expo start`, pointed at a running `make up` backend (see `mobile/.env.example` and README's Quickstart for the exact env vars and LAN-IP caveat). There is no per-PR backend deploy to point at instead (issue #35).
 
-Real TTS engines are gated to `ENVIRONMENT=prod` only (see README's "Real TTS runs in prod only"). Don't try to "fix" a `PARTIAL`/`NO_AUDIO` book in local dev or a PR environment -- that's the expected, deterministic state there, and `make smoke` asserts it.
+Real TTS engines are gated to `ENVIRONMENT=prod` only (see README's "Real TTS runs in prod only"). Don't try to "fix" a `PARTIAL`/`NO_AUDIO` book in local dev or the `staging` CD gate -- that's the expected, deterministic state there, and `make smoke` asserts it.
 
 ## Conventions and gotchas worth knowing before changing things
 

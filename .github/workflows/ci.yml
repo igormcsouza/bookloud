@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  pull_request:
+    branches: [main]
   workflow_call:
     outputs:
       backend_or_infra_changed:
-        description: "true if this push/PR touches backend/, infra/, local/, docker-compose*.yml, Makefile, or a workflow file shared by both deploy pipelines"
+        description: "true if this push/PR touches backend/, infra/, local/, docker-compose*.yml, Makefile, or a deploy-pipeline workflow file"
         value: ${{ jobs.changes.outputs.backend_or_infra }}
       mobile_changed:
         value: ${{ jobs.changes.outputs.mobile }}
@@ -13,12 +15,11 @@ jobs:
   # Mobile ships through its own release-triggered pipeline
   # (mobile-release.yml), entirely separate from the AWS stack -- so a
   # mobile-only change has no business running backend tests, infra synth,
-  # the local compose smoke test, or (per deploy-prod.yml/deploy-pr.yml) a
-  # full CDK deploy+teardown. Conversely a backend/infra-only change has no
-  # business running the mobile suite. Detected once here so every caller
-  # (this file's own jobs, plus deploy-prod.yml/deploy-pr.yml gating their
-  # deploy jobs) shares one answer instead of re-deriving it and risking
-  # drift.
+  # the local compose smoke test, or (per deploy-prod.yml) a full CDK
+  # deploy+teardown. Conversely a backend/infra-only change has no business
+  # running the mobile suite. Detected once here so every caller (this
+  # file's own jobs, plus deploy-prod.yml gating its deploy jobs) shares one
+  # answer instead of re-deriving it and risking drift.
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
@@ -39,9 +40,7 @@ jobs:
               - 'Makefile'
               - '.github/workflows/ci.yml'
               - '.github/workflows/deploy-prod.yml'
-              - '.github/workflows/deploy-pr.yml'
               - '.github/workflows/deploy-stack.yml'
-              - '.github/workflows/destroy-pr.yml'
             mobile:
               - 'mobile/**'
               - '.github/workflows/ci.yml'
