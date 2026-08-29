@@ -165,7 +165,10 @@ export default function Library() {
                 onPress={() => {
                   if (item.status === "FAILED") return;
                   if (item.status === "READY" || item.status === "PARTIAL") {
-                    router.push(`/reader/${item.id}`);
+                    router.push({
+                      pathname: "/reader/[bookId]",
+                      params: { bookId: item.id, title: item.title },
+                    });
                   } else {
                     router.push(`/library/add?bookId=${item.id}`);
                   }

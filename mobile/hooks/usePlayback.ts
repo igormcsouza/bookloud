@@ -5,20 +5,32 @@
 //
 // The web version drives the ~60Hz highlight loop straight off
 // `HTMLAudioElement.currentTime` inside a `requestAnimationFrame` callback.
-// expo-av has no such synchronous clock: `Audio.Sound` reports position via
-// an async `onPlaybackStatusUpdate` callback that fires at most a few times
-// a second (`progressUpdateIntervalMillis`), which is too coarse for
-// word-level highlighting on its own. This hook keeps the same rAF loop, but
-// *estimates* the current position between native status updates as
+// expo-audio has no such synchronous clock: it reports position via an async
+// `playbackStatusUpdate` event that fires at most a few times a second
+// (`updateInterval`), which is too coarse for word-level highlighting on its
+// own. This hook keeps the same rAF loop, but *estimates* the current
+// position between native progress events as
 // `lastKnownPositionMs + elapsedWallClockMs * playbackRate`, correcting to
-// the real value every time a status update lands. Everything downstream
+// the real value every time an event lands. Everything downstream
 // (locateSegment/locateWord/MarksCache) is unaffected -- it only ever reads
 // "the current position in ms" and does not care how that number is
 // produced.
+//
+// Issue #31 needed a lock-screen/notification transport, which expo-av
+// (and, before that, react-native-track-player) couldn't provide under this
+// app's React Native version: RNTP predates the New Architecture / Bridgeless
+// runtime this Expo SDK requires, and its legacy event-emission path never
+// delivers `playbackStatusUpdate`-equivalent events to JS there (confirmed
+// by instrumenting its listener directly -- it never fired, across multiple
+// retry cycles, regardless of file size). expo-audio is a first-party Expo
+// module built against the New Architecture from the start, and ships its
+// own MediaSession-backed Android notification (`AudioControlsService`) that
+// remote-control taps route to the *same* player instance automatically --
+// no separate headless-service bridge needed, unlike RNTP.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS, type AVPlaybackStatus } from "expo-av";
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer, type AudioStatus } from "expo-audio";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { NoAudioError, getAudioUrl, getMarksDocument } from "@/lib/books";
 import {
@@ -42,6 +54,11 @@ const RETRY_BASE_DELAY_MS = 2000;
  *  native call that never resolves or rejects would leave `ready` false
  *  forever with no error ever surfacing. */
 const AUDIO_LOAD_WATCHDOG_MS = 6000;
+
+/** How often expo-audio emits `playbackStatusUpdate` while playing --
+ *  matches the old progress-update cadence so the estimated-clock
+ *  correction frequency is unchanged. */
+const PROGRESS_UPDATE_INTERVAL_MS = 150;
 
 /** Races `promise` against a timer so a hung request (never resolves,
  *  never rejects) fails after `ms` instead of leaving its caller waiting
@@ -115,53 +132,59 @@ const INITIAL: PlaybackState = {
 export const PLAYBACK_RATE_KEY = "bookloud.playbackRate";
 export const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
-let audioModeConfigured = false;
-/** Enables background playback + lock-screen presence. Best-effort: expo-av
- *  gives us background audio and iOS Now Playing / Android media-session
- *  metadata via this call, but a fully custom lock-screen transport (remote
- *  play/pause/seek wired back into this hook) is native-module territory
- *  beyond expo-av's surface -- left as a known follow-up rather than
- *  silently claimed. */
-async function ensureAudioMode(): Promise<void> {
-  if (audioModeConfigured) return;
-  audioModeConfigured = true;
-  await Audio.setAudioModeAsync({
-    staysActiveInBackground: true,
-    playsInSilentModeIOS: true,
-    shouldDuckAndroid: true,
-    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-    interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-  }).catch(() => {});
+let audioModeSetup: Promise<void> | null = null;
+/** One-time global audio-session config (issue #31): `doNotMix` is required
+ *  for the OS to associate lock-screen controls with our player at all (see
+ *  `AudioPlayer.setActiveForLockScreen`'s own docstring), and
+ *  `shouldPlayInBackground` is what keeps playback (and so the notification)
+ *  alive once the app backgrounds. Android 13+'s POST_NOTIFICATIONS runtime
+ *  permission (declared in app.json) is requested by the native module
+ *  itself when the lock-screen controls activate -- there's no separate
+ *  permission call to make from JS in this expo-audio version. */
+async function ensureAudioModeSetup(): Promise<void> {
+  if (!audioModeSetup) {
+    audioModeSetup = setAudioModeAsync({
+      shouldPlayInBackground: true,
+      playsInSilentMode: true,
+      interruptionMode: "doNotMix",
+    }).catch((error) => {
+      audioModeSetup = null;
+      throw error;
+    });
+  }
+  await audioModeSetup;
 }
 
-export function usePlayback(bookId: string, manifest: BookManifest | null): UsePlayback {
+export function usePlayback(
+  bookId: string,
+  manifest: BookManifest | null,
+  bookTitle?: string,
+): UsePlayback {
   const [state, setState] = useState<PlaybackState>(INITIAL);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playbackRate, setRateState] = useState(1);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
   const rafRef = useRef<number | null>(null);
   const segmentRef = useRef(-1);
   const wordRef = useRef(-1);
   const refreshAttempts = useRef(0);
   const timingRef = useRef<Map<number, boolean>>(new Map());
-  // Serializes native `setPositionAsync` calls -- see `seekMs`.
-  const seekChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
   // The estimated-clock state (see file header comment).
   const lastKnownMs = useRef(0);
   const lastUpdateWallClock = useRef(0);
   const isPlayingRef = useRef(false);
   const rateRef = useRef(1);
-  // Position/playing-state to restore once a refreshed URL's Sound has
-  // loaded, set right before triggering that refresh (see onStatus below).
+  // Position/playing-state to restore once a refreshed URL's track has
+  // loaded, set right before triggering that refresh (see the status
+  // listener below).
   const pendingResumeRef = useRef<{ ms: number; playing: boolean } | null>(null);
   // A pending backoff-retry timer (scheduleRetry below) -- kept as a ref so
   // it can be cancelled on unmount/book change even though it outlives any
   // single effect run.
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Indirection so both `loadUrl` (declared first, since `scheduleRetry`
-  // itself calls `loadUrl`) and the sound-creation effect below can trigger
+  // itself calls `loadUrl`) and the track-loading effect below can trigger
   // a retry without needing `scheduleRetry`'s own identity in their
   // dependencies -- `scheduleRetry` gets a new identity on every `bookId`
   // change (it depends on `loadUrl`, which depends on `bookId`), and that
@@ -170,6 +193,11 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
   // fetch resolves. Kept current by the plain assignment right after
   // `scheduleRetry` is created below (same trick as `segmentsRef` above).
   const scheduleRetryRef = useRef<() => void>(() => {});
+
+  // A single player instance per mounted reader, reused (via `.replace()`)
+  // across URL refreshes -- recreating it on every retry would mean
+  // re-registering lock-screen controls repeatedly for no reason.
+  const playerRef = useRef<AudioPlayer | null>(null);
 
   const segments = useMemo(() => manifest?.segments ?? [], [manifest]);
 
@@ -220,10 +248,10 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
 
   // Retries `loadUrl()` with exponential backoff (2s, 4s, 8s), up to
   // `MAX_URL_REFRESH_ATTEMPTS`, then gives up with a visible error --
-  // issue #32. The single place all three failure modes below (native
-  // creation throwing, a mid-load `status.error`, and the load-watchdog
-  // firing on a hang) go through, so they share one counter/backoff
-  // schedule instead of three near-identical copies of the same logic.
+  // issue #32. The single place all failure modes below (native load
+  // rejecting, a mid-load error event, and the load-watchdog firing on a
+  // hang) go through, so they share one counter/backoff schedule instead of
+  // near-identical copies of the same logic.
   const scheduleRetry = useCallback(() => {
     if (retryTimerRef.current) return;
     if (refreshAttempts.current >= MAX_URL_REFRESH_ATTEMPTS) {
@@ -386,8 +414,8 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
         // `requestAnimationFrame(frame)` call below, leaving `rafRef.current`
         // pointing at an already-fired frame id forever -- `startLoop`'s
         // `rafRef.current !== null` guard would then see it as "already
-        // running" and refuse to restart it, even though `onStatus` keeps
-        // calling `startLoop()` on every native status update.
+        // running" and refuse to restart it, even though the status
+        // listener keeps calling `startLoop()` on every native update.
         if (__DEV__) console.warn("[usePlayback] sync() threw inside the highlight loop", err);
       }
       rafRef.current = requestAnimationFrame(frame);
@@ -395,122 +423,154 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
     rafRef.current = requestAnimationFrame(frame);
   }, [sync]);
 
-  // --- media element wiring: load the sound whenever the URL changes --------
+  // --- imperative controls (declared early: the status listener below
+  // needs a stable reference to `sync`, `startLoop`, `stopLoop`) -----------
+
+  const play = useCallback(() => {
+    playerRef.current?.play();
+  }, []);
+
+  const pause = useCallback(() => {
+    playerRef.current?.pause();
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (isPlayingRef.current) pause();
+    else play();
+  }, [pause, play]);
+
+  const seekMs = useCallback(
+    (ms: number) => {
+      const clamped = Math.max(0, ms);
+      lastKnownMs.current = clamped;
+      lastUpdateWallClock.current = Date.now();
+      // Text/word state updates synchronously here -- swiping between
+      // chunks (issue #13 ask #2/#3) must feel instant regardless of how
+      // long the native seek takes.
+      sync(true);
+      void playerRef.current?.seekTo(clamped / 1000).catch(() => {});
+    },
+    [sync],
+  );
+
+  // --- media element wiring: load the track whenever the URL changes --------
 
   useEffect(() => {
     if (!audioUrl) return;
     let cancelled = false;
     // Set once this attempt's outcome (success, a definitive error, or the
     // watchdog giving up) has been decided, so a signal that arrives after
-    // that point -- e.g. a native `createAsync` call that finally resolves
-    // *after* the watchdog already retried on a fresh URL -- is ignored
-    // instead of resurrecting an abandoned attempt (issue #32).
+    // that point -- e.g. a native load that finally resolves *after* the
+    // watchdog already retried on a fresh URL -- is ignored instead of
+    // resurrecting an abandoned attempt (issue #32).
     let gaveUp = false;
-    let sound: Audio.Sound | null = null;
+    let reachedReady = false;
 
-    // Without this, a hung URL fetch or a native `createAsync` call that
-    // never resolves or rejects would leave `ready` false forever with no
-    // error ever surfacing -- see AUDIO_LOAD_WATCHDOG_MS's docstring.
+    // Without this, a hung URL fetch or a native load that never resolves
+    // or rejects would leave `ready` false forever with no error ever
+    // surfacing -- see AUDIO_LOAD_WATCHDOG_MS's docstring.
     const watchdog = setTimeout(() => {
-      if (cancelled || gaveUp) return;
+      if (cancelled || gaveUp || reachedReady) return;
       gaveUp = true;
       stopLoop();
       scheduleRetryRef.current();
     }, AUDIO_LOAD_WATCHDOG_MS);
 
-    const onStatus = (status: AVPlaybackStatus) => {
+    const giveUpOnError = () => {
       if (cancelled || gaveUp) return;
-      if (!status.isLoaded) {
-        if (status.error) {
-          // expo-av's status error carries no code distinguishing "the
-          // decoded bytes are bad" from "the presigned URL just expired
-          // mid-playback" (unlike the web `<audio>` element's
-          // MediaError.code) -- so, mirroring the web version's handling of
-          // every *other* error there, try refreshing the URL and resuming
-          // before giving up. §3.3 / MAX_URL_REFRESH_ATTEMPTS.
-          gaveUp = true;
-          clearTimeout(watchdog);
-          stopLoop();
-          pendingResumeRef.current = { ms: lastKnownMs.current, playing: isPlayingRef.current };
-          scheduleRetryRef.current();
-        }
-        return;
-      }
-
+      gaveUp = true;
       clearTimeout(watchdog);
-
-      lastKnownMs.current = status.positionMillis;
-      lastUpdateWallClock.current = Date.now();
-      isPlayingRef.current = status.isPlaying;
-
-      setState((previous) => ({
-        ...previous,
-        positionMs: status.positionMillis,
-        playing: status.isPlaying,
-      }));
-
-      // Defense in depth for issue #13 (the actual bug is the fast-path
-      // check inside `sync` -- see its comment): the chunk/word highlight
-      // is otherwise driven *exclusively* by the rAF loop below, which only
-      // runs while the JS engine keeps scheduling `requestAnimationFrame`
-      // callbacks. This native `onPlaybackStatusUpdate` callback fires on
-      // its own schedule (`progressUpdateIntervalMillis`, 150ms) for as
-      // long as audio is actually playing, independent of RN's rAF -- so
-      // resyncing here too gives chunk/word advancement a second, more
-      // reliable clock to fall back on. The rAF loop remains for smoother
-      // between-update interpolation when it's running.
-      sync(false);
-
-      if (status.isPlaying) startLoop();
-      else stopLoop();
-
-      if (status.didJustFinish) {
-        stopLoop();
-      }
+      stopLoop();
+      pendingResumeRef.current = { ms: lastKnownMs.current, playing: isPlayingRef.current };
+      scheduleRetryRef.current();
     };
 
+    let statusSub: { remove: () => void } | null = null;
+
     (async () => {
-      await ensureAudioMode();
       try {
-        const { sound: created, status } = await Audio.Sound.createAsync(
-          { uri: audioUrl },
-          { progressUpdateIntervalMillis: 150, rate: rateRef.current, shouldCorrectPitch: true },
-          onStatus,
-        );
-        if (cancelled || gaveUp) {
-          await created.unloadAsync();
-          return;
-        }
-        sound = created;
-        soundRef.current = created;
+        await ensureAudioModeSetup();
+        if (cancelled) return;
 
-        if (status.isLoaded) {
-          clearTimeout(watchdog);
-          const durationMs = status.durationMillis ?? manifest?.durationMs ?? 0;
-          const imprecise = durationDriftExceedsTolerance(durationMs / 1000, manifest?.durationMs ?? 0);
-          if (imprecise) {
-            console.warn(
-              `Decoded duration (${durationMs}ms) differs from the manifest's ` +
-                `${manifest?.durationMs}ms by more than 2% -- seeking may be imprecise.`,
+        if (!playerRef.current) {
+          playerRef.current = createAudioPlayer(audioUrl, {
+            updateInterval: PROGRESS_UPDATE_INTERVAL_MS,
+          });
+        } else {
+          playerRef.current.replace(audioUrl);
+        }
+        const player = playerRef.current;
+
+        statusSub = player.addListener("playbackStatusUpdate", (status: AudioStatus) => {
+          if (cancelled || gaveUp) return;
+
+          // This expo-audio version's status carries no error field at all
+          // (confirmed against its native source -- an ExoPlayer error never
+          // reaches the emitted status map), so an actual decode/network
+          // failure is indistinguishable here from "still loading" and is
+          // caught the same way a hang is: the watchdog below gives up and
+          // retries with a fresh URL if `isLoaded` never turns true in time.
+          const playing = status.playing;
+          isPlayingRef.current = playing;
+          setState((previous) => (previous.playing === playing ? previous : { ...previous, playing }));
+          if (playing) startLoop();
+          else stopLoop();
+
+          lastKnownMs.current = status.currentTime * 1000;
+          lastUpdateWallClock.current = Date.now();
+          setState((previous) => ({ ...previous, positionMs: status.currentTime * 1000 }));
+
+          if (status.isLoaded && !reachedReady) {
+            reachedReady = true;
+            clearTimeout(watchdog);
+            setState((previous) => (previous.ready ? previous : { ...previous, ready: true }));
+
+            const durationMs = status.duration > 0 ? status.duration * 1000 : manifest?.durationMs ?? 0;
+            const imprecise = durationDriftExceedsTolerance(durationMs / 1000, manifest?.durationMs ?? 0);
+            if (imprecise) {
+              console.warn(
+                `Decoded duration (${durationMs}ms) differs from the manifest's ` +
+                  `${manifest?.durationMs}ms by more than 2% -- seeking may be imprecise.`,
+              );
+            }
+            setState((previous) => ({ ...previous, seekMayBeImprecise: imprecise }));
+
+            player.setActiveForLockScreen(
+              true,
+              { title: bookTitle ?? "Bookloud", artist: "Bookloud" },
+              { showSeekForward: true, showSeekBackward: true },
             );
-          }
-          setState((previous) => ({ ...previous, ready: true, seekMayBeImprecise: imprecise }));
 
-          const resume = pendingResumeRef.current;
-          pendingResumeRef.current = null;
-          if (resume) {
-            lastKnownMs.current = resume.ms;
-            lastUpdateWallClock.current = Date.now();
-            await created.setPositionAsync(resume.ms).catch(() => {});
-            if (resume.playing) await created.playAsync().catch(() => {});
+            const resume = pendingResumeRef.current;
+            pendingResumeRef.current = null;
+            if (resume) {
+              lastKnownMs.current = resume.ms;
+              lastUpdateWallClock.current = Date.now();
+              void player
+                .seekTo(resume.ms / 1000)
+                .catch(() => {})
+                .then(() => {
+                  if (resume.playing) player.play();
+                });
+            }
+            player.setPlaybackRate(rateRef.current);
           }
-          sync(true);
-        }
+
+          // Defense in depth for issue #13 (the actual bug is the fast-path
+          // check inside `sync` -- see its comment): the chunk/word
+          // highlight is otherwise driven *exclusively* by the rAF loop
+          // above, which only runs while the JS engine keeps scheduling
+          // `requestAnimationFrame` callbacks. This native status update
+          // fires on its own schedule (`PROGRESS_UPDATE_INTERVAL_MS`) for as
+          // long as audio is actually playing, independent of RN's rAF --
+          // so resyncing here too gives chunk/word advancement a second,
+          // more reliable clock to fall back on. The rAF loop remains for
+          // smoother between-update interpolation when it's running.
+          sync(false);
+        });
       } catch {
         if (cancelled || gaveUp) return;
-        gaveUp = true;
-        clearTimeout(watchdog);
-        scheduleRetryRef.current();
+        giveUpOnError();
       }
     })();
 
@@ -518,11 +578,20 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
       cancelled = true;
       clearTimeout(watchdog);
       stopLoop();
-      soundRef.current = null;
-      if (sound) void sound.unloadAsync();
+      statusSub?.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioUrl]);
+
+  // Releases the player (and its lock-screen registration) when the reader
+  // unmounts -- e.g. navigating back to the library -- rather than on every
+  // URL refresh, which reuses the same instance (see `playerRef` above).
+  useEffect(() => {
+    return () => {
+      playerRef.current?.remove();
+      playerRef.current = null;
+    };
+  }, []);
 
   // A backgrounded app has no rAF at all; force a resnap when it returns to
   // the foreground rather than waiting for the next frame.
@@ -532,6 +601,14 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
     });
     return () => subscription.remove();
   }, [sync]);
+
+  // Keeps the notification / lock-screen surface's title current if it
+  // changes after the track already loaded (issue #31) -- e.g. the reader
+  // mounts before the library's book title has arrived.
+  useEffect(() => {
+    if (!state.ready || !bookTitle) return;
+    playerRef.current?.updateLockScreenMetadata({ title: bookTitle, artist: "Bookloud" });
+  }, [bookTitle, state.ready]);
 
   // --- playback rate (OQ-6) ---------------------------------------------------
 
@@ -547,7 +624,8 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
 
   useEffect(() => {
     rateRef.current = playbackRate;
-    void soundRef.current?.setRateAsync(playbackRate, true).catch(() => {});
+    if (state.ready) playerRef.current?.setPlaybackRate(playbackRate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playbackRate, audioUrl]);
 
   const setPlaybackRate = useCallback((rate: number) => {
@@ -556,46 +634,6 @@ export function usePlayback(bookId: string, manifest: BookManifest | null): UseP
     // the estimated position clock, which accounts for `rate` directly.
     AsyncStorage.setItem(PLAYBACK_RATE_KEY, String(rate)).catch(() => {});
   }, []);
-
-  // --- imperative controls -----------------------------------------------------
-
-  const play = useCallback(() => {
-    void soundRef.current?.playAsync().catch(() => {});
-  }, []);
-
-  const pause = useCallback(() => {
-    void soundRef.current?.pauseAsync().catch(() => {});
-  }, []);
-
-  const toggle = useCallback(() => {
-    if (state.playing) pause();
-    else play();
-  }, [pause, play, state.playing]);
-
-  const seekMs = useCallback(
-    (ms: number) => {
-      const clamped = Math.max(0, ms);
-      lastKnownMs.current = clamped;
-      lastUpdateWallClock.current = Date.now();
-      // Text/word state updates synchronously here -- swiping between
-      // chunks (issue #13 ask #2/#3) must feel instant regardless of how
-      // long the native seek takes.
-      sync(true);
-      // The native seek itself is serialized behind any seek still in
-      // flight. Firing `setPositionAsync` again before the previous call
-      // has resolved was observed, while testing rapid swipe-to-navigate on
-      // a real device, to leave expo-av's underlying ExoPlayer instance
-      // wedged -- `playAsync`/`pauseAsync` silently no-op afterwards, with
-      // no error surfaced anywhere (not `state.error`, not a rejected
-      // promise). Queuing here costs nothing in the common case (one seek
-      // at a time) and makes two swipes thrown in quick succession land in
-      // order instead of racing.
-      seekChainRef.current = seekChainRef.current.then(() =>
-        soundRef.current?.setPositionAsync(clamped).catch(() => {}),
-      );
-    },
-    [sync],
-  );
 
   const seekToChunk = useCallback(
     (chunkIndex: number) => {

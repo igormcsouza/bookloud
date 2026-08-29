@@ -4,24 +4,50 @@
 // exponential backoff a bounded number of times, then give up with a
 // visible error, rather than hanging or silently stranding the user.
 //
+// Issue #31 needed a lock-screen/notification transport, which led first to
+// react-native-track-player and then -- once RNTP turned out to never
+// deliver its playback events to JS under this app's React Native version
+// (see usePlayback.ts's file header) -- to expo-audio, a first-party Expo
+// module built for that runtime from the start. These tests moved with each
+// swap, but the intent -- and, on purpose, the real-timers-throughout
+// approach for exercising the backoff schedule -- is unchanged.
+//
 // Real timers throughout, on purpose: the backoff schedule (2s/4s/8s) is
 // exercised at real wall-clock speed via `waitFor` rather than mocked with
 // fake timers, which -- for a hook this deeply async (URL fetch -> native
-// audio-mode setup -> native sound creation, each its own awaited native
-// call) -- proved to desync React's `act()` tracking across `it` blocks.
+// setup -> native track load, each its own awaited native call) -- proved
+// to desync React's `act()` tracking across `it` blocks.
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
 
-const mockCreateAsync = jest.fn();
-jest.mock("expo-av", () => ({
-  Audio: {
-    setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
-    Sound: { createAsync: (...args: unknown[]) => mockCreateAsync(...args) },
+// This expo-audio version's `AudioStatus` carries no error field (see
+// usePlayback.ts's comment where the status listener is registered) -- a
+// real decode/network failure is only ever caught by the load watchdog. To
+// keep this test's timing fast and deterministic without waiting out that
+// watchdog on every attempt, `createAudioPlayer` itself throws synchronously
+// here, standing in for a native init failure -- a real failure mode too,
+// and one that exercises the exact same give-up/retry path.
+const mockLoad = jest.fn();
+const mockPlayer = {
+  addListener: jest.fn(() => ({ remove: jest.fn() })),
+  replace: jest.fn(),
+  play: jest.fn(),
+  pause: jest.fn(),
+  seekTo: jest.fn().mockResolvedValue(undefined),
+  setPlaybackRate: jest.fn(),
+  setActiveForLockScreen: jest.fn(),
+  updateLockScreenMetadata: jest.fn(),
+  remove: jest.fn(),
+};
+jest.mock("expo-audio", () => ({
+  __esModule: true,
+  createAudioPlayer: (...args: unknown[]) => {
+    mockLoad(...args);
+    throw new Error("native load failed");
   },
-  InterruptionModeAndroid: { DuckOthers: 1 },
-  InterruptionModeIOS: { DuckOthers: 1 },
+  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockGetAudioUrl = jest.fn();
@@ -48,9 +74,11 @@ const AUDIO = {
 
 describe("usePlayback", () => {
   beforeEach(() => {
-    mockCreateAsync.mockReset();
+    mockLoad.mockReset();
     mockGetAudioUrl.mockReset();
     mockGetMarksDocument.mockReset();
+    mockPlayer.addListener.mockClear();
+    mockPlayer.replace.mockClear();
   });
 
   it("fetches the audio URL as soon as bookId is known, without waiting on the manifest", async () => {
@@ -71,23 +99,21 @@ describe("usePlayback", () => {
     async () => {
       // A fresh URL each call, like a real presigned S3 URL would be --
       // returning the same string twice would make React bail out of
-      // re-running the sound-creation effect (no state change), masking
-      // the retry entirely.
+      // re-running the track-loading effect (no state change), masking the
+      // retry entirely.
       let call = 0;
       mockGetAudioUrl.mockImplementation(() =>
         Promise.resolve({ ...AUDIO, url: `${AUDIO.url}?attempt=${call++}` }),
       );
-      mockCreateAsync.mockRejectedValue(new Error("native load failed"));
-
       const { result, unmount } = await renderHook(() => usePlayback("book-1", null));
 
-      await waitFor(() => expect(mockCreateAsync).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockLoad).toHaveBeenCalledTimes(1));
 
       // Exhausts the 2s/4s/8s backoff schedule at real wall-clock speed.
       await waitFor(() => expect(result.current.state.error).toBe("URL_EXPIRED"), {
         timeout: 18_000,
       });
-      expect(mockCreateAsync).toHaveBeenCalledTimes(1 + MAX_URL_REFRESH_ATTEMPTS);
+      expect(mockLoad).toHaveBeenCalledTimes(1 + MAX_URL_REFRESH_ATTEMPTS);
 
       unmount();
     },
@@ -101,7 +127,7 @@ describe("usePlayback", () => {
 
     await waitFor(() => expect(result.current.state.error).toBe("NO_AUDIO"));
 
-    expect(mockCreateAsync).not.toHaveBeenCalled();
+    expect(mockLoad).not.toHaveBeenCalled();
     unmount();
   });
 });
