@@ -89,7 +89,11 @@ api = ApiStack(
     user_pool_client=auth.user_pool_client,
     environment=environment,
     git_sha=git_sha,
-    openai_secret_name=app.node.try_get_context("openai_secret_name") or "",
+    # Prod defaults to the documented secret name: CD's `cdk deploy` passes no
+    # -c openai_secret_name, so a "" default silently turned chat off on every
+    # deploy. Non-prod stays "" (get_chat_model() gates on prod regardless).
+    openai_secret_name=app.node.try_get_context("openai_secret_name")
+    or (Config.OPENAI_SECRET_NAME if environment == "prod" else ""),
     env=env,
 )
 

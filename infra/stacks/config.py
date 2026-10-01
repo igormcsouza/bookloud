@@ -95,10 +95,9 @@ class Config:
     ENV_OPENAI_MAX_OUTPUT_TOKENS = "OPENAI_MAX_OUTPUT_TOKENS"
     ENV_CHAT_DAILY_LIMIT = "CHAT_DAILY_LIMIT"
 
-    # Documented *name* the out-of-band secret is created under (PLANS/
-    # phase-7.md §5.2's two-step key setup) -- not a default for
-    # ENV_OPENAI_SECRET_NAME itself, which stays "" everywhere including
-    # prod (app.py) until a human deliberately deploys with the context flag.
+    # *Name* the out-of-band secret is created under (never its value). app.py
+    # defaults ENV_OPENAI_SECRET_NAME to this in prod only; the secret itself
+    # must still be created by hand.
     OPENAI_SECRET_NAME = "bookloud/openai-api-key"
     # Deployed default for OPENAI_MODEL/OPENAI_MAX_OUTPUT_TOKENS/
     # CHAT_DAILY_LIMIT -- kept in lockstep with backend/src/config.py's
