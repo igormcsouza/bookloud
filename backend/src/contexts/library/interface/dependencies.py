@@ -35,7 +35,7 @@ from src.contexts.library.infrastructure.pymupdf_extractor import PyMuPdfTextExt
 from src.contexts.library.infrastructure.s3_audio_delivery import S3AudioDelivery
 from src.contexts.library.infrastructure.s3_object_storage import S3ObjectStorage
 from src.contexts.library.infrastructure.s3_pdf_storage import S3PdfStorage
-from src.contexts.library.infrastructure.secrets import get_secret
+from src.contexts.library.infrastructure.secrets import get_parameter, get_secret
 from src.contexts.library.infrastructure.silent_synthesizer import SilentSynthesizer
 from src.contexts.library.infrastructure.sqs_stitch_queue import SqsStitchQueue
 from src.contexts.library.infrastructure.sqs_synthesis_queue import SqsSynthesisQueue
@@ -74,7 +74,7 @@ def get_chat_model():
     OPENAI_SECRET_NAME accidentally set on a PR stack still cannot produce a
     network call, because OpenAiChatModel is never constructed outside prod.
 
-    ``get_secret()`` is called EAGERLY here, while building the model -- as a
+    ``get_parameter()`` (SSM SecureString) is called EAGERLY here, while building the model -- as a
     FastAPI dependency this resolves before the route body runs and before
     any byte of the response (including the SSE `meta` frame) is sent, so a
     prod stack pointed at a secret that does not exist raises `ClientError`
@@ -91,7 +91,7 @@ def get_chat_model():
         return StubChatModel(reason=ChatDisabledReason.NOT_CONFIGURED)
 
     return OpenAiChatModel(
-        api_key=get_secret(settings.openai_secret_name),
+        api_key=get_parameter(settings.openai_secret_name),
         model=settings.openai_model,
         max_output_tokens=settings.openai_max_output_tokens,
     )
@@ -105,9 +105,9 @@ def get_title_inferrer():
     from src.contexts.library.infrastructure.openai_title_inferrer import OpenAiTitleInferrer
 
     try:
-        api_key = get_secret(settings.openai_secret_name)
+        api_key = get_parameter(settings.openai_secret_name)
     except Exception:
-        logging.getLogger("bookloud.title").warning("OpenAI secret unreadable; title inference off", exc_info=True)
+        logging.getLogger("bookloud.title").warning("OpenAI key unreadable; title inference off", exc_info=True)
         return None
     return OpenAiTitleInferrer(api_key=api_key, model=settings.openai_model)
 

@@ -6,6 +6,7 @@ from aws_cdk import aws_apigatewayv2_authorizers as apigwv2_authorizers
 from aws_cdk import aws_apigatewayv2_integrations as apigwv2_integrations
 from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sqs as sqs
@@ -281,9 +282,15 @@ class ApiStack(cdk.Stack):
         # radius should be exactly "this user's books".
 
         if openai_secret_name:
-            from aws_cdk import aws_secretsmanager
-            secret = aws_secretsmanager.Secret.from_secret_name_v2(self, "OpenAiSecret", openai_secret_name)
-            secret.grant_read(self.chat_fn)
+            # SSM SecureString (default aws/ssm key, so no kms grant needed),
+            # created out of band -- CDK only ever sees the name.
+            self.chat_fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[cdk.Stack.of(self).format_arn(
+                    service="ssm", resource="parameter",
+                    resource_name=openai_secret_name.lstrip("/"),
+                )],
+            ))
             # Deliberately NOT granted on `fn` (ApiFunction) -- it only needs
             # the *name* to test for emptiness, never read access to the
             # value (PLANS/phase-7.md §9.3, §13.3

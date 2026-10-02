@@ -5,6 +5,7 @@ from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as events_targets
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
 from aws_cdk import aws_logs as logs
@@ -214,7 +215,14 @@ class PipelineStack(cdk.Stack):
         pdf_bucket.grant_read(extract_fn)
         table.grant_read_write_data(extract_fn)
         if openai_secret_name:
-            secretsmanager.Secret.from_secret_name_v2(self, "OpenAiSecret", openai_secret_name).grant_read(extract_fn)
+            # Same out-of-band SSM SecureString as ChatFunction (default aws/ssm key).
+            extract_fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[cdk.Stack.of(self).format_arn(
+                    service="ssm", resource="parameter",
+                    resource_name=openai_secret_name.lstrip("/"),
+                )],
+            ))
 
         # No SqsEventSource here (unlike phase-3's original wiring) --
         # _add_scheduled_pollers attaches an EventBridge Rule instead, so

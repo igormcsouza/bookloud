@@ -95,10 +95,10 @@ class Config:
     ENV_OPENAI_MAX_OUTPUT_TOKENS = "OPENAI_MAX_OUTPUT_TOKENS"
     ENV_CHAT_DAILY_LIMIT = "CHAT_DAILY_LIMIT"
 
-    # *Name* the out-of-band secret is created under (never its value). app.py
+    # *Name* of the out-of-band SSM SecureString parameter (never its value). app.py
     # defaults ENV_OPENAI_SECRET_NAME to this in prod only; the secret itself
     # must still be created by hand.
-    OPENAI_SECRET_NAME = "bookloud/openai-api-key"
+    OPENAI_SECRET_NAME = "/bookloud/openai-api-key"
     # Deployed default for OPENAI_MODEL/OPENAI_MAX_OUTPUT_TOKENS/
     # CHAT_DAILY_LIMIT -- kept in lockstep with backend/src/config.py's
     # Settings defaults so a stack that omits the context flag still gets

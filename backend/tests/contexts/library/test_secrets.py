@@ -55,3 +55,14 @@ def test_clear_cache_for_tests_actually_clears(secretsmanager) -> None:
     assert secrets._cache
     _clear_cache_for_tests()
     assert secrets._cache == {}
+
+
+def test_get_parameter_decrypts_and_caches(secretsmanager) -> None:
+    from src.contexts.library.infrastructure.secrets import get_parameter
+
+    ssm = boto3.client("ssm", region_name="us-east-1")
+    ssm.put_parameter(Name="/bookloud/openai-api-key", Type="SecureString", Value="sk-from-ssm")
+
+    assert get_parameter("/bookloud/openai-api-key") == "sk-from-ssm"
+    ssm.delete_parameter(Name="/bookloud/openai-api-key")
+    assert get_parameter("/bookloud/openai-api-key") == "sk-from-ssm"  # cached
