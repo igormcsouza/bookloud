@@ -49,6 +49,7 @@ class PipelineStack(cdk.Stack):
         marks_bucket: s3.IBucket,
         table: dynamodb.Table,
         google_tts_secret_name: str = "",
+        openai_secret_name: str = "",
         git_sha: str = "local",
         **kwargs,
     ) -> None:
@@ -109,7 +110,11 @@ class PipelineStack(cdk.Stack):
         cdk.CfnOutput(self, "StitchQueueUrl", value=self.stitch_queue.queue_url)
 
         extract_fn = self._add_extract_lambda(
-            pdf_bucket_name=pdf_bucket_name, table=table, git_sha=git_sha, environment=environment
+            pdf_bucket_name=pdf_bucket_name,
+            table=table,
+            git_sha=git_sha,
+            environment=environment,
+            openai_secret_name=openai_secret_name,
         )
         synthesize_fn = self._add_synthesize_lambda(
             audio_bucket=audio_bucket,
@@ -149,7 +154,13 @@ class PipelineStack(cdk.Stack):
         synthesize_fn.add_environment(Config.ENV_STITCH_QUEUE_URL, self.stitch_queue.queue_url)
 
     def _add_extract_lambda(
-        self, *, pdf_bucket_name: str, table: dynamodb.Table, git_sha: str, environment: str
+        self,
+        *,
+        pdf_bucket_name: str,
+        table: dynamodb.Table,
+        git_sha: str,
+        environment: str,
+        openai_secret_name: str,
     ) -> lambda_.DockerImageFunction:
         # THE CIRCULAR-DEPENDENCY TRAP (PLANS/phase-3.md §6.1): `pdf_bucket`
         # lives in StorageStack, `extract_queue` here in PipelineStack.
@@ -193,11 +204,17 @@ class PipelineStack(cdk.Stack):
                 Config.ENV_PDF_BUCKET: pdf_bucket.bucket_name,
                 Config.ENV_EXTRACT_QUEUE_URL: self.extract_queue.queue_url,
                 Config.ENV_LOG_LEVEL: "INFO",
+                # "" unless prod / -c openai_secret_name: get_title_inferrer()
+                # then keeps the filename title (same gate as chat).
+                Config.ENV_OPENAI_SECRET_NAME: openai_secret_name,
+                Config.ENV_OPENAI_MODEL: Config.DEFAULT_OPENAI_MODEL,
             },
         )
 
         pdf_bucket.grant_read(extract_fn)
         table.grant_read_write_data(extract_fn)
+        if openai_secret_name:
+            secretsmanager.Secret.from_secret_name_v2(self, "OpenAiSecret", openai_secret_name).grant_read(extract_fn)
 
         # No SqsEventSource here (unlike phase-3's original wiring) --
         # _add_scheduled_pollers attaches an EventBridge Rule instead, so

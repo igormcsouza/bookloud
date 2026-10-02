@@ -87,6 +87,7 @@ class BookRepository(Protocol):
         clear_stitch_outputs: bool = False,
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
+        title: str | None = None,
         updated_at: str | None = None,
     ) -> None:
         """One generalized targeted update rather than three bolted-on

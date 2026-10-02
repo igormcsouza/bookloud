@@ -67,6 +67,9 @@ pipeline = PipelineStack(
     # get_speech_synthesizer()'s ENVIRONMENT == "prod" gate (§0) is
     # unconditional and checked first.
     google_tts_secret_name=app.node.try_get_context("google_tts_secret_name") or "",
+    # Same value as ApiStack's below: extract infers a clean title with it.
+    openai_secret_name=app.node.try_get_context("openai_secret_name")
+    or (Config.OPENAI_SECRET_NAME if environment == "prod" else ""),
     git_sha=git_sha,
     env=env,
 )
