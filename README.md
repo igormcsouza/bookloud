@@ -289,7 +289,7 @@ aws secretsmanager create-secret \
 With the secret absent (the default everywhere today), the synthesize Lambda
 runs edge-tts alone and logs a single INFO at startup.
 
-**Enabling chat** (prod-only; `infra/app.py` defaults the secret name to `bookloud/openai-api-key` in prod):
+**Enabling chat** (prod-only; `infra/app.py` defaults the parameter name to `/bookloud/openai-api-key` in prod):
 `get_chat_model()` (`backend/src/contexts/library/interface/dependencies.py`)
 gates the real OpenAI-backed chat model behind the same two checks the
 Google TTS fallback uses above -- `ENVIRONMENT != "prod"` first and
@@ -299,11 +299,11 @@ whether `OPENAI_SECRET_NAME` is set. Both gates fail open to a
 `NOT_CONFIGURED` in prod with no secret name -- either way the chat sheet's
 `meta` frame reports `enabled: false` and the reason, and the UI surfaces
 "Chat isn't set up for this deployment yet" rather than pretending the
-feature doesn't exist. `infra/app.py` defaults `openai_secret_name` to `bookloud/openai-api-key` in prod only, because `.github/workflows/deploy-stack.yml`'s `cdk deploy` passes no context for it (a `""` default silently disabled chat on every deploy). The secret itself is still created by hand:
+feature doesn't exist. `infra/app.py` defaults `openai_secret_name` to the SSM parameter `/bookloud/openai-api-key` in prod only, because `.github/workflows/deploy-stack.yml`'s `cdk deploy` passes no context for it (a `""` default silently disabled chat on every deploy). The key itself is an SSM `SecureString` (Parameter Store is free; Secrets Manager bills per secret) and is still created by hand:
 
 ```bash
-aws secretsmanager create-secret \
-  --name bookloud/openai-api-key --secret-string '<key>'
+aws ssm put-parameter --region sa-east-1 --type SecureString \
+  --name /bookloud/openai-api-key --value '<key>'
 ```
 
 then deploy as usual (prod picks the name up by default; `-c openai_secret_name=...` overrides it, and `infra/app.py` threads that

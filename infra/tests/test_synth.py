@@ -1174,15 +1174,12 @@ def test_api_stack_chat_function(environment: str) -> None:
         }
     })
 
-    # 3. Secrets manager grant
+    # 3. SSM parameter grant
     template.has_resource_properties("AWS::IAM::Policy", {
         "PolicyDocument": {
             "Statement": Match.array_with([
                 Match.object_like({
-                    "Action": [
-                        "secretsmanager:GetSecretValue",
-                        "secretsmanager:DescribeSecret"
-                    ],
+                    "Action": "ssm:GetParameter",
                     "Effect": "Allow"
                 })
             ])
@@ -1248,7 +1245,7 @@ def test_openai_secret_name_defaults_empty_in_every_environment(environment: str
                 actions.extend(action)
             elif isinstance(action, str):
                 actions.append(action)
-    assert "secretsmanager:GetSecretValue" not in actions
+    assert "ssm:GetParameter" not in actions
 
 
 @pytest.mark.docker
@@ -1266,10 +1263,10 @@ def test_openai_secret_grant_appears_with_context_flag(environment: str) -> None
                 all_actions.extend(action)
             elif isinstance(action, str):
                 all_actions.append(action)
-    assert all_actions.count("secretsmanager:GetSecretValue") == 1
+    assert all_actions.count("ssm:GetParameter") == 1
 
     chat_role = _function_role_logical_id(template, "ChatFunction")
-    assert "secretsmanager:GetSecretValue" in _actions_for_role(template, chat_role)
+    assert "ssm:GetParameter" in _actions_for_role(template, chat_role)
 
 
 @pytest.mark.docker
@@ -1281,7 +1278,7 @@ def test_api_function_cannot_read_the_secret(environment: str) -> None:
     template = _synth_api_stack(environment, openai_secret_name="bookloud/openai-api-key")
 
     api_role = _function_role_logical_id(template, "ApiFunction")
-    assert "secretsmanager:GetSecretValue" not in _actions_for_role(template, api_role)
+    assert "ssm:GetParameter" not in _actions_for_role(template, api_role)
 
 
 @pytest.mark.docker

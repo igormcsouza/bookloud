@@ -19,17 +19,17 @@ def test_get_chat_model_non_prod(monkeypatch):
 def test_get_chat_model_never_stubs_regardless_of_secret_name(monkeypatch, environment):
     """The constraint-1 regression test: the environment gate is checked
     FIRST and UNCONDITIONALLY. An OPENAI_SECRET_NAME accidentally set on any
-    non-prod stack still cannot produce a network call, because get_secret
+    non-prod stack still cannot produce a network call, because get_parameter
     is never reached outside prod."""
     import src.contexts.library.interface.dependencies as deps_mod
 
     monkeypatch.setattr(settings, "environment", environment)
-    monkeypatch.setattr(settings, "openai_secret_name", "bookloud/openai-api-key")
+    monkeypatch.setattr(settings, "openai_secret_name", "/bookloud/openai-api-key")
 
     def spy(*args, **kwargs):
-        raise AssertionError("get_secret must never be called outside prod")
+        raise AssertionError("get_parameter must never be called outside prod")
 
-    monkeypatch.setattr(deps_mod, "get_secret", spy)
+    monkeypatch.setattr(deps_mod, "get_parameter", spy)
 
     model = get_chat_model()
 
@@ -47,13 +47,13 @@ def test_get_chat_model_prod_with_absent_secret_propagates_client_error(monkeypa
     monkeypatch.setattr(settings, "environment", "prod")
     monkeypatch.setattr(settings, "openai_secret_name", "bookloud/does-not-exist")
 
-    def fake_get_secret(name):
+    def fake_get_parameter(name):
         raise ClientError(
-            {"Error": {"Code": "ResourceNotFoundException", "Message": "not found"}},
-            "GetSecretValue",
+            {"Error": {"Code": "ParameterNotFound", "Message": "not found"}},
+            "GetParameter",
         )
 
-    monkeypatch.setattr(deps_mod, "get_secret", fake_get_secret)
+    monkeypatch.setattr(deps_mod, "get_parameter", fake_get_parameter)
 
     with pytest.raises(ClientError):
         get_chat_model()
@@ -74,11 +74,11 @@ def test_get_chat_model_prod_configured(monkeypatch):
     monkeypatch.setattr(settings, "openai_secret_name", "my-secret")
     calls = []
 
-    def fake_get_secret(name):
+    def fake_get_parameter(name):
         calls.append(name)
         return "sk-fake-key"
 
-    monkeypatch.setattr(deps_mod, "get_secret", fake_get_secret)
+    monkeypatch.setattr(deps_mod, "get_parameter", fake_get_parameter)
 
     model = get_chat_model()
 

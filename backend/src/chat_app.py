@@ -46,7 +46,7 @@ from src.shared_kernel.domain.errors import DomainError
 
 @app.exception_handler(ClientError)
 async def aws_error_handler(request: Request, exc: ClientError) -> JSONResponse:
-    """Reached only by get_chat_model()'s eager get_secret() call, which runs
+    """Reached only by get_chat_model()'s eager get_parameter() call, which runs
     as a FastAPI dependency -- i.e. before the route body, before the
     StreamingResponse, before any byte (PLANS/phase-7.md §4.5 step 7). A prod
     stack whose OPENAI_SECRET_NAME points at a secret that does not exist

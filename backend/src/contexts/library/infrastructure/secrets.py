@@ -23,6 +23,19 @@ def get_secret(secret_name: str) -> str:
     return value
 
 
+def get_parameter(name: str) -> str:
+    """Same contract as :func:`get_secret`, for an SSM Parameter Store
+    ``SecureString`` (free tier; Secrets Manager bills per secret). Shares
+    the cache -- SSM names start with ``/``, Secrets Manager names here
+    never do, so the keys cannot collide."""
+    if name in _cache:
+        return _cache[name]
+    response = client("ssm").get_parameter(Name=name, WithDecryption=True)
+    value = response["Parameter"]["Value"]
+    _cache[name] = value
+    return value
+
+
 def _clear_cache_for_tests() -> None:
     """Test-only escape hatch -- the module-level cache is deliberately
     global and otherwise has no way to reset between test cases."""
