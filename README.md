@@ -313,6 +313,14 @@ prod). Seeing `NON_PROD` on a PR/staging/local deployment is expected, not a
 bug -- same as `PARTIAL`/`NO_AUDIO` books there; only `NOT_CONFIGURED` on a
 prod deployment means the secret step above hasn't been done yet.
 
+**Title inference** (same secret, same prod-only gate): uploads are titled with
+their filename, so `ExtractBook` sends the first ~3000 characters of the
+extracted text to the LLM (JSON mode, `{"bookTitle": ...}`, parsed defensively
+in `openai_title_inferrer.py`) and replaces `Book.title` with the answer when
+it gets one. Any failure (no secret, timeout, bad JSON) keeps the filename
+title and never fails extraction. The extract Lambda therefore also has
+`OPENAI_SECRET_NAME` and read access to that secret.
+
 **Single-table key patterns** (table: `bookloud-<env>`, PK/SK both strings):
 
 | item | PK | SK |

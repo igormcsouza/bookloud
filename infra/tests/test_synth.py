@@ -19,6 +19,8 @@ so the rest of this suite still runs in environments without Docker; run
 
 from __future__ import annotations
 
+import json
+
 import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
@@ -196,7 +198,9 @@ def test_auth_stack_client_explicit_auth_flows(environment: str) -> None:
 # Lambda's re-imported pdf_bucket + table come from it).
 
 
-def _synth_pipeline_stack(environment: str, *, google_tts_secret_name: str = "") -> Template:
+def _synth_pipeline_stack(
+    environment: str, *, google_tts_secret_name: str = "", openai_secret_name: str = ""
+) -> Template:
     app = cdk.App()
     storage = StorageStack(app, f"TestStorageForPipeline-{environment}", environment=environment)
     pipeline = PipelineStack(
@@ -208,9 +212,21 @@ def _synth_pipeline_stack(environment: str, *, google_tts_secret_name: str = "")
         marks_bucket=storage.marks_bucket,
         table=storage.table,
         google_tts_secret_name=google_tts_secret_name,
+        openai_secret_name=openai_secret_name,
         git_sha="test-sha",
     )
     return Template.from_stack(pipeline)
+
+
+@pytest.mark.docker
+def test_extract_lambda_gets_openai_secret_for_title_inference() -> None:
+    template = _synth_pipeline_stack("prod", openai_secret_name="bookloud/openai-api-key")
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Environment": {"Variables": Match.object_like({"OPENAI_SECRET_NAME": "bookloud/openai-api-key"})}},
+    )
+    assert "bookloud/openai-api-key" in json.dumps(template.to_json())
+
 
 
 @pytest.mark.docker

@@ -22,6 +22,7 @@ re-raises so SQS redelivers the extract message, and the new pre-claim
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -31,9 +32,12 @@ from src.contexts.library.domain.extraction import ExtractionError, PdfTextExtra
 from src.contexts.library.domain.repository import BookRepository, ChunkRepository
 from src.contexts.library.domain.storage import PdfStorage
 from src.contexts.library.domain.synthesis import SynthesisQueue
+from src.contexts.library.domain.title import TitleInferrer
 from src.contexts.library.domain.value_objects import BookStatus, ExtractionFailure
 from src.shared_kernel.application.ports import Clock
 from src.shared_kernel.domain.errors import ConflictError, NotFoundError
+
+logger = logging.getLogger("bookloud.extract")
 
 # The claim only succeeds when the book is currently UPLOADED (first attempt)
 # or FAILED (retry). EXTRACTED/READY are deliberately excluded -- claiming an
@@ -68,6 +72,7 @@ class ExtractBook:
         extractor: PdfTextExtractor,
         clock: Clock,
         synthesis_queue: SynthesisQueue,
+        title_inferrer: TitleInferrer | None = None,
     ) -> None:
         self._book_repository = book_repository
         self._chunk_repository = chunk_repository
@@ -75,6 +80,7 @@ class ExtractBook:
         self._extractor = extractor
         self._clock = clock
         self._synthesis_queue = synthesis_queue
+        self._title_inferrer = title_inferrer
 
     def execute(self, command: ExtractBookCommand) -> ExtractBookResult:
         book = self._book_repository.get(command.user_id, command.book_id)
@@ -199,7 +205,20 @@ class ExtractBook:
             # text that no longer exists.
             clear_stitch_outputs=True,
             page_count=document.page_count,
+            title=self._infer_title(document.text),
             clear_failure_reason=True,
             updated_at=self._clock.now().isoformat(),
         )
         return ExtractBookResult("EXTRACTED", chunks_written=len(chunks), page_count=document.page_count)
+
+    def _infer_title(self, text: str) -> str | None:
+        # Best effort: the upload filename stays as the title on any failure
+        # (LLM down, bad JSON, timeout) -- never fail or retry extraction
+        # over a nicer title.
+        if self._title_inferrer is None:
+            return None
+        try:
+            return self._title_inferrer.infer(text)
+        except Exception:
+            logger.warning("Title inference failed; keeping the existing title", exc_info=True)
+            return None

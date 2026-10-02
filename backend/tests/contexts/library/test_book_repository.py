@@ -225,6 +225,17 @@ def test_update_status_sets_chunks_total_page_count_and_updated_at(book_repo) ->
     assert fetched.updated_at == "2026-08-05T00:00:00+00:00"
 
 
+def test_update_status_sets_title_only_when_given(book_repo) -> None:
+    seed_book(book_repo, id="book-1", user_id="user-1")
+    original = book_repo.get("user-1", "book-1").title
+
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED)
+    assert book_repo.get("user-1", "book-1").title == original
+
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, title="Dune")
+    assert book_repo.get("user-1", "book-1").title == "Dune"
+
+
 def test_update_status_sets_failure_reason(book_repo) -> None:
     seed_book(book_repo, id="book-1", user_id="user-1")
 

@@ -14,6 +14,8 @@ exactly one place that knows how to build each adapter.
 
 from __future__ import annotations
 
+import logging
+
 from src.config import settings
 from src.contexts.library.domain.extraction import PdfTextExtractor
 from src.contexts.library.domain.repository import BookRepository, ChunkRepository
@@ -93,6 +95,21 @@ def get_chat_model():
         model=settings.openai_model,
         max_output_tokens=settings.openai_max_output_tokens,
     )
+
+def get_title_inferrer():
+    """Same prod-only gate as get_chat_model(). Returns None (keep the
+    filename title) when off or when the secret cannot be read -- a title is
+    never worth failing extraction over."""
+    if settings.environment != "prod" or not settings.openai_secret_name:
+        return None
+    from src.contexts.library.infrastructure.openai_title_inferrer import OpenAiTitleInferrer
+
+    try:
+        api_key = get_secret(settings.openai_secret_name)
+    except Exception:
+        logging.getLogger("bookloud.title").warning("OpenAI secret unreadable; title inference off", exc_info=True)
+        return None
+    return OpenAiTitleInferrer(api_key=api_key, model=settings.openai_model)
 
 def get_ask_book_question() -> AskBookQuestion:
     from src.contexts.library.application.chat import AskBookQuestion

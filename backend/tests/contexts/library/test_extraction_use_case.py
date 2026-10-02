@@ -66,6 +66,7 @@ class RecordingBookRepository:
         clear_stitch_outputs: bool = False,
         failure_reason=None,
         clear_failure_reason: bool = False,
+        title=None,
         updated_at=None,
     ) -> None:
         self._events.append(f"update_status:{status.value}")
@@ -93,6 +94,8 @@ class RecordingBookRepository:
             book.chunks_failed = chunks_failed
         if page_count is not None:
             book.page_count = page_count
+        if title is not None:
+            book.title = title
         if failure_reason is not None:
             book.failure_reason = failure_reason
         if clear_failure_reason:
@@ -558,3 +561,45 @@ def test_extracted_flip_clears_stale_stitch_outputs() -> None:
     assert book.audio_key is None
     assert book.manifest_key is None
     assert book.audio_duration_ms == 0
+
+
+# --- title inference -------------------------------------------------------------
+
+
+class _Inferrer:
+    def __init__(self, result=None, error: Exception | None = None) -> None:
+        self.result, self.error, self.seen = result, error, []
+
+    def infer(self, text: str):
+        self.seen.append(text)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def _run_with_inferrer(book_repo, chunk_repo, inferrer) -> Book:
+    book = _seed_book(book_repo)
+    use_case = ExtractBook(
+        book_repo,
+        chunk_repo,
+        FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"}),
+        FakeExtractor(document=_document("E" * 300)),
+        FixedClock(),
+        FakeSynthesisQueue(),
+        inferrer,
+    )
+    result = use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+    assert result.outcome == "EXTRACTED"
+    return book
+
+
+def test_inferred_title_replaces_filename_title(book_repo, chunk_repo) -> None:
+    inferrer = _Inferrer(result="The Adventures of Using AI")
+    book = _run_with_inferrer(book_repo, chunk_repo, inferrer)
+    assert book.title == "The Adventures of Using AI"
+    assert inferrer.seen == ["E" * 300]
+
+
+@pytest.mark.parametrize("inferrer", [_Inferrer(result=None), _Inferrer(error=RuntimeError("llm down"))])
+def test_no_or_failed_inference_keeps_existing_title(book_repo, chunk_repo, inferrer) -> None:
+    assert _run_with_inferrer(book_repo, chunk_repo, inferrer).title == "Title"

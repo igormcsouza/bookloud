@@ -83,6 +83,7 @@ class DynamoDbBookRepository:
         clear_stitch_outputs: bool = False,
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
+        title: str | None = None,
         updated_at: str | None = None,
     ) -> None:
         if failure_reason is not None and clear_failure_reason:
@@ -130,6 +131,9 @@ class DynamoDbBookRepository:
         if failure_reason is not None:
             set_clauses.append("failureReason = :failureReason")
             values[":failureReason"] = failure_reason
+        if title is not None:
+            set_clauses.append("title = :title")
+            values[":title"] = title
         if updated_at is not None:
             set_clauses.append("updatedAt = :updatedAt")
             values[":updatedAt"] = updated_at
