@@ -154,6 +154,26 @@ def long_paragraph_pdf(chars: int = 8000) -> bytes:
     return _save(doc)
 
 
+def two_column_pdf() -> bytes:
+    """1 page, two side-by-side columns of two paragraphs each, written left
+    column first (the order a LaTeX/Word two-column export emits). The
+    paragraphs start at staggered heights, so a purely geometric (y, x) block
+    sort interleaves them: L1, R1, R2, L2 instead of L1, L2, R1, R2."""
+
+    def para(prefix: str, n: int) -> str:
+        return " ".join(f"{prefix}{i}" for i in range(n))
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    left_x = (50, 280)
+    right_x = (315, 545)
+    page.insert_textbox(pymupdf.Rect(left_x[0], 100, left_x[1], 300), para("LA", 40), fontsize=11)
+    page.insert_textbox(pymupdf.Rect(left_x[0], 320, left_x[1], 600), para("LB", 40), fontsize=11)
+    page.insert_textbox(pymupdf.Rect(right_x[0], 100, right_x[1], 220), para("RA", 25), fontsize=11)
+    page.insert_textbox(pymupdf.Rect(right_x[0], 240, right_x[1], 600), para("RB", 40), fontsize=11)
+    return _save(doc)
+
+
 def encrypted_pdf(user_password: str = "user-pass", owner_password: str = "owner-pass") -> bytes:
     """AES-256, a real user password -- ``needs_pass`` is true and
     ``authenticate("")`` must fail."""

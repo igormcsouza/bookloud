@@ -107,7 +107,7 @@ class PyMuPdfTextExtractor:
 
 
 def _build_page_layout(page: pymupdf.Page, *, number: int) -> PageLayout:
-    raw = page.get_text("dict", sort=True)
+    raw = page.get_text("dict")
     blocks: list[TextBlock] = []
     for raw_block in raw.get("blocks", ()):
         if raw_block.get("type") != _TEXT_BLOCK_TYPE:
