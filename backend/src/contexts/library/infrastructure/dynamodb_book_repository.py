@@ -84,6 +84,7 @@ class DynamoDbBookRepository:
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
         title: str | None = None,
+        language: str | None = None,
         updated_at: str | None = None,
     ) -> None:
         if failure_reason is not None and clear_failure_reason:
@@ -131,6 +132,10 @@ class DynamoDbBookRepository:
         if failure_reason is not None:
             set_clauses.append("failureReason = :failureReason")
             values[":failureReason"] = failure_reason
+        if language is not None:
+            set_clauses.append("#language = :language")
+            names["#language"] = "language"
+            values[":language"] = language
         if title is not None:
             set_clauses.append("title = :title")
             values[":title"] = title

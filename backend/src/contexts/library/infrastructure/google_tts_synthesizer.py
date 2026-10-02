@@ -28,6 +28,7 @@ import urllib.request
 from collections.abc import Callable
 
 from src.contexts.library.domain.chunking import split_sentences
+from src.contexts.library.domain.language import GOOGLE_VOICES
 from src.contexts.library.domain.marks import estimate_word_marks
 from src.contexts.library.domain.synthesis import SynthesizedAudio, SynthesisUnavailable
 from src.contexts.library.domain.value_objects import MarksTiming, SynthesisSource
@@ -157,13 +158,14 @@ class GoogleTtsSynthesizer:
         # injected in tests -- zero network in the whole test suite (§10).
         self._http_post = http_post if http_post is not None else _default_http_post
 
-    def synthesize(self, text: str) -> SynthesizedAudio:
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio:
+        voice = self._voice if language == "en" else GOOGLE_VOICES.get(language, self._voice)
         ssml, mark_offsets = _build_ssml(text)
         use_marks = ssml is not None
 
         body: dict = {
             "input": {"ssml": ssml} if use_marks else {"text": text},
-            "voice": {"languageCode": _language_code_from_voice(self._voice), "name": self._voice},
+            "voice": {"languageCode": _language_code_from_voice(voice), "name": voice},
             "audioConfig": {"audioEncoding": "MP3", "sampleRateHertz": 24000},
         }
         if use_marks:
@@ -218,7 +220,7 @@ class GoogleTtsSynthesizer:
                 content_type="audio/mpeg",
                 duration_ms=duration_ms,
                 marks=tuple(marks),
-                voice=self._voice,
+                voice=voice,
                 source=SynthesisSource.GOOGLE_TTS,
                 timing=MarksTiming.ESTIMATED,
             )

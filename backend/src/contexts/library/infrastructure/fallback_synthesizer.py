@@ -30,9 +30,9 @@ class FallbackSynthesizer:
         self._primary = primary
         self._fallback = fallback
 
-    def synthesize(self, text: str) -> SynthesizedAudio:
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio:
         try:
-            return self._primary.synthesize(text)
+            return self._primary.synthesize(text, language)
         except UnsynthesizableText:
             # Permanent: a property of the input (empty/oversized text), not
             # of the engine -- the fallback would fail identically.
@@ -44,4 +44,4 @@ class FallbackSynthesizer:
                 self._fallback.name,
                 exc,
             )
-        return self._fallback.synthesize(text)  # its own failures propagate as-is
+        return self._fallback.synthesize(text, language)  # its own failures propagate as-is

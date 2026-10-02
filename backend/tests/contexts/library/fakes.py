@@ -47,9 +47,11 @@ class FakeSynthesizer:
         self._result = result
         self._error = error
         self.calls: list[str] = []
+        self.languages: list[str] = []
 
-    def synthesize(self, text: str) -> SynthesizedAudio:
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio:
         self.calls.append(text)
+        self.languages.append(language)
         if self._error is not None:
             raise self._error
         assert self._result is not None, "FakeSynthesizer needs either result= or error="

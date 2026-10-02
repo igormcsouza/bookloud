@@ -36,6 +36,16 @@ def test_primary_succeeds_fallback_never_called() -> None:
     assert fallback.calls == []
 
 
+def test_language_forwarded_to_primary_and_fallback() -> None:
+    primary = FakeSynthesizer(name="edge-tts", error=SynthesisUnavailable("down"))
+    fallback = FakeSynthesizer(name="google-tts", result=_audio(SynthesisSource.GOOGLE_TTS))
+
+    FallbackSynthesizer(primary, fallback).synthesize("ola", "pt")
+
+    assert primary.languages == ["pt"]
+    assert fallback.languages == ["pt"]
+
+
 def test_primary_raises_fallback_result_returned_and_warning_logged(caplog: pytest.LogCaptureFixture) -> None:
     primary = FakeSynthesizer(name="edge-tts", error=SynthesisUnavailable("edge-tts down"))
     fallback = FakeSynthesizer(name="google-tts", result=_audio(SynthesisSource.GOOGLE_TTS))

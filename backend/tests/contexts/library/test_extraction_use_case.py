@@ -67,6 +67,7 @@ class RecordingBookRepository:
         failure_reason=None,
         clear_failure_reason: bool = False,
         title=None,
+        language=None,
         updated_at=None,
     ) -> None:
         self._events.append(f"update_status:{status.value}")
@@ -96,6 +97,8 @@ class RecordingBookRepository:
             book.page_count = page_count
         if title is not None:
             book.title = title
+        if language is not None:
+            book.language = language
         if failure_reason is not None:
             book.failure_reason = failure_reason
         if clear_failure_reason:
@@ -226,12 +229,27 @@ def test_happy_path_extracts_writes_chunks_and_flips_to_extracted(book_repo, chu
     assert book.status == BookStatus.EXTRACTED
     assert book.chunks_total == 1
     assert book.page_count == 2
+    assert book.language == "en"  # no stopword signal -> default
 
     chunks = chunk_repo.list_for_book(BOOK_ID)
     assert len(chunks) == 1
     assert chunks[0].text == text
     assert chunks[0].page_start == 1
     assert chunks[0].page_end == 2
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("O homem n\u00e3o estava em casa e ela disse que era para voc\u00ea. " * 3, "pt"), ("Il n'est pas dans la maison et elle dit que c'est pour nous. " * 3, "fr")],
+)
+def test_detected_language_persisted(book_repo, chunk_repo, text, expected) -> None:
+    _seed_book(book_repo)
+    pdf_storage = FakePdfStorage(bytes_by_key={SOURCE_KEY: b"%PDF-1.4 fake"})
+    use_case = ExtractBook(book_repo, chunk_repo, pdf_storage, FakeExtractor(document=_document(text)), FixedClock(), FakeSynthesisQueue())
+
+    use_case.execute(ExtractBookCommand(user_id=USER_ID, book_id=BOOK_ID, source_key=SOURCE_KEY))
+
+    assert book_repo.get(USER_ID, BOOK_ID).language == expected
 
 
 def test_save_before_status_flip_ordering(book_repo, chunk_repo, events) -> None:

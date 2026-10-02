@@ -117,6 +117,8 @@ class SynthesizeChunk:
         # Validate the text BEFORE any engine call -- this is the only place
         # permanence is decided proactively rather than reactively.
         validation_error = _validate_text(chunk.text)
+        book = self._book_repository.get(command.user_id, command.book_id)
+        language = book.language if book is not None else "en"
 
         try:
             # "Anything but DONE" -- deliberately includes SYNTHESIZING
@@ -140,7 +142,7 @@ class SynthesizeChunk:
             return self._finish_failed(command, validation_error.reason.value)
 
         try:
-            audio = self._synthesizer.synthesize(chunk.text)
+            audio = self._synthesizer.synthesize(chunk.text, language)
         except (UnsynthesizableText, SynthesisDisabled) as exc:
             # Permanent: a property of the input or of the deployment
             # environment (§0), decided before/at the engine call, not by
