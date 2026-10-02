@@ -1212,9 +1212,8 @@ def test_api_stack_lambda_count(environment: str) -> None:
 @pytest.mark.parametrize("environment", ["dev", "pr-1", "prod"])
 def test_openai_secret_name_defaults_empty_in_every_environment(environment: str) -> None:
     """The constraint-2 regression test, and the direct analogue of the
-    phase-4 OQ-A correction: OPENAI_SECRET_NAME is "" by default -- prod
-    included -- and with no name, zero GetSecretValue statements exist
-    anywhere in the stack (PLANS/phase-7.md §5.2, §13.3)."""
+    phase-4 OQ-A correction: ApiStack given no secret name sets ""
+    and, with no name, zero GetSecretValue statements exist anywhere in the stack (PLANS/phase-7.md §5.2, §13.3)."""
     from stacks.config import Config
 
     template = _synth_api_stack(environment, openai_secret_name="")
