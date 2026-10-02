@@ -17,9 +17,11 @@ the page" needs the page's block count, and the superscript ratio needs
 algorithm is actually implementable and independently testable; every other
 signature in this module matches the plan verbatim.
 
-Non-goal, stated explicitly per §7.3: multi-column layouts. PyMuPDF's
-``sort=True`` interleaves text across true side-by-side columns, and nothing
-here corrects for it -- out of scope for phase 3 (plan §13 OQ-6).
+Multi-column layouts: the extractor does not ask PyMuPDF to geometrically
+sort blocks (``sort=True`` interleaves side-by-side columns), so reading order
+is the PDF's own content-stream order, which is column-by-column for typical
+LaTeX/Word two-column exports. A PDF whose stream order differs from its
+visual order is not corrected for.
 """
 
 from __future__ import annotations
