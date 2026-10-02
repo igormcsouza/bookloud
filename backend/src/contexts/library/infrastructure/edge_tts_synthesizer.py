@@ -27,6 +27,7 @@ from typing import Any
 
 import edge_tts
 
+from src.contexts.library.domain.language import EDGE_VOICES
 from src.contexts.library.domain.marks import align_words
 from src.contexts.library.domain.synthesis import SynthesizedAudio, SynthesisUnavailable, WordMark
 from src.contexts.library.domain.value_objects import MarksTiming, SynthesisSource
@@ -59,12 +60,13 @@ class EdgeTtsSynthesizer:
         # network and no monkeypatching of edge_tts's own globals (§10).
         self._communicate_cls = communicate_cls if communicate_cls is not None else edge_tts.Communicate
 
-    def synthesize(self, text: str) -> SynthesizedAudio:
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio:
+        voice = self._voice if language == "en" else EDGE_VOICES.get(language, self._voice)
         last_error: Exception | None = None
 
         for attempt in range(1, self._attempts + 1):
             try:
-                audio_bytes, words = asyncio.run(asyncio.wait_for(self._stream(text), self._timeout_seconds))
+                audio_bytes, words = asyncio.run(asyncio.wait_for(self._stream(text, voice), self._timeout_seconds))
             except Exception as exc:  # noqa: BLE001 -- see module docstring: broad catching is deliberate
                 last_error = exc
                 logger.warning("edge-tts attempt %d/%d raised: %s", attempt, self._attempts, exc)
@@ -97,17 +99,17 @@ class EdgeTtsSynthesizer:
                 content_type="audio/mpeg",
                 duration_ms=duration_ms,
                 marks=marks,
-                voice=self._voice,
+                voice=voice,
                 source=SynthesisSource.EDGE_TTS,
                 timing=MarksTiming.MEASURED,
             )
 
         raise SynthesisUnavailable(f"edge-tts failed after {self._attempts} attempt(s)") from last_error
 
-    async def _stream(self, text: str) -> tuple[bytes, list[tuple[str, int, int]]]:
+    async def _stream(self, text: str, voice: str) -> tuple[bytes, list[tuple[str, int, int]]]:
         communicate = self._communicate_cls(
             text,
-            self._voice,
+            voice,
             # LOAD-BEARING: edge-tts >= 7.x defaults `boundary` to
             # "SentenceBoundary". Word-level highlighting needs WordBoundary
             # events, so this must be passed explicitly -- omitting it

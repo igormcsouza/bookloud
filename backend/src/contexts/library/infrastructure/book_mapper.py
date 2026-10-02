@@ -37,6 +37,7 @@ def book_to_item(book: Book) -> dict:
         # item_to_book's `.get(...)` round-trips a real None.
         "sourceKey": book.source_key,
         "audioDurationMs": book.audio_duration_ms,
+        "language": book.language,
     }
     if book.failure_reason is not None:
         item["failureReason"] = book.failure_reason
@@ -69,4 +70,5 @@ def item_to_book(item: dict) -> Book:
         audio_key=item.get("audioKey"),
         manifest_key=item.get("manifestKey"),
         audio_duration_ms=int(item.get("audioDurationMs", 0)),
+        language=item.get("language", "en"),
     )

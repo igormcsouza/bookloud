@@ -52,7 +52,7 @@ class SpeechSynthesizer(Protocol):
     @property
     def name(self) -> str: ...  # pragma: no cover
 
-    def synthesize(self, text: str) -> SynthesizedAudio: ...  # pragma: no cover
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio: ...  # pragma: no cover
 
 
 class SynthesisQueue(Protocol):

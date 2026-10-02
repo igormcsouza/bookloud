@@ -89,6 +89,16 @@ def test_save_twice_overwrites(book_repo) -> None:
     assert fetched.status == BookStatus.EXTRACTED
 
 
+# language is a DynamoDB reserved word -- must survive the UpdateExpression
+def test_update_status_sets_language(book_repo) -> None:
+    seed_book(book_repo)
+    assert book_repo.get("user-1", "book-1").language == "en"
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED, language="fr")
+    assert book_repo.get("user-1", "book-1").language == "fr"
+    book_repo.update_status("user-1", "book-1", BookStatus.EXTRACTED)  # None -> untouched
+    assert book_repo.get("user-1", "book-1").language == "fr"
+
+
 # 9. delete removes it; deleting nonexistent is a silent no-op
 def test_delete_removes_book(book_repo) -> None:
     seed_book(book_repo, id="book-1", user_id="user-1")

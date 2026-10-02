@@ -58,6 +58,7 @@ class Book:
     audio_key: str | None = None  # the stitched book.mp3; None when nothing was concatenated
     manifest_key: str | None = None  # book.json; set on every successful stitch, incl. the zero-segment one
     audio_duration_ms: int = 0  # total stitched duration; exactly sum(segment.d)
+    language: str = "en"  # detected at extract time; picks the TTS voice
 
     @classmethod
     def create(

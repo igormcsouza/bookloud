@@ -15,6 +15,14 @@ FIXED_NOW = datetime(2026, 8, 4, 12, 0, 0, tzinfo=UTC)
 # --- Book --------------------------------------------------------------------
 
 
+def test_book_language_round_trips_and_defaults_to_en():
+    item = book_to_item(_book(language="pt"))
+    assert item["language"] == "pt"
+    assert item_to_book(item).language == "pt"
+    del item["language"]  # book written before the language feature
+    assert item_to_book(item).language == "en"
+
+
 def _book(**overrides) -> Book:
     defaults = dict(
         id="book-1",

@@ -57,7 +57,7 @@ def _silent_frame() -> bytes:
 class SilentSynthesizer:
     name = "silent"
 
-    def synthesize(self, text: str) -> SynthesizedAudio:
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio:
         seconds = max(len(text) / CHARS_PER_SECOND, _SECONDS_PER_FRAME)
         frame_count = max(1, round(seconds / _SECONDS_PER_FRAME))
         audio = _silent_frame() * frame_count

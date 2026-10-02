@@ -28,6 +28,7 @@ from typing import Literal
 
 from src.contexts.library.domain.chunk import Chunk
 from src.contexts.library.domain.chunking import chunk_text
+from src.contexts.library.domain.language import detect_language
 from src.contexts.library.domain.extraction import ExtractionError, PdfTextExtractor, page_range_for
 from src.contexts.library.domain.repository import BookRepository, ChunkRepository
 from src.contexts.library.domain.storage import PdfStorage
@@ -206,6 +207,7 @@ class ExtractBook:
             clear_stitch_outputs=True,
             page_count=document.page_count,
             title=self._infer_title(document.text),
+            language=detect_language(document.text),
             clear_failure_reason=True,
             updated_at=self._clock.now().isoformat(),
         )

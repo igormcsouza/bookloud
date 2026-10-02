@@ -59,6 +59,18 @@ def test_request_body_shape_with_marks() -> None:
     assert payload["enableTimePointing"] == ["SSML_MARK"]
 
 
+@pytest.mark.parametrize(
+    "language, voice, code", [("pt", "pt-BR-Neural2-A", "pt-BR"), ("fr", "fr-FR-Neural2-A", "fr-FR"), ("xx", DEFAULT_VOICE, "en-US")]
+)
+def test_voice_and_language_code_follow_book_language(language, voice, code) -> None:
+    http_post = FakeHttpPost([_response()])
+    result = GoogleTtsSynthesizer(api_key="k", http_post=http_post).synthesize("Ol\u00e1 mundo.", language)
+
+    payload = json.loads(http_post.calls[0][1])
+    assert payload["voice"] == {"languageCode": code, "name": voice}
+    assert result.voice == voice
+
+
 def test_one_mark_per_sentence_none_consecutive() -> None:
     text = "First sentence. Second sentence. Third one."
     http_post = FakeHttpPost([_response(timepoints=[])])

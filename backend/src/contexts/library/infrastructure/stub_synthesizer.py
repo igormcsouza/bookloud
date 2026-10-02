@@ -14,5 +14,5 @@ from src.contexts.library.domain.synthesis import SynthesizedAudio, SynthesisDis
 class StubSynthesizer:
     name = "stub"
 
-    def synthesize(self, text: str) -> SynthesizedAudio:
+    def synthesize(self, text: str, language: str = "en") -> SynthesizedAudio:
         raise SynthesisDisabled()

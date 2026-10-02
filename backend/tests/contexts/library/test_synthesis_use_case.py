@@ -249,6 +249,21 @@ def test_happy_path_writes_audio_then_marks_then_flips_done(chunk_repo, book_rep
     assert marks_document["chunkIndex"] == CHUNK_INDEX
 
 
+@pytest.mark.parametrize("book_language, expected", [("pt", "pt"), ("fr", "fr"), (None, "en")])
+def test_synthesizer_receives_book_language(chunk_repo, audio_storage, marks_storage, book_language, expected) -> None:
+    book = _book()
+    if book_language:
+        book.language = book_language
+    book_repo = FakeBookRepository(book=book if book_language else None)  # missing book -> default
+    chunk_repo.seed(_chunk())
+    synthesizer = FakeSynthesizer(result=_audio())
+    use_case = _use_case(book_repo, chunk_repo, synthesizer, audio_storage, marks_storage)
+
+    use_case.execute(SynthesizeChunkCommand(user_id=USER_ID, book_id=BOOK_ID, chunk_index=CHUNK_INDEX))
+
+    assert synthesizer.languages == [expected]
+
+
 def test_happy_path_clears_previous_failure_reason(chunk_repo, book_repo, audio_storage, marks_storage) -> None:
     chunk = _chunk(status=ChunkStatus.FAILED)
     chunk.failure_reason = "ALL_ENGINES_FAILED"
