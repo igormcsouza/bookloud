@@ -17,6 +17,7 @@ from tests.contexts.library.pdf_fixtures import (
     multipage_pdf,
     owner_password_pdf,
     simple_text_pdf,
+    two_column_pdf,
 )
 
 
@@ -196,3 +197,9 @@ def test_unexpected_error_during_processing_raises_unknown(
     with pytest.raises(ExtractionError) as excinfo:
         extractor.extract(simple_text_pdf())
     assert excinfo.value.reason == ExtractionFailure.UNKNOWN
+
+
+def test_two_column_pdf_reads_left_column_before_right(extractor: PyMuPdfTextExtractor) -> None:
+    text = extractor.extract(two_column_pdf()).text
+
+    assert text.index("LB39") < text.index("RA0")
