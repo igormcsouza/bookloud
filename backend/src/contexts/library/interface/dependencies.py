@@ -105,9 +105,9 @@ def get_title_inferrer():
     from src.contexts.library.infrastructure.openai_title_inferrer import OpenAiTitleInferrer
 
     try:
-        api_key = get_secret(settings.openai_secret_name)
+        api_key = get_parameter(settings.openai_secret_name)
     except Exception:
-        logging.getLogger("bookloud.title").warning("OpenAI secret unreadable; title inference off", exc_info=True)
+        logging.getLogger("bookloud.title").warning("OpenAI key unreadable; title inference off", exc_info=True)
         return None
     return OpenAiTitleInferrer(api_key=api_key, model=settings.openai_model)
 

@@ -220,12 +220,14 @@ def _synth_pipeline_stack(
 
 @pytest.mark.docker
 def test_extract_lambda_gets_openai_secret_for_title_inference() -> None:
-    template = _synth_pipeline_stack("prod", openai_secret_name="bookloud/openai-api-key")
+    template = _synth_pipeline_stack("prod", openai_secret_name="/bookloud/openai-api-key")
     template.has_resource_properties(
         "AWS::Lambda::Function",
-        {"Environment": {"Variables": Match.object_like({"OPENAI_SECRET_NAME": "bookloud/openai-api-key"})}},
+        {"Environment": {"Variables": Match.object_like({"OPENAI_SECRET_NAME": "/bookloud/openai-api-key"})}},
     )
-    assert "bookloud/openai-api-key" in json.dumps(template.to_json())
+    text = json.dumps(template.to_json())
+    assert "parameter/bookloud/openai-api-key" in text
+    assert "ssm:GetParameter" in text
 
 
 
