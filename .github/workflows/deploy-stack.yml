@@ -104,6 +104,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ inputs.aws_region }}
 
+      # `cdk deploy` builds the Lambda images locally and pulls their base
+      # images from public.ecr.aws. Anonymous pulls are rate-limited per source
+      # IP, and shared GitHub-hosted runners regularly exhaust it
+      # (`429 toomanyrequests: Data limit exceeded`). Authenticating lifts the
+      # limit. public ECR auth is only served from us-east-1, whatever region
+      # we deploy to. continue-on-error: if the deploy IAM user lacks
+      # ecr-public:GetAuthorizationToken / sts:GetServiceBearerToken, fall back
+      # to the old anonymous pull instead of blocking every deploy.
+      - name: Log in to public ECR
+        continue-on-error: true
+        run: |
+          aws ecr-public get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin public.ecr.aws
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
