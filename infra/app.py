@@ -2,6 +2,7 @@
 import os
 
 import aws_cdk as cdk
+from aws_cdk import Tags
 
 from stacks.api_stack import ApiStack
 from stacks.auth_stack import AuthStack
@@ -99,5 +100,8 @@ api = ApiStack(
     or (Config.OPENAI_SECRET_NAME if environment == "prod" else ""),
     env=env,
 )
+
+# Cost allocation tag (activated in billing): every taggable resource, all stacks.
+Tags.of(app).add("project", "bookloud")
 
 app.synth()

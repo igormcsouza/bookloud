@@ -20,6 +20,10 @@ so the rest of this suite still runs in environments without Docker; run
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import aws_cdk as cdk
 import pytest
@@ -1334,3 +1338,19 @@ def test_prod_api_images_use_dedicated_repo() -> None:
 @pytest.mark.docker
 def test_staging_images_keep_bootstrap_repo() -> None:
     assert _asset_repo_names(_synth_pipeline_stack("staging")) == {"cdk-hnb659fds-container-assets"}
+
+
+# --- Cost allocation tag ---------------------------------------------------
+
+
+def test_app_tags_every_stack_with_project(tmp_path) -> None:
+    # Runs the real app.py (the tag lives there, not in any stack class).
+    subprocess.run(
+        [sys.executable, "app.py"],
+        check=True,
+        cwd=Path(__file__).parents[1],
+        env={**os.environ, "CDK_OUTDIR": str(tmp_path), "CDK_CONTEXT_JSON": '{"environment": "pr-99"}'},
+    )
+    template = json.loads((tmp_path / "BookloudStorage-pr-99.template.json").read_text())
+    table = next(r for r in template["Resources"].values() if r["Type"] == "AWS::DynamoDB::Table")
+    assert {"Key": "project", "Value": "bookloud"} in table["Properties"]["Tags"]
