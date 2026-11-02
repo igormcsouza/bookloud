@@ -15,7 +15,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from .config import Config, queue_name
+from .config import Config, image_assets_synthesizer, queue_name
 
 
 class PipelineStack(cdk.Stack):
@@ -54,6 +54,7 @@ class PipelineStack(cdk.Stack):
         git_sha: str = "local",
         **kwargs,
     ) -> None:
+        kwargs.setdefault("synthesizer", image_assets_synthesizer(environment))
         super().__init__(scope, construct_id, **kwargs)
 
         # Populated by _queue_with_dlq, keyed by logical id ("Extract",

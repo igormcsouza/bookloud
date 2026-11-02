@@ -40,6 +40,13 @@ CDK-published Lambda version and no alias in front of any function today
 (see "What's not in place yet"), so **rollback here means redeploying the
 previous good commit's CDK app**, not flipping a pointer.
 
+In prod these images go to the dedicated ECR repo `bookloud-assets` (see
+`image_assets_synthesizer` in `infra/stacks/config.py`; PR/staging keep the
+CDK bootstrap repo). That repo has a lifecycle rule keeping only the 2 newest
+images (the API image, shared by the API and pipeline functions, and the chat
+image), so **old images are not retained**: a rollback always rebuilds the
+previous commit's image through the normal deploy, never reuses a stored one.
+
 Storage is the one part that is *not* rebuilt: `BookloudStorage-prod` and
 `BookloudAuth-prod`'s user pool are `RemovalPolicy.RETAIN` in prod
 (`infra/stacks/storage_stack.py`, `infra/stacks/auth_stack.py`), and the
