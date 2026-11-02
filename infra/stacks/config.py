@@ -9,6 +9,8 @@ reads the same names off the SSR Lambda's runtime environment.
 
 from __future__ import annotations
 
+import aws_cdk as cdk
+
 
 class Config:
     DEFAULT_ENVIRONMENT = "dev"
@@ -137,3 +139,16 @@ def cognito_pool_name(environment: str) -> str:
 
 def http_api_name(environment: str) -> str:
     return f"bookloud-{environment}"
+
+
+IMAGE_ASSETS_REPOSITORY = "bookloud-assets"
+
+
+def image_assets_synthesizer(environment: str) -> cdk.DefaultStackSynthesizer | None:
+    """Prod pushes Docker image assets to the dedicated ``bookloud-assets`` ECR
+    repo (created out of band, with a lifecycle rule) instead of the shared
+    bootstrap repo. PR/staging deploy to another region where that repo does
+    not exist, so they keep the default synthesizer (``None``)."""
+    if environment != "prod":
+        return None
+    return cdk.DefaultStackSynthesizer(image_assets_repository_name=IMAGE_ASSETS_REPOSITORY)

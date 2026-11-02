@@ -12,7 +12,7 @@ from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from .config import Config, http_api_name
+from .config import Config, http_api_name, image_assets_synthesizer
 
 
 class ApiStack(cdk.Stack):
@@ -54,6 +54,7 @@ class ApiStack(cdk.Stack):
         openai_secret_name: str,
         **kwargs,
     ) -> None:
+        kwargs.setdefault("synthesizer", image_assets_synthesizer(environment))
         super().__init__(scope, construct_id, **kwargs)
 
         backend_dir = os.path.abspath(

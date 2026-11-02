@@ -1310,3 +1310,27 @@ def test_no_stack_template_contains_a_key_shaped_string() -> None:
             template = _synth_api_stack(environment, openai_secret_name=secret_name)
             text = json.dumps(template.to_json())
             assert "sk-" not in text
+
+
+# --- dedicated image-assets ECR repo (prod only) ---------------------------
+
+
+def _asset_repo_names(template: Template) -> set[str]:
+    return set(
+        __import__("re").findall(r"/(bookloud-assets|cdk-hnb659fds-container-assets)[^\"]*", json.dumps(template.to_json()))
+    )
+
+
+@pytest.mark.docker
+def test_prod_pipeline_images_use_dedicated_repo() -> None:
+    assert _asset_repo_names(_synth_pipeline_stack("prod")) == {"bookloud-assets"}
+
+
+@pytest.mark.docker
+def test_prod_api_images_use_dedicated_repo() -> None:
+    assert _asset_repo_names(_synth_api_stack("prod")) == {"bookloud-assets"}
+
+
+@pytest.mark.docker
+def test_staging_images_keep_bootstrap_repo() -> None:
+    assert _asset_repo_names(_synth_pipeline_stack("staging")) == {"cdk-hnb659fds-container-assets"}
