@@ -17,6 +17,8 @@ from tests.contexts.library.pdf_fixtures import (
     multipage_pdf,
     owner_password_pdf,
     simple_text_pdf,
+    split_sentence_across_pages_pdf,
+    split_sentence_pdf,
     two_column_pdf,
 )
 
@@ -203,3 +205,30 @@ def test_two_column_pdf_reads_left_column_before_right(extractor: PyMuPdfTextExt
     text = extractor.extract(two_column_pdf()).text
 
     assert text.index("LB39") < text.index("RA0")
+
+
+# --- sentences cut by a block/page break (issue #14) ---------------------------
+
+
+def test_sentence_split_across_blocks_is_joined(extractor: PyMuPdfTextExtractor) -> None:
+    document = extractor.extract(split_sentence_pdf())
+    assert "decided that the budget should be approved" in document.text
+
+
+def test_heading_before_capitalized_paragraph_stays_separate(
+    extractor: PyMuPdfTextExtractor,
+) -> None:
+    document = extractor.extract(split_sentence_pdf())
+    assert "delay.\n\nA Brief Heading\n\nCapitalized paragraph" in document.text
+
+
+def test_sentence_split_across_pages_is_joined_and_offsets_hold(
+    extractor: PyMuPdfTextExtractor,
+) -> None:
+    document = extractor.extract(split_sentence_across_pages_pdf())
+    assert "decided that the budget should be approved" in document.text
+    first, second = document.pages
+    assert first.char_start == 0
+    assert first.char_end < second.char_start  # separator char(s) sit between pages
+    assert document.text[second.char_start : second.char_end].startswith("budget")
+    assert second.char_end == len(document.text)

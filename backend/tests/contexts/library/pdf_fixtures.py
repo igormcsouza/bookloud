@@ -138,6 +138,36 @@ def hyphenated_pdf() -> bytes:
     return _save(doc)
 
 
+def split_sentence_pdf() -> bytes:
+    """One sentence cut across two text blocks (a wide vertical gap makes
+    PyMuPDF emit separate blocks), then a heading-shaped block followed by a
+    capitalized paragraph -- the first break must merge, the second must
+    stay a paragraph break."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text((72, 100), "The committee met on Tuesday and decided that the", fontsize=11)
+    page.insert_text((72, 200), "budget should be approved without further delay.", fontsize=11)
+    page.insert_text((72, 300), "A Brief Heading", fontsize=11)
+    page.insert_text(
+        (72, 400),
+        "Capitalized paragraph text that follows the heading and is long enough.",
+        fontsize=11,
+    )
+    return _save(doc)
+
+
+def split_sentence_across_pages_pdf() -> bytes:
+    """A sentence that runs off the bottom of page 1 and finishes on page 2."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text((72, 100), "The committee met on Tuesday and decided that the", fontsize=11)
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text(
+        (72, 100), "budget should be approved without further delay. Then it adjourned.", fontsize=11
+    )
+    return _save(doc)
+
+
 def long_paragraph_pdf(chars: int = 8000) -> bytes:
     """A single paragraph long enough to force the sentence-split chunking
     path. Rendered on one tall custom page (rather than PyMuPDF's default

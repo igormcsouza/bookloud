@@ -21,6 +21,7 @@ from src.contexts.library.domain.layout import (
     TextBlock,
     TextLine,
     TextSpan,
+    continues_sentence,
     find_running_lines,
     is_footnote_block,
     is_running_or_page_number,
@@ -161,7 +162,20 @@ def _render_page(
         if block_text.strip():
             block_texts.append(block_text)
 
-    return "\n\n".join(block_texts), dropped_running, dropped_footnotes
+    return _join_paragraphs(block_texts), dropped_running, dropped_footnotes
+
+
+def _join_paragraphs(texts: list[str]) -> str:
+    """Join block texts with a blank line, except where a sentence runs on
+    across the break (``continues_sentence``) -- a space there, so the TTS
+    doesn't pause mid-sentence (issue #14)."""
+    result = ""
+    for text in texts:
+        if not result:
+            result = text
+        else:
+            result += (" " if continues_sentence(result, text) else "\n\n") + text
+    return result
 
 
 def _join_lines(lines: list[str]) -> str:
@@ -197,18 +211,22 @@ def _normalize_text(text: str) -> str:
 
 
 def _assemble(page_texts: list[str]) -> tuple[str, list[ExtractedPage]]:
-    """Concatenate per-page text with ``"\\n\\n"``, recording each page's
+    """Concatenate per-page text with ``"\\n\\n"`` (a single space when a
+    sentence runs across the page break, issue #14), recording each page's
     ``[char_start, char_end)`` range -- a page with no text gets a
     zero-length range (never selected by ``page_range_for``)."""
     pieces: list[str] = []
     pages: list[ExtractedPage] = []
     pos = 0
+    last_text = ""  # the most recent non-empty page's text
     for i, page_text in enumerate(page_texts):
         if i > 0:
-            pieces.append("\n\n")
-            pos += 2
+            sep = " " if page_text and continues_sentence(last_text, page_text) else "\n\n"
+            pieces.append(sep)
+            pos += len(sep)
         start = pos
         pieces.append(page_text)
         pos += len(page_text)
+        last_text = page_text or last_text
         pages.append(ExtractedPage(number=i + 1, char_start=start, char_end=pos))
     return "".join(pieces), pages

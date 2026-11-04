@@ -34,3 +34,13 @@ Real TTS engines are gated to `ENVIRONMENT=prod` only (see README's "Real TTS ru
 ## Where design rationale used to live
 
 Earlier development used `IMPLEMENTATION_PLAN.md` and per-phase files under `PLANS/` as working documents while the app was being built phase by phase. Both are gone now that the app is built and those plans are no longer "live" -- their content is preserved in git history if a past decision's full reasoning is ever needed (`git log --all --oneline -- IMPLEMENTATION_PLAN.md PLANS/` finds the commit that last touched them). Going forward, durable design rationale belongs in README.md (architecture-level) or in code comments next to the decision it explains (implementation-level) -- not in a separate planning doc that will eventually stop being read.
+
+## Dev team specifics
+
+- Stack and layout: Python backend (`backend/`, FastAPI + Lambda), Expo mobile app (`mobile/`), AWS CDK infra (`infra/`), LocalStack for local dev.
+- Checks: `make test` (backend pytest with a 90% coverage gate, mobile jest + tsc + eslint, infra synth tests); backend alone: `cd backend && uv run pytest tests -q`, `uv run ruff check src tests`.
+- E2E/manual QA: `make up && make smoke`.
+- Branch/commit/PR: one PR per task, body `Closes #N`, squash-merged with the title `Title (#N)`; the PO merges.
+- Hard stops (ask the PO first): prod deploys/rollbacks, secrets, AWS account changes, adding `PARTIAL` to a claimable status tuple.
+- Design docs: README.md "Architecture" and "Library context (backend)".
+- gru store: `.claude/gru/`
