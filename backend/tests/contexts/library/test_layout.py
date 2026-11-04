@@ -5,6 +5,7 @@ from src.contexts.library.domain.layout import (
     TextBlock,
     TextLine,
     TextSpan,
+    continues_sentence,
     find_running_lines,
     is_bare_page_number,
     is_footnote_block,
@@ -262,3 +263,28 @@ def test_strip_superscript_markers_keeps_span_when_text_not_marker_shaped() -> N
 def test_strip_superscript_markers_empty_line() -> None:
     line = TextLine(spans=(), x0=0, y0=0, x1=0, y1=0)
     assert strip_superscript_markers(line, body_size=11.0) == ""
+
+
+# --- continues_sentence (issue #14) ---------------------------------------------
+
+
+def test_continues_sentence_when_prev_unfinished_and_next_lowercase() -> None:
+    assert continues_sentence("decided that the", "budget should pass.")
+
+
+def test_continues_sentence_false_after_terminator() -> None:
+    for prev in ("It ended.", "Really?", "Stop!", 'He said "go."', "Done.)", "Done.”"):
+        assert not continues_sentence(prev, "then it began")
+
+
+def test_continues_sentence_false_for_heading_before_capitalized_text() -> None:
+    assert not continues_sentence("A Brief Heading", "The text starts here.")
+
+
+def test_continues_sentence_true_after_comma_even_if_next_capitalized() -> None:
+    assert continues_sentence("Dear friends,", "John said hello.")
+
+
+def test_continues_sentence_false_for_blank_input() -> None:
+    assert not continues_sentence("", "lower")
+    assert not continues_sentence("unfinished", "")

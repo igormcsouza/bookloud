@@ -263,3 +263,22 @@ def _weighted_median_size(spans: Sequence[TextSpan]) -> float:
         if cumulative >= half:
             return size
     return pairs[-1][0]
+
+
+_SENTENCE_END_CHARS = ".!?:\"')]”’"
+
+
+def continues_sentence(prev: str, nxt: str) -> bool:
+    """True when ``nxt`` looks like the rest of the sentence ``prev`` left
+    unfinished, so a block/page break between them is a layout artifact, not
+    a paragraph break (issue #14: the TTS reads a blank line as a pause).
+
+    Deliberately conservative: ``prev`` must not end a sentence, and either
+    ``nxt`` starts lowercase or ``prev`` ends in a comma/semicolon. A heading
+    followed by a capitalized paragraph therefore stays split.
+    """
+    prev = prev.rstrip()
+    nxt = nxt.lstrip()
+    if not prev or not nxt or prev[-1] in _SENTENCE_END_CHARS:
+        return False
+    return nxt[0].islower() or prev[-1] in ",;"
