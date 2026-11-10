@@ -282,3 +282,29 @@ def continues_sentence(prev: str, nxt: str) -> bool:
     if not prev or not nxt or prev[-1] in _SENTENCE_END_CHARS:
         return False
     return nxt[0].islower() or prev[-1] in ",;"
+
+
+SOFT_HYPHEN = "\xad"
+
+
+def block_join(prev: str, nxt: str) -> tuple[int, str]:
+    """How to splice ``nxt`` onto ``prev`` across a block/page break:
+    ``(chars_to_drop_from_end_of_prev, separator)``.
+
+    A trailing soft hyphen is a line-break hyphen whatever case follows
+    (``Krack\xad`` / ``Corn`` -> ``KrackCorn``); a trailing ``-`` before a
+    lowercase letter is a broken word (``mat-`` / ``tered`` -> ``mattered``),
+    before a capital a compound (``Krack-`` / ``Corn`` -> ``Krack-Corn``).
+    Otherwise a space where the sentence runs on (``continues_sentence``),
+    else a paragraph break.
+    """
+    prev = prev.rstrip()
+    nxt = nxt.lstrip()
+    if prev.endswith(SOFT_HYPHEN):
+        return 1, ""
+    if prev.endswith("-") and nxt and prev[-2:-1].isalpha():
+        if nxt[0].islower():
+            return 1, ""
+        if nxt[0].isupper():
+            return 0, ""
+    return 0, " " if continues_sentence(prev, nxt) else "\n\n"

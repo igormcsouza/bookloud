@@ -112,7 +112,7 @@ def footnote_pdf() -> bytes:
     # ("12") right after "claim" -- smaller font, raised (smaller origin_y).
     page.insert_text((72, 132), "This sentence makes a claim", fontsize=11)
     page.insert_text((72 + 155, 132 - 3), "12", fontsize=6)
-    page.insert_text((72 + 168, 132), " that needs support.", fontsize=11)
+    page.insert_text((72 + 168, 132), "that needs support.", fontsize=11)
     # The footnote block itself: bottom quarter of the page (y0 >= 0.75 *
     # 842 ~= 631.5), small font, and NOT the only block on the page.
     page.insert_text(
@@ -165,6 +165,49 @@ def split_sentence_across_pages_pdf() -> bytes:
     page.insert_text(
         (72, 100), "budget should be approved without further delay. Then it adjourned.", fontsize=11
     )
+    return _save(doc)
+
+
+def edge_case_book_pdf() -> bytes:
+    """One small "book" holding every layout edge case found in real PDFs so
+    far, so a regression in any of them fails ``test_edge_case_book``. Add a
+    case here whenever a real book reads wrong (issue #14 and follow-ups).
+
+    Page 1 (header + page number on every page):
+      - heading, then a capitalized paragraph          -> stays a paragraph break
+      - sentence cut across blocks, lowercase next      -> joined with a space
+      - "Krack-" / "Corn" (line-end hyphen, capital C)  -> "Krack-Corn"
+      - "mat-" / "tered" (line-end hyphen, lowercase)   -> "mattered"
+      - inline footnote marker + small footnote block   -> both dropped
+      - sentence that runs off the bottom of the page
+    Page 2: the sentence finishes (lowercase start)     -> joined across pages
+    Page 3: closing paragraph (also lets the header repeat on >= 3 pages)
+    """
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text((72, 30), "Edge Case Book", fontsize=10)
+    page.insert_text((72, 100), "A Brief Heading", fontsize=11)
+    page.insert_text((72, 140), "Capitalized paragraph text that follows the heading.", fontsize=11)
+    page.insert_text((72, 200), "The committee met on Tuesday and decided that the", fontsize=11)
+    page.insert_text((72, 260), "budget should be approved without further delay.", fontsize=11)
+    page.insert_text((72, 320), "Some got Krack-", fontsize=11)
+    page.insert_text((72, 380), "Corn into a few dozen stores. Every store mat-", fontsize=11)
+    page.insert_text((72, 440), "tered. Every bag mattered.", fontsize=11)
+    page.insert_text((72, 500), "This sentence makes a claim", fontsize=11)
+    page.insert_text((72 + 155, 497), "12", fontsize=6)
+    page.insert_text((72 + 168, 500), "that needs support.", fontsize=11)
+    page.insert_text((72, 700), "12. A footnote explaining the claim.", fontsize=8)
+    page.insert_text((72, 740), "The meeting then went on and on until the", fontsize=11)
+    page.insert_text((72, 820), "Page 1", fontsize=9)
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text((72, 30), "Edge Case Book", fontsize=10)
+    page.insert_text((72, 100), "chairman adjourned it for the day.", fontsize=11)
+    page.insert_text((72, 820), "Page 2", fontsize=9)
+    # A third page so the repeated header clears find_running_lines' 3-page floor.
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text((72, 30), "Edge Case Book", fontsize=10)
+    page.insert_text((72, 400), "The End of the book, with a closing line.", fontsize=11)
+    page.insert_text((72, 820), "Page 3", fontsize=9)
     return _save(doc)
 
 

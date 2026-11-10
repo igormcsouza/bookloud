@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from src.contexts.library.domain.layout import (
     PageLayout,
     TextBlock,
     TextLine,
     TextSpan,
+    block_join,
     continues_sentence,
     find_running_lines,
     is_bare_page_number,
@@ -288,3 +291,19 @@ def test_continues_sentence_true_after_comma_even_if_next_capitalized() -> None:
 def test_continues_sentence_false_for_blank_input() -> None:
     assert not continues_sentence("", "lower")
     assert not continues_sentence("unfinished", "")
+
+
+@pytest.mark.parametrize(
+    ("prev", "nxt", "expected"),
+    [
+        ("Some got Krack\xad", "Corn into stores", (1, "")),  # soft hyphen, capital next
+        ("Every store mat\xad", "tered.", (1, "")),
+        ("Every store mat-", "tered.", (1, "")),  # broken word
+        ("Some got Krack-", "Corn into stores", (0, "")),  # compound keeps its hyphen
+        ("the committee decided that the", "budget passed.", (0, " ")),
+        ("A Brief Heading", "Capitalized paragraph.", (0, "\n\n")),
+        ("He left -", "Corn", (0, "\n\n")),  # a dash is not a word break
+    ],
+)
+def test_block_join(prev: str, nxt: str, expected: tuple[int, str]) -> None:
+    assert block_join(prev, nxt) == expected
