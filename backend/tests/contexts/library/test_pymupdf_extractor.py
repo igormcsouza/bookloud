@@ -8,6 +8,7 @@ from src.contexts.library.infrastructure.pymupdf_extractor import PyMuPdfTextExt
 from tests.contexts.library.pdf_fixtures import (
     CORRUPT_PDF_BYTES,
     empty_pdf,
+    edge_case_book_pdf,
     encrypted_pdf,
     footnote_pdf,
     headered_pdf,
@@ -232,3 +233,37 @@ def test_sentence_split_across_pages_is_joined_and_offsets_hold(
     assert first.char_end < second.char_start  # separator char(s) sit between pages
     assert document.text[second.char_start : second.char_end].startswith("budget")
     assert second.char_end == len(document.text)
+
+
+def test_edge_case_book(extractor: PyMuPdfTextExtractor) -> None:
+    """Golden text for every layout edge case found in real books -- see
+    ``edge_case_book_pdf`` for what each line pins."""
+    document = extractor.extract(edge_case_book_pdf())
+    assert document.text == (
+        "A Brief Heading\n\n"
+        "Capitalized paragraph text that follows the heading.\n\n"
+        "The committee met on Tuesday and decided that the budget should be approved "
+        "without further delay.\n\n"
+        "Some got Krack-Corn into a few dozen stores. Every store mattered. "
+        "Every bag mattered.\n\n"
+        "This sentence makes a claim that needs support.\n\n"
+        "The meeting then went on and on until the chairman adjourned it for the day.\n\n"
+        "The End of the book, with a closing line."
+    )
+    _, second, _ = document.pages
+    page_two = document.text[second.char_start : second.char_end]
+    assert page_two == "chairman adjourned it for the day."
+
+
+def test_soft_hyphen_at_block_and_page_end_is_glued_and_offsets_hold() -> None:
+    """Real PDFs end hyphenated lines with U+00AD, which built-in test fonts
+    can't emit, so drive the join helpers directly."""
+    from src.contexts.library.infrastructure.pymupdf_extractor import _assemble, _join_paragraphs
+
+    joined = _join_paragraphs(["Some got Krack\xad", "Corn into stores."])
+    assert joined == "Some got KrackCorn into stores."
+
+    text, pages = _assemble(["Every store mat\xad", "tered. Every bag mattered."])
+    assert text == "Every store mattered. Every bag mattered."
+    assert text[pages[0].char_start : pages[0].char_end] == "Every store mat"
+    assert text[pages[1].char_start : pages[1].char_end] == "tered. Every bag mattered."

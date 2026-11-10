@@ -21,7 +21,7 @@ from src.contexts.library.domain.layout import (
     TextBlock,
     TextLine,
     TextSpan,
-    continues_sentence,
+    block_join,
     find_running_lines,
     is_footnote_block,
     is_running_or_page_number,
@@ -39,6 +39,7 @@ MIN_TEXT_CHARS = 100
 _TEXT_BLOCK_TYPE = 0  # PyMuPDF's "dict" block type for text (1 == image).
 _HYPHENS = ("-", "­")  # ASCII hyphen + soft hyphen
 _MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+_MULTI_SPACE_RE = re.compile(r" {2,}")
 
 
 class PyMuPdfTextExtractor:
@@ -166,15 +167,17 @@ def _render_page(
 
 
 def _join_paragraphs(texts: list[str]) -> str:
-    """Join block texts with a blank line, except where a sentence runs on
-    across the break (``continues_sentence``) -- a space there, so the TTS
-    doesn't pause mid-sentence (issue #14)."""
+    """Join block texts with a blank line, except where a sentence or word
+    runs on across the break (``block_join``) -- so the TTS doesn't pause
+    mid-sentence (issue #14)."""
     result = ""
     for text in texts:
         if not result:
             result = text
         else:
-            result += (" " if continues_sentence(result, text) else "\n\n") + text
+            trim, sep = block_join(result, text)
+            head = result.rstrip()
+            result = head[: len(head) - trim] + sep + text
     return result
 
 
@@ -198,7 +201,7 @@ def _join_lines(lines: list[str]) -> str:
 
 def _normalize_text(text: str) -> str:
     """NFKC, CRLF -> LF, NBSP -> space, trailing-space-per-line stripped,
-    3+ blank lines collapsed to one blank line -- applied per page, before
+    3+ blank lines collapsed to one blank line, runs of spaces to one -- applied per page, before
     offsets are computed (PLANS/phase-3.md §7.5 step 8), so the offsets
     stored on ``ExtractedPage``/chunks never desync from the normalized
     text."""
@@ -207,12 +210,13 @@ def _normalize_text(text: str) -> str:
     normalized = normalized.replace(" ", " ")
     normalized = "\n".join(line.rstrip() for line in normalized.split("\n"))
     normalized = _MULTI_NEWLINE_RE.sub("\n\n", normalized)
+    normalized = _MULTI_SPACE_RE.sub(" ", normalized)
     return normalized.strip()
 
 
 def _assemble(page_texts: list[str]) -> tuple[str, list[ExtractedPage]]:
-    """Concatenate per-page text with ``"\\n\\n"`` (a single space when a
-    sentence runs across the page break, issue #14), recording each page's
+    """Concatenate per-page text with ``"\\n\\n"`` (a space or nothing when a
+    sentence or word runs across the page break, issue #14), recording each page's
     ``[char_start, char_end)`` range -- a page with no text gets a
     zero-length range (never selected by ``page_range_for``)."""
     pieces: list[str] = []
@@ -221,7 +225,15 @@ def _assemble(page_texts: list[str]) -> tuple[str, list[ExtractedPage]]:
     last_text = ""  # the most recent non-empty page's text
     for i, page_text in enumerate(page_texts):
         if i > 0:
-            sep = " " if page_text and continues_sentence(last_text, page_text) else "\n\n"
+            joinable = bool(page_text and page_texts[i - 1])
+            trim, sep = block_join(last_text, page_text) if joinable else (0, "\n\n")
+            if trim:
+                # a hyphen ending the previous page is dropped: shrink its range
+                pieces[-1] = pieces[-1][:-trim]
+                pos -= trim
+                pages[-1] = ExtractedPage(
+                    number=pages[-1].number, char_start=pages[-1].char_start, char_end=pos
+                )
             pieces.append(sep)
             pos += len(sep)
         start = pos
