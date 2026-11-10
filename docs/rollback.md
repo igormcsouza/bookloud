@@ -93,10 +93,10 @@ e2e gate, so treat it as a stopgap — follow up with §2 once things are
 stable, so the reverted state is the one that lands back on `main` and gets
 the normal gate.
 
-Requires local AWS credentials scoped to the prod account (the same
-credentials `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_REGION`/
-`AWS_ACCOUNT_ID` secrets that `deploy-prod.yml` uses — pull them from
-wherever they're vaulted for out-of-band use, they are not printed by CI).
+Requires local AWS credentials scoped to the prod account. CI deploys via
+GitHub OIDC (role `bookloud-github-deploy`, no stored keys), so there are no
+CI credentials to reuse: log in with your own admin profile
+(`aws login --profile root`, then `export AWS_PROFILE=root`).
 
 ```bash
 git checkout <known-good-sha>
