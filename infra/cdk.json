@@ -1,7 +1,9 @@
 {
   "app": "python app.py",
   "watch": {
-    "include": ["**"],
+    "include": [
+      "**"
+    ],
     "exclude": [
       "README.md",
       "cdk*.json",
@@ -17,6 +19,10 @@
     "@aws-cdk/core:stackRelativeExports": true,
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
-    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+    "@aws-cdk/core:defaultCrossStackReferences": "strong",
+    "citadel": {
+      "userPoolId": "sa-east-1_f8cv1934P",
+      "clientId": "78gse1ptvl3d732am0h5kv5p7"
+    }
   }
 }

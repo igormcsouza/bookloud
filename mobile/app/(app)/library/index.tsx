@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
 import { FlatList, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -17,7 +17,8 @@ import {
   type Book,
 } from "@/lib/books";
 import { buildUploadForm, titleFromFilename, type PickedFile } from "@/lib/upload";
-import { logout } from "@/lib/auth";
+import { getProfile, logout } from "@/lib/auth";
+import { UserChip } from "@/components/UserChip";
 import { useTheme } from "@/lib/theme";
 
 async function pickPdf(): Promise<PickedFile | null> {
@@ -39,6 +40,12 @@ export default function Library() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Book | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<{ name: string; picture: string | null } | null>(null);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+
+  useEffect(() => {
+    void getProfile().then(setProfile);
+  }, []);
 
   async function handleUpload() {
     setActionError(null);
@@ -115,7 +122,7 @@ export default function Library() {
 
   return (
     <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg px-5 pt-4">
-      <View className="flex-row items-baseline justify-between mb-1">
+      <View className="flex-row items-center justify-between mb-1 gap-3">
         <View>
           <Text className="text-[27px] text-ink dark:text-dink" style={{ fontFamily: "Fraunces_600SemiBold" }}>
             Your books
@@ -128,9 +135,7 @@ export default function Library() {
                 }`}
           </Text>
         </View>
-        <Pressable onPress={() => logout().then(() => router.replace("/sign-in"))} hitSlop={8}>
-          <Text className="text-[12px] text-ink-muted dark:text-dink-muted underline">Sign out</Text>
-        </Pressable>
+        {profile && <UserChip name={profile.name} picture={profile.picture} onPress={() => setConfirmSignOut(true)} />}
       </View>
 
       {(error || actionError) && (
@@ -189,6 +194,18 @@ export default function Library() {
       >
         <Plus size={26} color={theme.accentInk} strokeWidth={2.5} />
       </Pressable>
+
+      <ConfirmDialog
+        visible={confirmSignOut}
+        title="Sign out?"
+        message="You'll leave Bookloud and your Citadel session on this phone. Sign in again any time."
+        confirmLabel="Sign out"
+        onCancel={() => setConfirmSignOut(false)}
+        onConfirm={() => {
+          setConfirmSignOut(false);
+          void logout().then(() => router.replace({ pathname: "/sign-in", params: { out: "1" } }));
+        }}
+      />
 
       <ConfirmDialog
         visible={pendingDelete !== null}

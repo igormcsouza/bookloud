@@ -1354,3 +1354,44 @@ def test_app_tags_every_stack_with_project(tmp_path) -> None:
     template = json.loads((tmp_path / "BookloudStorage-pr-99.template.json").read_text())
     table = next(r for r in template["Resources"].values() if r["Type"] == "AWS::DynamoDB::Table")
     assert {"Key": "project", "Value": "bookloud"} in table["Properties"]["Tags"]
+
+
+@pytest.mark.docker
+def test_prod_api_trusts_only_the_citadel_pool_and_maps_the_legacy_user() -> None:
+    """Prod signs in through Citadel: the JWT authorizer and both Lambdas point at its pool/client, the stack
+    owns no Cognito resource, and USER_ID_ALIASES reaches both Lambdas that resolve the current user."""
+    from stacks.api_stack import ApiStack
+
+    env = cdk.Environment(account="123456789012", region="sa-east-1")
+    app = cdk.App()
+    storage = StorageStack(app, "S", environment="prod", env=env)
+    pipeline = PipelineStack(
+        app, "P", environment="prod", pdf_bucket_name=storage.pdf_bucket.bucket_name,
+        audio_bucket=storage.audio_bucket, marks_bucket=storage.marks_bucket, table=storage.table, env=env,
+    )  # fmt: skip
+    api = ApiStack(
+        app, "A", table=storage.table, pdf_bucket=storage.pdf_bucket, audio_bucket=storage.audio_bucket,
+        marks_bucket=storage.marks_bucket, extract_queue=pipeline.extract_queue,
+        synthesize_queue=pipeline.synthesize_queue, stitch_queue=pipeline.stitch_queue,
+        citadel={"userPoolId": "sa-east-1_pool", "clientId": "client123"},
+        environment="prod", git_sha="sha", openai_secret_name="", user_id_aliases='{"new": "old"}', env=env,
+    )  # fmt: skip
+    template = Template.from_stack(api)
+
+    template.resource_count_is("AWS::Cognito::UserPool", 0)
+    template.has_resource_properties(
+        "AWS::ApiGatewayV2::Authorizer",
+        {
+            "JwtConfiguration": {
+                "Audience": ["client123"],
+                "Issuer": "https://cognito-idp.sa-east-1.amazonaws.com/sa-east-1_pool",
+            }
+        },
+    )
+    for fn in template.find_resources("AWS::Lambda::Function").values():
+        env_vars = fn["Properties"].get("Environment", {}).get("Variables", {})
+        assert env_vars.get("USER_ID_ALIASES") == '{"new": "old"}'
+        if "COGNITO_CLIENT_ID" in env_vars:
+            assert env_vars["COGNITO_CLIENT_ID"] == "client123"
+            assert env_vars["COGNITO_USER_POOL_ID"] == "sa-east-1_pool"
+            assert env_vars["COGNITO_REGION"] == "sa-east-1"

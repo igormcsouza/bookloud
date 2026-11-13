@@ -43,7 +43,12 @@ git_sha: str = app.node.try_get_context("git_sha") or "local"
 # notification). Dependency chain: Storage -> Pipeline -> Api, with
 # Auth -> Api alongside it.
 storage = StorageStack(app, stack_name("Storage", environment), environment=environment, env=env)
-auth = AuthStack(app, stack_name("Auth", environment), environment=environment, env=env)
+# Prod signs in through Citadel (the shared SSO pool, its own repo/stack): ApiStack imports its pool and this
+# app's client instead of owning a pool. Every other environment (pr-N, staging, dev) keeps its own throwaway
+# pool as a test fixture, because the smoke test and e2e suite seed users into it. The old prod pool and the
+# BookloudAuth-prod stack stay deployed (RETAIN) until removed by hand.
+citadel = app.node.try_get_context("citadel") if environment == "prod" else None
+auth = None if citadel else AuthStack(app, stack_name("Auth", environment), environment=environment, env=env)
 pipeline = PipelineStack(
     app,
     stack_name("Pipeline", environment),
@@ -89,8 +94,11 @@ api = ApiStack(
     # new dependency direction and no cycle.
     synthesize_queue=pipeline.synthesize_queue,
     stitch_queue=pipeline.stitch_queue,
-    user_pool=auth.user_pool,
-    user_pool_client=auth.user_pool_client,
+    user_pool=auth.user_pool if auth else None,
+    user_pool_client=auth.user_pool_client if auth else None,
+    citadel=citadel,
+    # {"<Citadel sub>": "<legacy sub>"} from the deploy workflow (a repo variable, kept out of git); prod only.
+    user_id_aliases=(app.node.try_get_context("user_id_aliases") or "") if citadel else "",
     environment=environment,
     git_sha=git_sha,
     # Prod defaults to the documented secret name: CD's `cdk deploy` passes no

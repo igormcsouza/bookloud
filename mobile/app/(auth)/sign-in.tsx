@@ -1,46 +1,26 @@
-// Sign in + new-password-required, one screen (mirrors the two "Sign in" /
-// "New password" states in the design mock, and the pattern already proven
-// in this user's cashlytics app). Self-signup is disabled pool-wide
-// (PLANS/phase-1.md §11) -- there is no signup path here, deliberately.
+// Sign in = Citadel. Opening the app without a (valid) session lands here and immediately opens Citadel's
+// login in the browser; after signing in there, Citadel returns to the app. The button is only the way back
+// in after cancelling, a failure, or an explicit sign-out (which must not bounce straight into a new login).
 
-import { useState } from "react";
-import { useRouter } from "expo-router";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { completeNewPassword, login } from "@/lib/auth";
-import { Field } from "@/components/Field";
+import { signInWithCitadel } from "@/lib/auth";
 import { PrimaryButton } from "@/components/PrimaryButton";
 
 export default function SignIn() {
   const router = useRouter();
-
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const { out } = useLocalSearchParams<{ out?: string }>();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const started = useRef(false);
 
-  const [challengeSession, setChallengeSession] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
-  async function handleSubmit() {
+  async function handleSignIn() {
     setError(null);
     setSubmitting(true);
     try {
-      if (challengeSession) {
-        if (newPassword !== confirmPassword) {
-          throw new Error("Passwords don't match.");
-        }
-        await completeNewPassword(username, challengeSession, newPassword);
-      } else {
-        const result = await login(username, password);
-        if (result.status === "new_password_required") {
-          setChallengeSession(result.session);
-          setSubmitting(false);
-          return;
-        }
-      }
-      router.replace("/library");
+      if (await signInWithCitadel()) router.replace("/library");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -48,13 +28,16 @@ export default function SignIn() {
     }
   }
 
+  useEffect(() => {
+    if (out || started.current) return;
+    started.current = true;
+    void handleSignIn();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [out]);
+
   return (
     <SafeAreaView edges={["top", "bottom"]} className="flex-1 bg-bg dark:bg-dbg">
-    <KeyboardAvoidingView
-      className="flex-1"
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView contentContainerClassName="flex-grow justify-center px-6 py-10" keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerClassName="flex-grow justify-center px-6 py-10">
         <Text
           className="text-[30px] text-center text-ink dark:text-dink mb-1"
           style={{ fontFamily: "Fraunces_600SemiBold" }}
@@ -65,14 +48,8 @@ export default function SignIn() {
           className="text-center text-ink-muted dark:text-dink-muted text-[10.5px] uppercase tracking-widest mb-6"
           style={{ fontFamily: "IBMPlexMono_500Medium" }}
         >
-          {challengeSession ? "Choose a new password" : "Sign in"}
+          Sign in
         </Text>
-
-        {challengeSession && (
-          <Text className="text-center text-ink-muted dark:text-dink-muted text-[13px] mb-5">
-            Your account was created with a temporary password. Set a real one to continue.
-          </Text>
-        )}
 
         {error && (
           <View className="bg-brick-wash dark:bg-dbrick-wash rounded-md px-4 py-3 mb-4">
@@ -80,56 +57,8 @@ export default function SignIn() {
           </View>
         )}
 
-        {!challengeSession ? (
-          <>
-            <Field
-              value={username}
-              onChangeText={setUsername}
-              placeholder="Username"
-              autoCapitalize="none"
-              autoComplete="username"
-            />
-            <Field
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              secureTextEntry
-              autoComplete="current-password"
-            />
-          </>
-        ) : (
-          <>
-            <Field
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="New password"
-              secureTextEntry
-              autoComplete="new-password"
-            />
-            <Field
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm new password"
-              secureTextEntry
-              autoComplete="new-password"
-            />
-          </>
-        )}
-
-        <PrimaryButton
-          label={challengeSession ? "Set password" : "Sign in"}
-          onPress={handleSubmit}
-          loading={submitting}
-        />
-
-        {!challengeSession && (
-          <Text className="text-[12.5px] text-ink-faint dark:text-dink-faint text-center mt-4 leading-5">
-            Don&apos;t have an account? Ask whoever set this up for you — sign-up stays
-            admin-provisioned only.
-          </Text>
-        )}
+        <PrimaryButton label="Sign in with Citadel" onPress={handleSignIn} loading={submitting} />
       </ScrollView>
-    </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

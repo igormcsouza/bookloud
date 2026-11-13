@@ -16,6 +16,10 @@
       "autoIncrement": true,
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_CITADEL_CLIENT_ID": "78gse1ptvl3d732am0h5kv5p7",
+        "EXPO_PUBLIC_CITADEL_HOSTED_UI": "https://sso.citadel.igormcsouza.com.br"
       }
     }
   }

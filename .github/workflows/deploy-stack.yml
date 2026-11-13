@@ -156,14 +156,25 @@ jobs:
       - name: Deploy Storage, Auth, Pipeline, Api
         id: deploy-backend
         working-directory: infra
+        env:
+          # Prod only: {"<Citadel sub>": "<legacy sub>"}, a repository variable (an id, kept out of git).
+          USER_ID_ALIASES: ${{ vars.USER_ID_ALIASES }}
         run: |
+          # Prod signs in through Citadel (infra/app.py), so it owns no Auth stack: the old
+          # BookloudAuth-prod stays deployed, untouched, until removed by hand.
+          STACKS=("BookloudStorage-${ENV_NAME}")
+          if [ "${ENV_NAME}" != "prod" ]; then STACKS+=("BookloudAuth-${ENV_NAME}"); fi
+          STACKS+=("BookloudPipeline-${ENV_NAME}" "BookloudApi-${ENV_NAME}")
+          EXTRA=()
+          if [ -n "${USER_ID_ALIASES:-}" ]; then EXTRA=(-c "user_id_aliases=${USER_ID_ALIASES}"); fi
+
           cdk deploy \
-            "BookloudStorage-${ENV_NAME}" "BookloudAuth-${ENV_NAME}" \
-            "BookloudPipeline-${ENV_NAME}" "BookloudApi-${ENV_NAME}" \
+            "${STACKS[@]}" \
             --exclusively \
             --require-approval never \
             -c environment="${ENV_NAME}" \
             -c git_sha="${GITHUB_SHA}" \
+            "${EXTRA[@]}" \
             --outputs-file cdk-backend-outputs.json
 
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
