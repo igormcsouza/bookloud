@@ -1,6 +1,6 @@
 [project]
 name = "bookloud-backend"
-version = "0.3.1"
+version = "0.3.2"
 description = "Bookloud backend API (FastAPI)"
 requires-python = ">=3.12"
 dependencies = [
