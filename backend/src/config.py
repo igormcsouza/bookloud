@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     cognito_user_pool_id: str = ""
     cognito_client_id: str = ""
     cognito_endpoint_url: str | None = None
+    # JSON {"<sign-in sub>": "<legacy sub>"}. Books, chunks and S3 objects are keyed by the Cognito `sub`
+    # of the pool the user first signed in through; moving to the Citadel SSO pool gave the same person a
+    # new `sub`, and this maps it back so the existing library stays theirs. Empty -> no mapping.
+    user_id_aliases: str = ""
     aws_region: str = "us-east-1"
 
     openai_secret_name: str = ""

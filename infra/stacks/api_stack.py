@@ -47,15 +47,26 @@ class ApiStack(cdk.Stack):
         # (STITCH_FAILED) branch, where no chunk will ever increment again.
         synthesize_queue: sqs.Queue,
         stitch_queue: sqs.Queue,
-        user_pool: cognito.IUserPool,
-        user_pool_client: cognito.IUserPoolClient,
+        user_pool: cognito.IUserPool | None = None,
+        user_pool_client: cognito.IUserPoolClient | None = None,
+        # Prod: {"userPoolId", "clientId"} of the Citadel SSO pool, imported here (an import needs a stack
+        # to resolve the region). Every other environment passes its own pool/client instead.
+        citadel: dict | None = None,
         environment: str,
         git_sha: str,
         openai_secret_name: str,
+        user_id_aliases: str = "",
         **kwargs,
     ) -> None:
         kwargs.setdefault("synthesizer", image_assets_synthesizer(environment))
         super().__init__(scope, construct_id, **kwargs)
+
+        if citadel:
+            user_pool = cognito.UserPool.from_user_pool_id(self, "CitadelPool", citadel["userPoolId"])
+            user_pool_client = cognito.UserPoolClient.from_user_pool_client_id(
+                self, "CitadelClient", citadel["clientId"]
+            )
+        assert user_pool is not None and user_pool_client is not None, "pass user_pool+client or citadel"
 
         backend_dir = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "backend")
@@ -230,6 +241,8 @@ class ApiStack(cdk.Stack):
         # (PLANS/phase-7.md §9.3) -- but deliberately gets NO secret grant
         # (see below): it can test the name for emptiness, never read the
         # value.
+        if user_id_aliases:
+            fn.add_environment(Config.ENV_USER_ID_ALIASES, user_id_aliases)
         fn.add_environment(Config.ENV_OPENAI_SECRET_NAME, openai_secret_name)
         fn.add_environment(Config.ENV_CHAT_DAILY_LIMIT, str(Config.CHAT_DAILY_LIMIT))
 
@@ -251,6 +264,7 @@ class ApiStack(cdk.Stack):
             Config.ENV_OPENAI_MAX_OUTPUT_TOKENS: str(Config.OPENAI_MAX_OUTPUT_TOKENS),
             Config.ENV_CHAT_DAILY_LIMIT: str(Config.CHAT_DAILY_LIMIT),
             Config.ENV_LOG_LEVEL: "INFO",
+            **({Config.ENV_USER_ID_ALIASES: user_id_aliases} if user_id_aliases else {}),
         }
 
         self.chat_fn = lambda_.DockerImageFunction(

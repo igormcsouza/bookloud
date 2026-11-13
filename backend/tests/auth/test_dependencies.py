@@ -93,3 +93,40 @@ def test_get_current_user_missing_username_falls_back_to_sub() -> None:
     user = get_current_user(request, None)
     assert user.username == "abc-123"
     assert user.email is None
+
+
+# --- USER_ID_ALIASES (Citadel sub -> legacy sub) -----------------------------
+
+
+def _signed_in(sub: str) -> Request:
+    return _request({"aws.event": {"requestContext": {"authorizer": {"jwt": {"claims": {"sub": sub}}}}}})
+
+
+def test_alias_maps_the_citadel_sub_to_the_legacy_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "src.auth.dependencies.settings.user_id_aliases", '{"new-sub": "old-sub"}'
+    )
+    user = get_current_user(_signed_in("new-sub"), None)
+    assert user.sub == "old-sub"
+    assert user.claims["sub"] == "new-sub"  # the raw claims stay untouched
+
+
+def test_alias_leaves_other_subs_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "src.auth.dependencies.settings.user_id_aliases", '{"new-sub": "old-sub"}'
+    )
+    assert get_current_user(_signed_in("someone-else"), None).sub == "someone-else"
+
+
+def test_no_alias_configured_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.auth.dependencies.settings.user_id_aliases", "")
+    assert get_current_user(_signed_in("abc"), None).sub == "abc"
+
+
+@pytest.mark.parametrize("raw", ["[1]", '{"a": 1}', '"x"', "{not json"])
+def test_malformed_aliases_fail_loudly_instead_of_silently_orphaning_data(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setattr("src.auth.dependencies.settings.user_id_aliases", raw)
+    with pytest.raises(ValueError):
+        get_current_user(_signed_in("abc"), None)

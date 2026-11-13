@@ -128,7 +128,7 @@ export default function Library() {
                 }`}
           </Text>
         </View>
-        <Pressable onPress={() => logout().then(() => router.replace("/sign-in"))} hitSlop={8}>
+        <Pressable onPress={() => logout().then(() => router.replace({ pathname: "/sign-in", params: { out: "1" } }))} hitSlop={8}>
           <Text className="text-[12px] text-ink-muted dark:text-dink-muted underline">Sign out</Text>
         </Pressable>
       </View>

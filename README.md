@@ -4,9 +4,9 @@ A personal Android app that reads uploaded PDFs aloud with word-level
 highlighting synced to audio, plus a chat sidebar for asking questions about
 the book, scoped to the section currently being read.
 
-The client is a native Expo/React Native Android app (`mobile/`) -- chosen over a browser tab for background audio, lock-screen controls, and one-handed reading-while-listening. It talks to a FastAPI backend on AWS (API Gateway + Lambda, DynamoDB, S3, SQS, Cognito), all defined as CDK infra.
+The client is a native Expo/React Native Android app (`mobile/`) -- chosen over a browser tab for background audio, lock-screen controls, and one-handed reading-while-listening. It talks to a FastAPI backend on AWS (API Gateway + Lambda, DynamoDB, S3, SQS) and signs in through Citadel, the shared SSO hub, all defined as CDK infra.
 
-Every non-public backend route requires a valid Cognito JWT; the client authenticates directly against Cognito's plain JSON API (no backend-for-frontend -- the app client has no secret, so there's nothing a server layer would protect); local dev emulates Cognito with `jagregory/cognito-local`.
+Every non-public backend route requires a valid Citadel (Cognito) JWT; the app signs in through Citadel's hosted login in the system browser (code flow + PKCE, no backend-for-frontend). Local dev and the CI smoke tests use throwaway Cognito test pools (`jagregory/cognito-local`, ephemeral per-PR/staging stacks) -- test fixtures only, never reachable from the app.
 
 See "Architecture" below for the full request/processing flow and the SQS pipeline design, "Mobile app" for the client, and "Quickstart" to run it locally.
 
@@ -350,7 +350,7 @@ book_id)` before ever calling into `ChunkRepository`.
 
 ## Mobile app (Expo, issue #10)
 
-`mobile/` is an Expo (React Native + TypeScript) Android app talking to the backend API above. Expo Router + NativeWind, matching the stack of this user's other Expo apps. Roughly: an auth screen driving Cognito's username/password + forced-first-login challenge flow, a library screen (book list, upload, retry/re-upload), and a reader screen (word-level highlight sync, mini-player, an "Ask" chat sheet).
+`mobile/` is an Expo (React Native + TypeScript) Android app talking to the backend API above. Expo Router + NativeWind, matching the stack of this user's other Expo apps. Roughly: a sign-in screen that opens Citadel's hosted login, a library screen (book list, upload, retry/re-upload), and a reader screen (word-level highlight sync, mini-player, an "Ask" chat sheet).
 
 Background audio uses `expo-audio` (issue #31), whose native `AudioControlsService` owns a MediaSession-backed Android notification with full remote transport (play/pause/seek from the lock screen / notification shade / Samsung's "Now Bar" -- no Samsung-specific API, any OEM chrome that mirrors MediaSession state gets this for free). `expo-audio` was picked over `react-native-track-player` after RNTP turned out to never deliver its playback events to JS under this app's React Native version (New Architecture/Bridgeless): `expo-audio` is a first-party Expo module built for that runtime from the start. Because of that native module, the app cannot run inside Expo Go -- it needs a custom dev-client build (`npx expo run:android`); see "Running against the Android emulator" below. Chat's SSE transport uses `react-native-sse` rather than `fetch().body.getReader()`, which RN/Hermes doesn't reliably support.
 
@@ -379,40 +379,13 @@ Local dev: `cd mobile && npx expo start`, pointed at a running `make up` backend
 
 ## Auth model
 
-Username + password sign-in (not email-based). **Accounts are admin-provisioned only -- there is no public signup.** The Cognito user pool has `self_sign_up_enabled=False`, so Cognito itself rejects the `SignUp` API regardless of what the client does; see "Provisioning a new reader account" below. The app talks to Cognito's plain JSON API directly (`mobile/lib/auth.ts`) -- the app client has no secret, so there is nothing a backend-for-frontend layer would protect. The refresh token lives in `expo-secure-store`; the id token (~1h) is held there too and attached as `Authorization: Bearer` on calls to the backend API, which never validates it itself -- API Gateway's Cognito JWT authorizer does, forwarding the verified claims to the Lambda.
+**Citadel is the only way in.** Opening the app without a valid session lands on the sign-in screen, which immediately opens Citadel's hosted login in the system browser (authorization code + PKCE). After signing in there, Citadel returns to the app (`bookloud://auth`) and the app keeps the tokens in `expo-secure-store`: the id token (~1h) is attached as `Authorization: Bearer` on calls to the backend API, which never validates it itself -- API Gateway's JWT authorizer does, forwarding the verified claims to the Lambda -- and the refresh token silently renews it for Citadel's 30-day window. Explicit "Sign out" revokes the refresh token and ends the Citadel browser session. There is no username/password form, signup, or user pool in this repo for production; users are managed in Citadel (`igormcsouza/citadel`, app entry `bookloud`).
 
-### First login: forced password change
+Production wiring (`infra/app.py`, context `citadel` in `infra/cdk.json`): the API stack imports Citadel's pool and this app's client (Citadel stack output `ClientIdbookloud`) for the JWT authorizer and the chat Lambda's own verification; there is no `BookloudAuth-prod` stack to deploy.
 
-An admin-provisioned user is created with a *temporary* password. Their
-first `InitiateAuth` returns Cognito's `NEW_PASSWORD_REQUIRED` challenge
-instead of tokens; the sign-in screen detects this and swaps in a "choose a
-new password" step. Once that new password is set, the account behaves like
-any other -- normal login, no further forced changes. There is no
-self-service "change password while logged in" screen (out of scope).
+**Existing library and the `sub`.** Books, chunks and S3 objects are keyed by the Cognito `sub` of the pool the user first signed in through. Citadel gave the same person a new `sub`, so the deploy sets `USER_ID_ALIASES` (`{"<Citadel sub>": "<legacy sub>"}`, a GitHub repository variable, kept out of git) and `get_current_user` maps it back -- no data moved or rewritten. Unset it only if the data is re-keyed.
 
-### Provisioning a new reader account
-
-There is no signup form. To add a reader, create their Cognito user with a
-*temporary* (non-permanent) password -- either the AWS Console or the CLI:
-
-```bash
-aws cognito-idp admin-create-user \
-  --user-pool-id <USER_POOL_ID> \
-  --username <username> \
-  --message-action SUPPRESS
-
-aws cognito-idp admin-set-user-password \
-  --user-pool-id <USER_POOL_ID> \
-  --username <username> \
-  --password '<temporary-password>'
-  # note: no --permanent -- this is what triggers NEW_PASSWORD_REQUIRED
-```
-
-Or via the Console: Cognito -> User pools -> the pool -> Users -> "Create
-user" -> set a temporary password, uncheck "send an invitation" if you'd
-rather share the password out-of-band. Either way, tell the new user their
-temporary password out of band; their first sign-in in the app will prompt
-them to choose their own password before they can use it.
+Non-prod environments (`pr-N`, `staging`, `dev`) still create their own throwaway Cognito pool (`AuthStack`) because the smoke test and e2e suite seed users into it; the mobile app never talks to them.
 
 ## Quickstart (local dev)
 
@@ -450,7 +423,7 @@ SYNTHESIS_STUB_MODE=edge_tts S3_PUBLIC_HOST=<your-LAN-IP> make up
 
 Gated on `ENVIRONMENT=local` exactly (`get_speech_synthesizer()`'s docstring) -- a `pr-N`/CI stack can never reach it even by accident, so the "no automated environment calls a live endpoint" guarantee is untouched. `edge-tts` needs no API key, so this is a manual opt-in with no quota/cost risk, just the usual flakiness of an unofficial endpoint. Don't run `make smoke` in this mode -- it asserts the deterministic `--expect-synthesis silent` outcome and will correctly complain about the mismatch.
 
-Run the Expo app against that backend separately -- `cd mobile && npx expo start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL`/`EXPO_PUBLIC_COGNITO_ENDPOINT` in `mobile/.env` pointed at `http://<your-LAN-IP>:1854{0,2,3}` (a phone can't reach `localhost` on the host). See "Mobile app" above.
+Run the Expo app against that backend separately -- `cd mobile && npx expo start` (fixed at port `18541`), with `EXPO_PUBLIC_API_BASE_URL`/`EXPO_PUBLIC_CHAT_BASE_URL` in `mobile/.env` pointed at `http://<your-LAN-IP>:1854{0,2}` (a phone can't reach `localhost` on the host), plus `EXPO_PUBLIC_CITADEL_CLIENT_ID`. Sign-in always goes through the real Citadel; for the local backend to accept those tokens run it with `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` of Citadel (it decodes the claims locally without verifying). See "Mobile app" above.
 
 ### Running against the Android emulator instead of a physical phone
 
@@ -472,9 +445,7 @@ make up
 # mobile/.env
 EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:18540
 EXPO_PUBLIC_CHAT_BASE_URL=http://10.0.2.2:18542
-EXPO_PUBLIC_COGNITO_ENDPOINT=http://10.0.2.2:18543
-EXPO_PUBLIC_COGNITO_CLIENT_ID=<from `local/.cognito.env`, written by `make up`>
-EXPO_PUBLIC_COGNITO_REGION=us-east-1
+EXPO_PUBLIC_CITADEL_CLIENT_ID=<Citadel stack output ClientIdbookloud>
 ```
 
 Because of `expo-audio` (see "Mobile app" above), the app needs a custom
@@ -524,10 +495,7 @@ backend`, this is why -- set `S3_PUBLIC_HOST` and `make up` again (`docker
 compose up -d --no-deps --force-recreate backend` is enough to pick up an
 `.env` change without restarting the rest of the stack).
 
-`make up` seeds a local Cognito pool (via `jagregory/cognito-local`) with two
-users:
-- **`dev` / `password`** -- permanent password, no forced change, for routine local dev / `make smoke` convenience. Sign in with it in the Expo app, or run `curl -H "Authorization: Bearer $(make -s token)" localhost:18540/me` to hit the backend directly.
-- **`newuser` / `TempPass123!`** -- a *temporary* password, to exercise the admin-provisioned forced-first-login flow locally: signing in with it triggers the "choose a new password" step instead of a normal login.
+`make up` seeds a local test pool (via `jagregory/cognito-local`) with a `dev` / `password` user and a `newuser` with a temporary password. These exist only for `make smoke` and the backend's login-gated checks (`curl -H "Authorization: Bearer $(make -s token)" localhost:18540/me`); the app itself signs in through Citadel.
 
 Run the full test suite (backend pytest, mobile jest + tsc + eslint, infra
 `aws_cdk.assertions` synth tests):

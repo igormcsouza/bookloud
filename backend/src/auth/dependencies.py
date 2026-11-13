@@ -23,10 +23,14 @@ this ever changes.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from src.config import settings
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -37,6 +41,14 @@ class CurrentUser:
     username: str
     email: str | None
     claims: dict = field(default_factory=dict)
+
+
+@lru_cache
+def _aliases(raw: str) -> dict[str, str]:
+    aliases = json.loads(raw) if raw else {}
+    if not isinstance(aliases, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in aliases.items()):
+        raise ValueError("USER_ID_ALIASES must be a JSON object of strings")
+    return aliases
 
 
 def claims_from_request(request: Request) -> dict | None:
@@ -57,7 +69,7 @@ def get_current_user(
     if not sub:
         raise HTTPException(401, "Invalid token claims")
     return CurrentUser(
-        sub=sub,
+        sub=_aliases(settings.user_id_aliases).get(sub, sub),
         username=claims.get("cognito:username") or claims.get("username") or sub,
         email=claims.get("email"),
         claims=claims,

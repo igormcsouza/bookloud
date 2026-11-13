@@ -90,6 +90,7 @@ class Config:
     ENV_COGNITO_USER_POOL_ID = "COGNITO_USER_POOL_ID"
     ENV_COGNITO_REGION = "COGNITO_REGION"
     ENV_COGNITO_ENDPOINT = "COGNITO_ENDPOINT"  # local dev only (cognito-local); unset in AWS
+    ENV_USER_ID_ALIASES = "USER_ID_ALIASES"  # prod only: Citadel sub -> legacy sub, see backend/src/config.py
 
     # --- phase 7: Chat Lambda env vars, read by backend/src/config.py ---
     ENV_OPENAI_SECRET_NAME = "OPENAI_SECRET_NAME"

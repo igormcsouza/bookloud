@@ -42,7 +42,8 @@
           "backgroundColor": "#F2EEE4"
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-web-browser"
     ],
     "extra": {
       "router": {},

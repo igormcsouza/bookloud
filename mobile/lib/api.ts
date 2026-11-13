@@ -1,4 +1,4 @@
-import { getIdToken, logout } from "@/lib/auth";
+import { endSession, getIdToken } from "@/lib/auth";
 import { notifySessionExpired } from "@/lib/authEvents";
 
 /** Base URL of the Bookloud backend API, trimmed of any trailing slash. */
@@ -31,7 +31,7 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
     // rejected for any other reason (revoked session, disabled account)
     // looks perfectly valid to it and would just be resent. Clear it here
     // so the same rejected token can't loop.
-    await logout();
+    await endSession();
     notifySessionExpired();
   }
 
