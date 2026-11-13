@@ -144,6 +144,23 @@ export async function getIdToken(): Promise<string | null> {
   }
 }
 
+/** Who is signed in, for display only (the API verifies the token): Citadel's name and photo, read from the
+ *  id token's claims. Falls back to the username, then a generic label; picture is null when absent. */
+export async function getProfile(): Promise<{ name: string; picture: string | null }> {
+  let claims: Record<string, unknown> = {};
+  try {
+    const payload = ((await SecureStore.getItemAsync(ID_TOKEN_KEY)) ?? "").split(".")[1] ?? "";
+    claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    // unreadable token: show the generic chip
+  }
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return {
+    name: text(claims.name) ?? text(claims["cognito:username"]) ?? "Account",
+    picture: text(claims.picture),
+  };
+}
+
 /** Drops the local session without touching the browser; for "the API said 401". */
 export const endSession = clearTokens;
 

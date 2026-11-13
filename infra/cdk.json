@@ -22,7 +22,7 @@
     "@aws-cdk/core:defaultCrossStackReferences": "strong",
     "citadel": {
       "userPoolId": "sa-east-1_f8cv1934P",
-      "clientId": "CLIENT_ID_PLACEHOLDER"
+      "clientId": "78gse1ptvl3d732am0h5kv5p7"
     }
   }
 }

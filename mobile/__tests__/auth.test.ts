@@ -201,3 +201,25 @@ describe("endSession", () => {
     expect(browser.openAuthSessionAsync).not.toHaveBeenCalled();
   });
 });
+
+describe("getProfile", () => {
+  const claims = (c: object) => `h.${b64(c)}.s`;
+
+  it("reads the Citadel name and picture from the id token", async () => {
+    const { auth, storage } = load();
+    storage.getItemAsync.mockResolvedValue(claims({ name: " Igor Souza ", picture: "https://sso.example.test/a.jpg" }));
+    await expect(auth.getProfile()).resolves.toEqual({ name: "Igor Souza", picture: "https://sso.example.test/a.jpg" });
+  });
+
+  it("falls back to the username, then a generic label, and has no picture when absent", async () => {
+    const { auth, storage } = load();
+    storage.getItemAsync.mockResolvedValue(claims({ "cognito:username": "walkdead", picture: "" }));
+    await expect(auth.getProfile()).resolves.toEqual({ name: "walkdead", picture: null });
+    storage.getItemAsync.mockResolvedValue(claims({}));
+    await expect(auth.getProfile()).resolves.toEqual({ name: "Account", picture: null });
+    storage.getItemAsync.mockResolvedValue("not-a-jwt");
+    await expect(auth.getProfile()).resolves.toEqual({ name: "Account", picture: null });
+    storage.getItemAsync.mockResolvedValue(null);
+    await expect(auth.getProfile()).resolves.toEqual({ name: "Account", picture: null });
+  });
+});
